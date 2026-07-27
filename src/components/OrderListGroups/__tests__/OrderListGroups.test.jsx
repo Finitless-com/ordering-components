@@ -217,10 +217,33 @@ describe('OrderListGroups', () => {
       lastControllerProps.setCurrentTabSelected('logisticOrders')
     })
     await waitFor(() => expect(lastControllerProps.logisticOrders.orders).toHaveLength(1))
+    let result
     await act(async () => {
-      await lastControllerProps.handleClickLogisticOrder(1, 77)
+      result = await lastControllerProps.handleClickLogisticOrder(1, 77)
     })
     expect(orders.mockShowToast).toHaveBeenCalled()
+    expect(result).toMatchObject({ error: false, orderIds: [101], defaultEta: null })
+  })
+
+  it('saves the delivery time on the orders of an accepted assign request', async () => {
+    renderController(OrderListGroups, { isNetConnected: true })
+    await waitFor(() => expect(lastControllerProps.ordersGroup.pending.fetched).toBe(true))
+    let result
+    await act(async () => {
+      result = await lastControllerProps.handleUpdateLogisticOrdersEta([101], 25)
+    })
+    expect(orders.mockOrderSave).toHaveBeenCalledWith({ delivered_in: 25, id: 101 })
+    expect(result).toHaveLength(1)
+  })
+
+  it('skips the delivery time save when there is no order or no time', async () => {
+    renderController(OrderListGroups, { isNetConnected: true })
+    await waitFor(() => expect(lastControllerProps.ordersGroup.pending.fetched).toBe(true))
+    await act(async () => {
+      await lastControllerProps.handleUpdateLogisticOrdersEta([], 25)
+      await lastControllerProps.handleUpdateLogisticOrdersEta([101], null)
+    })
+    expect(orders.mockOrderSave).not.toHaveBeenCalled()
   })
 
   it('filters by driver, paymethod, and date range', async () => {

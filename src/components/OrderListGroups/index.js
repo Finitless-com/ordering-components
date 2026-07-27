@@ -831,6 +831,26 @@ export const OrderListGroups = (props) => {
     }
   }
 
+  /**
+   * Save the delivery time (in minutes) on every order of an accepted logistic assign request
+   * @param {Array} orderIds ids of the orders to update
+   * @param {Number} deliveredIn delivery time in minutes
+   */
+  const handleUpdateLogisticOrdersEta = async (orderIds, deliveredIn) => {
+    const ids = (orderIds ?? []).filter(Boolean)
+    const parsedEta = parseInt(deliveredIn, 10)
+    if (!ids.length || isNaN(parsedEta)) return []
+    const setOrderEta = async (id) => {
+      try {
+        const { content: { result, error } } = await ordering.setAccessToken(session?.token).orders(id).save({ delivered_in: parsedEta, id })
+        return error ? null : result
+      } catch {
+        return null
+      }
+    }
+    return await Promise.all(ids.map(id => setOrderEta(id)))
+  }
+
   const handleClickLogisticOrder = async (status, orderId) => {
     try {
       setLoadingChangeOrder(true)
@@ -854,21 +874,14 @@ export const OrderListGroups = (props) => {
             ? acceptedOrder.order_group.orders
             : [acceptedOrder].filter(Boolean)
           acceptedOrders.forEach((o) => actionOrderToTab(o, getStatusById(o?.status), 'add'))
+          const targetOrderIds = (acceptedOrder?.order_group?.orders?.length
+            ? acceptedOrder.order_group.orders.map(o => o?.id)
+            : [acceptedOrder?.id]
+          ).filter(Boolean)
+          let defaultEta = null
           if (PROJECTS_WITH_LOGISTIC_DEFAULT_ETA.includes(ordering?.project)) {
-            const defaultEta = parseInt(t('LOGISTIC_DEFAULT_ETA_TIME', '10'), 10) || 10
-            const targetOrderIds = acceptedOrder?.order_group?.orders?.length
-              ? acceptedOrder.order_group.orders.map(o => o?.id)
-              : [acceptedOrder?.id]
-            try {
-              await Promise.all(
-                targetOrderIds
-                  .filter(Boolean)
-                  .map(id =>
-                    ordering.setAccessToken(session?.token).orders(id).save({ delivered_in: defaultEta })
-                  )
-              )
-            } catch (e) {
-            }
+            defaultEta = parseInt(t('LOGISTIC_DEFAULT_ETA_TIME', '10'), 10) || 10
+            await handleUpdateLogisticOrdersEta(targetOrderIds, defaultEta)
           }
 
           handleClickOrder(acceptedOrder)
@@ -876,18 +889,21 @@ export const OrderListGroups = (props) => {
             ToastType.Success,
             t('SPECIFIC_ORDER_ACCEPTED', 'Your accepted the order number _NUMBER_').replace('_NUMBER_', order?.order?.id ?? order?.id)
           )
+          return { error: false, order: acceptedOrder, orderIds: targetOrderIds, defaultEta }
         } else {
           showToast(
             ToastType.Info,
             t('SPECIFIC_ORDER_REJECTED', 'Your rejected the order number _NUMBER_').replace('_NUMBER_', order?.order?.id ?? order?.id)
           )
         }
-        return
+        return { error: false }
       }
       showToast(ToastType.Error, result)
+      return { error: true, result }
     } catch (err) {
       setlogisticOrders({ ...logisticOrders, error: err.message })
       showToast(ToastType.Error, err.message)
+      return { error: true, result: err.message }
     } finally {
       setLoadingChangeOrder(false)
     }
@@ -1309,6 +1325,7 @@ export const OrderListGroups = (props) => {
           loadMoreOrders={loadMoreOrders}
           handleClickOrder={handleClickOrder}
           handleClickLogisticOrder={handleClickLogisticOrder}
+          handleUpdateLogisticOrdersEta={handleUpdateLogisticOrdersEta}
           filtered={filtered}
           onFiltered={setFiltered}
           handleChangeOrderStatus={handleChangeOrderStatus}
