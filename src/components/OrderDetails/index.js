@@ -49,6 +49,26 @@ export const OrderDetails = (props) => {
    * Method to accept or reject a logistic order
    */
 
+  /**
+   * Save the delivery time (in minutes) on every order of an accepted logistic assign request
+   * @param {Array} orderIds ids of the orders to update
+   * @param {Number} deliveredIn delivery time in minutes
+   */
+  const handleUpdateLogisticOrdersEta = async (orderIds, deliveredIn) => {
+    const ids = (orderIds ?? []).filter(Boolean)
+    const parsedEta = parseInt(deliveredIn, 10)
+    if (!ids.length || isNaN(parsedEta)) return []
+    const setOrderEta = async (id) => {
+      try {
+        const { content: { result, error } } = await ordering.setAccessToken(accessToken).orders(id).save({ delivered_in: parsedEta, id })
+        return error ? null : result
+      } catch {
+        return null
+      }
+    }
+    return await Promise.all(ids.map(id => setOrderEta(id)))
+  }
+
   const handleClickLogisticOrder = async (status, orderId, orders) => {
     try {
       const response = await fetch(`${ordering.root}/drivers/${user?.id}/assign_requests/${orderId}`, {
@@ -62,37 +82,34 @@ export const OrderDetails = (props) => {
       const { result, error } = await response.json()
       if (!error) {
         if (status === 1) {
+          const groupOrders = orders?.order_group?.orders ?? orders?.order?.order_group?.orders
+          const targetOrderIds = (groupOrders?.length
+            ? groupOrders.map(o => o?.id)
+            : [orders?.order?.id ?? orders?.id]
+          ).filter(Boolean)
+          let defaultEta = null
           if (PROJECTS_WITH_LOGISTIC_DEFAULT_ETA.includes(ordering?.project)) {
-            const defaultEta = parseInt(t('LOGISTIC_DEFAULT_ETA_TIME', '10'), 10) || 10
-            const groupOrders = orders?.order_group?.orders ?? orders?.order?.order_group?.orders
-            const targetOrderIds = (groupOrders?.length
-              ? groupOrders.map(o => o?.id)
-              : [orders?.order?.id ?? orders?.id]
-            ).filter(Boolean)
-            try {
-              await Promise.all(
-                targetOrderIds.map(id =>
-                  ordering.setAccessToken(accessToken).orders(id).save({ delivered_in: defaultEta })
-                )
-              )
-            } catch (e) {
-            }
+            defaultEta = parseInt(t('LOGISTIC_DEFAULT_ETA_TIME', '10'), 10) || 10
+            await handleUpdateLogisticOrdersEta(targetOrderIds, defaultEta)
           }
           showToast(
             ToastType.Success,
             t('SPECIFIC_ORDER_ACCEPTED', 'Your accepted the order number _NUMBER_').replace('_NUMBER_', orders?.id)
           )
+          return { error: false, order: orders?.order ?? orders, orderIds: targetOrderIds, defaultEta }
         } else {
           showToast(
             ToastType.Info,
             t('SPECIFIC_ORDER_REJECTED', 'Your rejected the order number _NUMBER_').replace('_NUMBER_', orders?.id)
           )
         }
-        return
+        return { error: false }
       }
       showToast(ToastType.Error, result)
+      return { error: true, result }
     } catch (err) {
       showToast(ToastType.Error, err.message)
+      return { error: true, result: err.message }
     }
   }
 
@@ -791,6 +808,7 @@ export const OrderDetails = (props) => {
           handleRemoveCart={handleRemoveCart}
           cartState={cartState}
           handleClickLogisticOrder={handleClickLogisticOrder}
+          handleUpdateLogisticOrdersEta={handleUpdateLogisticOrdersEta}
           loadMessages={loadMessages}
           showReservationAlert={showReservationAlert}
           setShowReservationAlert={setShowReservationAlert}

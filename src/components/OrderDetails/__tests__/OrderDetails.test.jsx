@@ -182,10 +182,29 @@ describe('OrderDetails', () => {
 
   it('rejects logistic assign request', async () => {
     renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder })
+    let result
     await act(async () => {
-      await lastControllerProps.handleClickLogisticOrder(2, 77, { id: 77 })
+      result = await lastControllerProps.handleClickLogisticOrder(2, 77, { id: 77 })
     })
     expect(orders.mockShowToast).toHaveBeenCalled()
+    expect(result).toEqual({ error: false })
+  })
+
+  it('returns the accepted orders so the UI can ask for a delivery time', async () => {
+    renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder })
+    let result
+    await act(async () => {
+      result = await lastControllerProps.handleClickLogisticOrder(1, 77, { id: 101 })
+    })
+    expect(result).toMatchObject({ error: false, orderIds: [101], defaultEta: null })
+  })
+
+  it('saves the delivery time on the orders of an accepted assign request', async () => {
+    renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder })
+    await act(async () => {
+      await lastControllerProps.handleUpdateLogisticOrdersEta([101], 25)
+    })
+    expect(orders.mockOrderSave).toHaveBeenCalledWith({ delivered_in: 25, id: 101 })
   })
 
   it('handles websocket order and driver tracking updates', async () => {
