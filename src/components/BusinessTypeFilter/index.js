@@ -4,6 +4,7 @@ import { useApi } from '../../contexts/ApiContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
 import { useOrder } from '../../contexts/OrderContext'
 import { useConfig } from '../../contexts/ConfigContext'
+import { useLanguage } from '../../contexts/LanguageContext'
 import {
   filterBusinessTypesByLocation,
   normalizeAvailableTypeIds
@@ -25,6 +26,7 @@ export const BusinessTypeFilter = (props) => {
   const socket = useWebsocket()
   const [orderState] = useOrder()
   const [{ configs }] = useConfig()
+  const [, t] = useLanguage()
 
   const [typeSelected, setTypeSelected] = useState(defaultBusinessType)
   const [typesState, setTypesState] = useState({ loading: true, error: null, types: [], pagination: null })
@@ -82,8 +84,21 @@ export const BusinessTypeFilter = (props) => {
       if (normalizedIds) {
         types = filterBusinessTypesByLocation(types, normalizedIds)
       }
+      // Drop dashboard "All" / "All :)" rows — the synthetic chip below is the real All filter.
+      const isAllTypeName = (name) => {
+        const raw = String(name ?? '').trim()
+        if (/^all\b/i.test(raw)) return true
+        const key = raw
+          .replace(/[^\w\s]/g, '')
+          .replace(/\s+/g, '_')
+          .replace(/_+/g, '_')
+          .replace(/^_|_$/g, '')
+          .toUpperCase()
+        return key === 'ALL'
+      }
+      types = types.filter((type) => !isAllTypeName(type?.name))
       if (types.length > 0 && !hideAllCategory) {
-        types.unshift({ id: null, enabled: true, image: null, name: 'All' })
+        types.unshift({ id: null, enabled: true, image: null, name: t('ALL', 'All') })
       }
 
       setTypesState({
