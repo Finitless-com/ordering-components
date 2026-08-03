@@ -11,7 +11,14 @@ import {
 } from '../themeUtils'
 
 const baseTheme = {
-  colors: { primary: '#111', links: '#222', backgroundPage: '#fff' },
+  colors: {
+    primary: '#111',
+    lightPrimary: '#444',
+    active: '#333',
+    activeContrast: '#555',
+    links: '#222',
+    backgroundPage: '#fff'
+  },
   images: {
     general: { homeHero: 'home.png', businessHero: 'biz.png' },
     categories: { categoryFood: 'food.png', categoryAll: 'all.png' },
@@ -104,6 +111,9 @@ describe('themeUtils', () => {
     it('merges API theme settings over base colors', () => {
       expect(getMergedColors(baseTheme, orderingTheme)).toEqual({
         primary: '#abc',
+        lightPrimary: '#444',
+        active: '#333',
+        activeContrast: '#555',
         links: '#def',
         backgroundPage: '#000'
       })
@@ -180,9 +190,11 @@ describe('themeUtils', () => {
       expect(merged.images.general.homeHero).toBe('api-home.png')
     })
 
-    it('keeps base colors for app', () => {
+    it('reuses the app primary colors for active states', () => {
       const merged = createMergedTheme(baseTheme, orderingTheme, { isApp: true })
-      expect(merged.colors).toEqual(baseTheme.colors)
+      expect(merged.colors.primary).toBe('#111')
+      expect(merged.colors.active).toBe('#111')
+      expect(merged.colors.activeContrast).toBe('#444')
     })
 
     it('falls back to base theme images when API paths are missing', () => {
