@@ -7,6 +7,8 @@ const d1 = vi.hoisted(() => {
   return createDashboardOrdersTestContext(vi)
 })
 
+const mockParsePrice = vi.hoisted(() => vi.fn(price => `SRD ${price.toFixed(2)}`))
+
 vi.mock('../../../../contexts/EventContext', async (importOriginal) => {
   const actual = await importOriginal()
   return {
@@ -23,6 +25,10 @@ vi.mock('../../../../contexts/ApiContext', () => ({
   useApi: () => [d1.mockOrdering]
 }))
 
+vi.mock('../../../../contexts/UtilsContext', () => ({
+  useUtils: () => [{ parsePrice: mockParsePrice }]
+}))
+
 import { OrderDetails } from '../index'
 
 describe('OrderDetails', () => {
@@ -35,7 +41,8 @@ describe('OrderDetails', () => {
       isDisableLoadMessages: true
     })
     expect(lastControllerProps.order.order).toEqual(d1.sampleOrder)
-    expect(lastControllerProps.formatPrice(12.5)).toBe('$ 12.50')
+    expect(lastControllerProps.formatPrice(12.5)).toBe('SRD 12.50')
+    expect(mockParsePrice).toHaveBeenCalledWith(12.5)
   })
 
   it('updates order status via API', async () => {

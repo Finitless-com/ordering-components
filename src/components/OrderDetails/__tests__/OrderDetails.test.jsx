@@ -7,6 +7,8 @@ const orders = vi.hoisted(() => {
   return createCustomerOrdersTestContext(vi)
 })
 
+const mockParsePrice = vi.hoisted(() => vi.fn(price => `SRD ${price.toFixed(2)}`))
+
 vi.mock('../../../contexts/EventContext', async (importOriginal) => {
   const actual = await importOriginal()
   return {
@@ -52,6 +54,10 @@ vi.mock('../../../contexts/WebsocketContext', () => ({
   useWebsocket: () => orders.mockSocket
 }))
 
+vi.mock('../../../contexts/UtilsContext', () => ({
+  useUtils: () => [{ parsePrice: mockParsePrice }]
+}))
+
 import { OrderDetails } from '../index'
 
 describe('OrderDetails', () => {
@@ -67,7 +73,8 @@ describe('OrderDetails', () => {
 
   it('formats prices for display', () => {
     renderController(OrderDetails, { orderId: 101, order: orderProp })
-    expect(lastControllerProps.formatPrice(19.5)).toBe('$ 19.50')
+    expect(lastControllerProps.formatPrice(19.5)).toBe('SRD 19.50')
+    expect(mockParsePrice).toHaveBeenCalledWith(19.5)
   })
 
   it('merges dataToSave without hitting the API', async () => {

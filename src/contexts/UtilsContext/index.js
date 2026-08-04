@@ -138,8 +138,8 @@ export const UtilsProviders = ({ children, strategy }) => {
         decimal: options?.decimal || configState.configs.format_number_decimal_length?.value || 2,
         separator: options?.separator || configState.configs.format_number_decimal_separator?.value || ',',
         thousand: options?.thousand || configState.configs.format_number_thousand_separator?.value || '.',
-        currency: options?.currency || configState.configs.format_number_currency?.value || '$',
-        currencyPosition: options?.currencyPosition || configState.configs.currency_position?.value || 'left'
+        currency: configState.configs.format_number_currency?.value || options?.currency || '$',
+        currencyPosition: configState.configs.currency_position?.value || options?.currencyPosition || 'left'
       }
       let number = parseNumber(convertedValue, formatNumber)
       if (formatNumber.currencyPosition?.toLowerCase() === 'left') {
