@@ -6,6 +6,7 @@ import { useWebsocket } from '../../../contexts/WebsocketContext'
 import { useEvent } from '../../../contexts/EventContext'
 import { useLanguage } from '../../../contexts/LanguageContext'
 import { useToast, ToastType } from '../../../contexts/ToastContext'
+import { useUtils } from '../../../contexts/UtilsContext'
 
 export const OrderDetails = (props) => {
   const {
@@ -24,6 +25,7 @@ export const OrderDetails = (props) => {
   const [events] = useEvent()
   const [, t] = useLanguage()
   const [, { showToast }] = useToast()
+  const [{ parsePrice }] = useUtils()
 
   const [orderState, setOrderState] = useState({ order: null, loading: !props.order, error: null })
   const [messageErrors, setMessageErrors] = useState({ status: null, loading: false, error: null })
@@ -39,7 +41,7 @@ export const OrderDetails = (props) => {
    * Method to format a price number
    * @param {Number} price
    */
-  const formatPrice = price => price && `$ ${price.toFixed(2)}`
+  const formatPrice = price => price && parsePrice(price)
 
   /**
    * Method to Load message for first time
