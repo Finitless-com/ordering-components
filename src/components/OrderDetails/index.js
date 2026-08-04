@@ -7,6 +7,7 @@ import { useToast, ToastType } from '../../contexts/ToastContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useEvent } from '../../contexts/EventContext'
 import { useOrder } from '../../contexts/OrderContext'
+import { useUtils } from '../../contexts/UtilsContext'
 import { PROJECTS_WITH_LOGISTIC_DEFAULT_ETA } from '../../constants/logistic'
 
 export const OrderDetails = (props) => {
@@ -31,6 +32,7 @@ export const OrderDetails = (props) => {
   const [, t] = useLanguage()
   const [events] = useEvent()
   const [{ carts }, { reorder, clearCart }] = useOrder()
+  const [{ parsePrice }] = useUtils()
 
   const [orderState, setOrderState] = useState({ order: props.order ?? null, businessData: {}, loading: !props.order, error: null })
   const [drivers, setDrivers] = useState({ drivers: [], loadingDriver: false, error: null })
@@ -132,7 +134,7 @@ export const OrderDetails = (props) => {
    * Method to format a price number
    * @param {Number} price
    */
-  const formatPrice = price => price && `$ ${price.toFixed(2)}`
+  const formatPrice = price => price && parsePrice(price)
 
   /**
    * Method to Load message for first time
