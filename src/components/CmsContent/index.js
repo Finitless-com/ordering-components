@@ -9,7 +9,8 @@ export const CmsContent = (props) => {
   const {
     UIComponent,
     pageSlug,
-    onNotFound
+    onNotFound,
+    onChangeMetaTag
   } = props
 
   /**
@@ -30,6 +31,7 @@ export const CmsContent = (props) => {
       setCmsState({ ...cmsState, loading: false })
       if (!error) {
         setCmsState({ ...cmsState, body: result.body })
+        onChangeMetaTag && onChangeMetaTag(result.seo_title, result.seo_description)
       } else {
         setCmsState({ ...cmsState, error: result })
         onNotFound && onNotFound(pageSlug)
@@ -48,7 +50,7 @@ export const CmsContent = (props) => {
         requestsState.page?.cancel?.()
       }
     }
-  }, [])
+  }, [pageSlug])
 
   return (
     <>
@@ -66,5 +68,8 @@ CmsContent.propTypes = {
   /**
    * UI Component, this must be containt all graphic elements and use parent props
    */
-  UIComponent: PropTypes.elementType
+  UIComponent: PropTypes.elementType,
+  pageSlug: PropTypes.string,
+  onNotFound: PropTypes.func,
+  onChangeMetaTag: PropTypes.func
 }
