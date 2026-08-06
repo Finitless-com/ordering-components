@@ -36,8 +36,8 @@ describe('Analytics', () => {
     expect(getByTestId('child')).toBeInTheDocument()
   })
 
-  it('loads analytics script for measurement-style track ids', async () => {
-    window.ga = vi.fn()
+  it('tracks GA4 events when measurement id is provided', async () => {
+    window.gtag = vi.fn()
     let eventsRef = null
 
     render(
@@ -49,7 +49,7 @@ describe('Analytics', () => {
       </EventProvider>
     )
 
-    const script = document.getElementById('google-analytics-sdk')
+    const script = document.getElementById('google-analytics-gtag')
     expect(script).toBeTruthy()
     script.onload()
 
@@ -59,11 +59,22 @@ describe('Analytics', () => {
 
     eventsRef.emit('change_view', { page: '/menu' })
     eventsRef.emit('product_clicked', { id: 1, name: 'Burger', category_id: 2, price: 9.5 })
+    eventsRef.emit('product_added', { id: 1, name: 'Burger', category_id: 2, price: 9.5, quantity: 2 })
     eventsRef.emit('userLogin', { id: 42 })
+    eventsRef.emit('order_placed', {
+      id: 99,
+      total: '20',
+      tax_total: '2',
+      delivery_zone_price: '3',
+      currency: 'USD',
+      business: { name: 'Test restaurant' }
+    })
 
-    expect(window.ga).toHaveBeenCalledWith('set', 'page', '/menu')
-    expect(window.ga).toHaveBeenCalledWith('ec:addProduct', expect.any(Object))
-    expect(window.ga).toHaveBeenCalledWith('set', 'userId', 42)
+    expect(window.gtag).toHaveBeenCalledWith('event', 'page_view', expect.any(Object))
+    expect(window.gtag).toHaveBeenCalledWith('event', 'select_item', expect.any(Object))
+    expect(window.gtag).toHaveBeenCalledWith('event', 'add_to_cart', expect.any(Object))
+    expect(window.gtag).toHaveBeenCalledWith('config', 'G-TEST123', { user_id: '42' })
+    expect(window.gtag).toHaveBeenCalledWith('event', 'purchase', expect.any(Object))
   })
 
   it('tracks Universal Analytics events for legacy track ids', async () => {
