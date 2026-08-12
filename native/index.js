@@ -117,7 +117,7 @@ import {
   sortSubcategoriesByRank
 } from '../src/utils/subcategoryProductSort'
 import { CODES } from '../src/constants/code-numbers'
-import { TIMEZONES, createDayjsWithTimezone } from '../src/constants/timezones'
+import { TIMEZONES, createDayjsWithTimezone, parseBusinessDateTime } from '../src/constants/timezones'
 import { useSchoolStudents } from '../src/hooks/useSchoolStudents'
 import { useCartStudent } from '../src/hooks/useCartStudent'
 import { useSchools } from '../src/hooks/useSchools'
@@ -279,6 +279,7 @@ export {
   CODES,
   TIMEZONES,
   createDayjsWithTimezone,
+  parseBusinessDateTime,
   SCHOOL_ALLERGENS,
   SCHOOL_DIETARY_TAGS
 }
