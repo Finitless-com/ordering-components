@@ -89,6 +89,18 @@ export function createCartCheckoutApiMocks (vi) {
           business: { slug: 'store-beta' }
         }
       }
+    }),
+    mockCartOffersGet: vi.fn().mockResolvedValue({
+      content: {
+        error: false,
+        result: [{
+          id: 50,
+          coupon: 'SAVE10',
+          name: 'Save 10%',
+          applicable: true,
+          stackable: false
+        }]
+      }
     })
   }
 }
@@ -108,6 +120,7 @@ export function buildCartCheckoutMockOrdering (vi, api) {
 
   const cartsApiChain = {
     getBusinesses: (...args) => api.mockGetBusinesses(...args),
+    getOffers: (...args) => api.mockCartOffersGet(...args),
     set: (...args) => api.mockCartSet(...args)
   }
 
@@ -219,7 +232,7 @@ export function createCartCheckoutTestContext (vi) {
       result: { status: 'completed', id: 99, balance: 40 }
     }),
     mockApplyCoupon: vi.fn(),
-    mockApplyOffer: vi.fn(),
+    mockApplyOffer: vi.fn().mockResolvedValue(true),
     mockRefreshOrderOptions: vi.fn().mockResolvedValue(true)
   }
 
@@ -261,8 +274,22 @@ export function createCartCheckoutTestContext (vi) {
         }
       }
     })
+    api.mockCartOffersGet.mockResolvedValue({
+      content: {
+        error: false,
+        result: [{
+          id: 50,
+          coupon: 'SAVE10',
+          name: 'Save 10%',
+          applicable: true,
+          stackable: false
+        }]
+      }
+    })
     mocks.mockRemoveProduct.mockResolvedValue(true)
     mocks.mockUpdateProduct.mockResolvedValue(true)
+    mocks.mockApplyCoupon.mockResolvedValue(true)
+    mocks.mockApplyOffer.mockResolvedValue(true)
     mocks.mockPlaceCart.mockResolvedValue({
       error: false,
       result: { uuid: 'cart-uuid-5', status: 1, business_id: 5, total: 25 }

@@ -115,6 +115,29 @@ const ApiCart = /** @class */ (function (_super) {
     })
   }
   /**
+     * Get offers available for a cart
+     * @param {RequestOptionsProps} options Params, headers and other options
+     */
+  ApiCart.prototype.getOffers = function (options) {
+    if (options === void 0) { options = {} }
+    return __awaiter(this, void 0, void 0, function () {
+      let url, response
+      return __generator(this, function (_a) {
+        switch (_a.label) {
+          case 0:
+            if (!this.cartId) {
+              throw new Error('The `cartId` is required to use ordering.carts(cartId).getOffers(options).')
+            }
+            url = '/carts/' + this.cartId + '/offers'
+            return [4 /* yield */, this.makeRequest('GET', url, undefined, null, options)]
+          case 1:
+            response = _a.sent()
+            return [2 /* return */, response]
+        }
+      })
+    })
+  }
+  /**
      * set a cart if cartId is set else get all
      * @param {RequestOptionsProps} options Params, headers and other options
      */

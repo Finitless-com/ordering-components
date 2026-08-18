@@ -912,20 +912,22 @@ export const OrderProvider = ({
     if (!offerData.business_id) {
       throw new Error('`business_id` is required.')
     }
-    if (typeof offerData.coupon === 'undefined') {
-      throw new Error('`coupon` is required.')
+    if (typeof offerData.coupon === 'undefined' && typeof offerData.offer_id === 'undefined') {
+      throw new Error('`coupon` or `offer_id` is required.')
     }
     try {
-      setState({ ...state, loading: true })
+      setState(prevState => ({ ...prevState, loading: true }))
       const countryCode = await strategy.getItem('country-code')
+      const offerRequest = {
+        user_id: offerData.userId,
+        business_id: offerData.business_id,
+        force: offerData.force ?? false
+      }
+      if (typeof offerData.coupon !== 'undefined') offerRequest.coupon = offerData.coupon
+      if (typeof offerData.offer_id !== 'undefined') offerRequest.offer_id = offerData.offer_id
       const response = await fetch(`${ordering.root}/carts/add_offer`, {
         method: 'POST',
-        body: JSON.stringify({
-          user_id: offerData.userId,
-          business_id: offerData.business_id,
-          coupon: offerData.coupon,
-          force: offerData.force ?? false
-        }),
+        body: JSON.stringify(offerRequest),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.token}`,
@@ -937,17 +939,25 @@ export const OrderProvider = ({
       })
       const result = await response.json()
       if (!result.error) {
-        state.carts[`businessId:${result.result.business_id}`] = result.result
         events.emit('cart_updated', result.result)
         events.emit('offer_applied', { ...result.result, ...offerData })
       } else {
         setAlert({ show: true, content: result.result, status: response?.status })
         events.emit('offer_denied', { ...offerData, reason: result.result })
       }
-      setState({ ...state, loading: false })
+      setState(prevState => ({
+        ...prevState,
+        carts: result.error
+          ? prevState.carts
+          : {
+              ...prevState.carts,
+              [`businessId:${result.result.business_id}`]: result.result
+            },
+        loading: false
+      }))
       return !result.error
     } catch (err) {
-      setState({ ...state, loading: false })
+      setState(prevState => ({ ...prevState, loading: false }))
       return false
     }
   }
