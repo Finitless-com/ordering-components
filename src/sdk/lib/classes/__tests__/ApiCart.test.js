@@ -20,6 +20,7 @@ describe('ApiCart', () => {
   it('requires cartId for place and confirm', async () => {
     await expect(ordering.carts().place({})).rejects.toThrow('cartId` is required')
     await expect(ordering.carts().confirm()).rejects.toThrow('cartId` is required')
+    await expect(ordering.carts().getOffers()).rejects.toThrow('cartId` is required')
   })
 
   it('GETs single cart endpoint when cartId is set', async () => {
@@ -39,6 +40,20 @@ describe('ApiCart', () => {
     expect(ordering.post).toHaveBeenCalledWith('/carts/add_product', { product_id: 1 }, expect.any(Object))
     expect(ordering.post).toHaveBeenCalledWith('/carts/apply_coupon', { code: 'SAVE' }, expect.any(Object))
     expect(ordering.post).toHaveBeenCalledWith('/carts/change_paymethod', { paymethod_id: 2 }, expect.any(Object))
+  })
+
+  it('GETs available offers for a cart without casting them as carts', async () => {
+    await ordering.carts('cart-uuid').getOffers({
+      query: { only_applicable: false }
+    })
+
+    expect(ordering.get).toHaveBeenCalledWith(
+      '/carts/cart-uuid/offers',
+      expect.objectContaining({
+        CastClass: null,
+        query: { only_applicable: false }
+      })
+    )
   })
 
   it('throws for unimplemented save/delete', async () => {
