@@ -66,6 +66,7 @@ vi.mock('../../ToastContext', () => ({
   useToast: () => [{}, { showToast: mocks.showToast }]
 }))
 
+// eslint-disable-next-line import/first
 import { OrderProvider, useOrder } from '../index'
 
 let orderState
@@ -132,6 +133,54 @@ describe('OrderContext offers', () => {
     })
     expect(mocks.emit).toHaveBeenCalledWith(
       'offer_applied',
+      expect.objectContaining({ offer_id: 50 })
+    )
+  })
+
+  it('removes an offer and replaces the matching cart immutably', async () => {
+    global.fetch.mockResolvedValue({
+      status: 200,
+      json: async () => ({
+        error: false,
+        result: {
+          business_id: 5,
+          uuid: 'cart-uuid-5',
+          offers: []
+        }
+      })
+    })
+    render(
+      <OrderProvider strategy={strategy}>
+        <OrderProbe />
+      </OrderProvider>
+    )
+
+    await act(async () => {
+      await orderActions.removeOffer({
+        business_id: 5,
+        offer_id: 50,
+        user_id: 12
+      })
+    })
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.test/carts/remove_offer',
+      expect.objectContaining({ method: 'POST' })
+    )
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({
+      business_id: 5,
+      offer_id: 50,
+      user_id: 12
+    })
+    await waitFor(() => {
+      expect(orderState.loading).toBe(false)
+      expect(orderState.carts['businessId:5']).toEqual(expect.objectContaining({
+        uuid: 'cart-uuid-5',
+        offers: []
+      }))
+    })
+    expect(mocks.emit).toHaveBeenCalledWith(
+      'offer_removed',
       expect.objectContaining({ offer_id: 50 })
     )
   })

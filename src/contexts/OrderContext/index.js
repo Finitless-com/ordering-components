@@ -971,7 +971,7 @@ export const OrderProvider = ({
     }
     try {
       const countryCode = await strategy.getItem('country-code')
-      setState({ ...state, loading: true })
+      setState(prevState => ({ ...prevState, loading: true }))
       const offerRemoveData = {
         business_id: offerData.business_id,
         offer_id: offerData.offer_id
@@ -991,16 +991,24 @@ export const OrderProvider = ({
       })
       const result = await response.json()
       if (!result.error) {
-        state.carts[`businessId:${result.result.business_id}`] = result.result
         events.emit('cart_updated', result.result)
         events.emit('offer_removed', offerData)
       } else {
         setAlert({ show: true, content: result.result, status: response?.status })
       }
-      setState({ ...state, loading: false })
+      setState(prevState => ({
+        ...prevState,
+        carts: result.error
+          ? prevState.carts
+          : {
+              ...prevState.carts,
+              [`businessId:${result.result.business_id}`]: result.result
+            },
+        loading: false
+      }))
       return !result.error
     } catch (err) {
-      setState({ ...state, loading: false })
+      setState(prevState => ({ ...prevState, loading: false }))
       return false
     }
   }

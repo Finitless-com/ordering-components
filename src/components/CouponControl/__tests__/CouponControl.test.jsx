@@ -27,7 +27,8 @@ vi.mock('../../../contexts/ConfigContext', () => ({
 vi.mock('../../../contexts/OrderContext', () => ({
   useOrder: () => [cart.mockOrderState, {
     applyCoupon: cart.mockApplyCoupon,
-    applyOffer: cart.mockApplyOffer
+    applyOffer: cart.mockApplyOffer,
+    removeOffer: cart.mockRemoveOffer
   }]
 }))
 
@@ -39,6 +40,7 @@ vi.mock('../../../contexts/SessionContext', () => ({
   useSession: () => [sessionState]
 }))
 
+// eslint-disable-next-line import/first
 import { CouponControl } from '../index'
 
 describe('CouponControl', () => {
@@ -151,6 +153,23 @@ describe('CouponControl', () => {
     })
     expect(cart.mockCartOffersGet).toHaveBeenCalledTimes(1)
     expect(lastControllerProps.applyingOfferId).toBe(null)
+  })
+
+  it('removes an applied offer by id and refreshes available offers', async () => {
+    cart.mockConfigState.configs.advanced_offers_module.value = '1'
+    renderController(CouponControl, { businessId: 5, price: 10 })
+
+    await act(async () => {
+      await lastControllerProps.handleOfferRemoveClick(50)
+    })
+
+    expect(cart.mockRemoveOffer).toHaveBeenCalledWith({
+      business_id: 5,
+      offer_id: 50,
+      user_id: 12
+    })
+    expect(cart.mockCartOffersGet).toHaveBeenCalledTimes(1)
+    expect(lastControllerProps.removingOfferId).toBe(null)
   })
 
   it('deduplicates concurrent offer-list requests', async () => {

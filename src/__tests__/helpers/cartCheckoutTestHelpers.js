@@ -221,7 +221,7 @@ export function createCartCheckoutTestContext (vi) {
     mockEmit: vi.fn(),
     mockRemoveProduct: vi.fn().mockResolvedValue(true),
     mockUpdateProduct: vi.fn().mockResolvedValue(true),
-    mockRemoveOffer: vi.fn(),
+    mockRemoveOffer: vi.fn().mockResolvedValue(true),
     mockSetStateValues: vi.fn(),
     mockPlaceCart: vi.fn().mockResolvedValue({
       error: false,
@@ -288,6 +288,7 @@ export function createCartCheckoutTestContext (vi) {
     })
     mocks.mockRemoveProduct.mockResolvedValue(true)
     mocks.mockUpdateProduct.mockResolvedValue(true)
+    mocks.mockRemoveOffer.mockResolvedValue(true)
     mocks.mockApplyCoupon.mockResolvedValue(true)
     mocks.mockApplyOffer.mockResolvedValue(true)
     mocks.mockPlaceCart.mockResolvedValue({

@@ -26,16 +26,18 @@ export const CouponControl = (props) => {
   } = props
 
   const [{ configs }] = useConfig()
-  const [orderState, { applyCoupon, applyOffer }] = useOrder()
+  const [orderState, { applyCoupon, applyOffer, removeOffer }] = useOrder()
   const [confirm, setConfirm] = useState({ open: false, content: null, error: false })
   const [offersState, setOffersState] = useState(initialOffersState)
   const [applyingOfferId, setApplyingOfferId] = useState(null)
+  const [removingOfferId, setRemovingOfferId] = useState(null)
   const [, t] = useLanguage()
   const [{ user }] = useCustomer()
   const [ordering] = useApi()
   const [session] = useSession()
   const offersRequestRef = useRef({ id: 0, cartUuid: null, promise: null })
   const applyingOfferRef = useRef(false)
+  const removingOfferRef = useRef(false)
 
   const cart = props.cart || orderState?.carts?.[`businessId:${businessId}`]
   const couponDefault = cart?.coupon || null
@@ -129,7 +131,7 @@ export const CouponControl = (props) => {
   }
 
   const handleOfferApplyClick = async (offer) => {
-    if (!canLoadOffers || !offer?.id || applyingOfferRef.current) return false
+    if (!canLoadOffers || !offer?.id || applyingOfferRef.current || removingOfferRef.current) return false
 
     applyingOfferRef.current = true
     setApplyingOfferId(offer.id)
@@ -148,6 +150,33 @@ export const CouponControl = (props) => {
     } finally {
       applyingOfferRef.current = false
       setApplyingOfferId(null)
+    }
+  }
+
+  const handleOfferRemoveClick = async (offerId) => {
+    if (
+      !businessId ||
+      !offerId ||
+      removingOfferRef.current ||
+      applyingOfferRef.current
+    ) return false
+
+    removingOfferRef.current = true
+    setRemovingOfferId(offerId)
+
+    const offerData = {
+      business_id: businessId,
+      offer_id: offerId
+    }
+    if (user?.id) offerData.user_id = user.id
+
+    try {
+      const removed = await removeOffer(offerData)
+      if (removed && canLoadOffers) loadAvailableOffers()
+      return removed
+    } finally {
+      removingOfferRef.current = false
+      setRemovingOfferId(null)
     }
   }
 
@@ -244,6 +273,7 @@ export const CouponControl = (props) => {
         promise: null
       }
       applyingOfferRef.current = false
+      removingOfferRef.current = false
     }
   }, [])
 
@@ -266,8 +296,10 @@ export const CouponControl = (props) => {
           handleRemoveCouponClick={handleRemoveCouponClick}
           handleLoadOffers={loadAvailableOffers}
           handleOfferApplyClick={handleOfferApplyClick}
+          handleOfferRemoveClick={handleOfferRemoveClick}
           offersState={currentOffersState}
           applyingOfferId={applyingOfferId}
+          removingOfferId={removingOfferId}
           canLoadOffers={canLoadOffers}
           cart={cart}
           confirm={confirm}
