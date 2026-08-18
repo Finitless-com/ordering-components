@@ -120,6 +120,40 @@ describe('CouponControl', () => {
     }))
   })
 
+  it('hides delivery offers and blocks stale application for pickup carts', async () => {
+    cart.mockConfigState.configs.advanced_offers_module.value = '1'
+    cart.mockOrderState.options.type = 2
+    cart.mockCartOffersGet.mockResolvedValue({
+      content: {
+        error: false,
+        result: [
+          { id: 50, name: 'Free delivery', target: 2, applicable: true },
+          { id: 51, name: 'Product reward', target: 1, applicable: true }
+        ]
+      }
+    })
+    renderController(CouponControl, { businessId: 5, price: 10 })
+
+    await act(async () => {
+      await lastControllerProps.handleLoadOffers()
+    })
+
+    expect(lastControllerProps.canLoadOffers).toBe(true)
+    expect(lastControllerProps.offersState.offers).toEqual([
+      expect.objectContaining({ id: 51 })
+    ])
+
+    await act(async () => {
+      await lastControllerProps.handleOfferApplyClick({
+        id: 50,
+        target: 2,
+        stackable: true
+      })
+    })
+
+    expect(cart.mockApplyOffer).not.toHaveBeenCalled()
+  })
+
   it('does not load saved offers for guests or grouped carts', async () => {
     cart.mockConfigState.configs.advanced_offers_module.value = '1'
     sessionState.auth = false

@@ -14,6 +14,10 @@ const initialOffersState = {
   error: null
 }
 
+const isOfferVisibleForOrderType = (offer, orderType) => (
+  Number(offer?.target) !== 2 || Number(orderType) === 1
+)
+
 /**
  * Component to manage coupon form behavior without UI component
  */
@@ -131,7 +135,13 @@ export const CouponControl = (props) => {
   }
 
   const handleOfferApplyClick = async (offer) => {
-    if (!canLoadOffers || !offer?.id || applyingOfferRef.current || removingOfferRef.current) return false
+    if (
+      !canLoadOffers ||
+      !offer?.id ||
+      !isOfferVisibleForOrderType(offer, orderState?.options?.type) ||
+      applyingOfferRef.current ||
+      removingOfferRef.current
+    ) return false
 
     applyingOfferRef.current = true
     setApplyingOfferId(offer.id)
@@ -283,6 +293,12 @@ export const CouponControl = (props) => {
         ...initialOffersState,
         cartUuid: cart?.uuid || null
       }
+  const visibleOffersState = {
+    ...currentOffersState,
+    offers: currentOffersState.offers.filter(offer => (
+      isOfferVisibleForOrderType(offer, orderState?.options?.type)
+    ))
+  }
 
   return (
     <>
@@ -297,7 +313,7 @@ export const CouponControl = (props) => {
           handleLoadOffers={loadAvailableOffers}
           handleOfferApplyClick={handleOfferApplyClick}
           handleOfferRemoveClick={handleOfferRemoveClick}
-          offersState={currentOffersState}
+          offersState={visibleOffersState}
           applyingOfferId={applyingOfferId}
           removingOfferId={removingOfferId}
           canLoadOffers={canLoadOffers}
