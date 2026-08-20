@@ -1,10 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react'
 import PropTypes from 'prop-types'
+import dayjs from 'dayjs'
+import utc from 'dayjs/plugin/utc'
 import { useApi } from '../../contexts/ApiContext'
 import { useOrder } from '../../contexts/OrderContext'
 import { useSession } from '../../contexts/SessionContext'
 import { useOrderingTheme } from '../../contexts/OrderingThemeContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+
+dayjs.extend(utc)
 
 export const BusinessSearchList = (props) => {
   props = { ...defaultProps, ...props }
@@ -47,6 +51,8 @@ export const BusinessSearchList = (props) => {
   const prevLocationKeyRef = useRef(null)
   const abortControllerRef = useRef(null)
   const searchDebounceRef = useRef(null)
+
+  const isValidMoment = (date, format) => dayjs.utc(date, format).format(format) === date
 
   useEffect(() => {
     const location = orderState?.options?.address?.location
@@ -179,7 +185,10 @@ export const BusinessSearchList = (props) => {
         if ((!filters[key] && filters[key] !== 0) || filters[key] === 'default' || filters[key]?.length === 0) return
         Array.isArray(filters[key]) ? filtParams = filtParams + `&${key}=[${filters[key]}]` : filtParams = filtParams + `&${key}=${filters[key]}`
       })
-      filtParams = filtParams + (orderState?.options?.type === 1 && defaultLocation ? '&max_distance=20000' : '')
+      filtParams = filtParams + (orderOptionsRef.current?.type === 1 && defaultLocation ? '&max_distance=20000' : '')
+      if (currentOrderOptions?.moment && isValidMoment(currentOrderOptions?.moment, 'YYYY-MM-DD HH:mm:ss')) {
+        filtParams = filtParams + `&timestamp=${dayjs.utc(currentOrderOptions?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()}`
+      }
       filtParams = filtParams + `&page=${newFetch ? 1 : paginationProps.currentPage + 1}&page_size=${paginationProps.pageSize}`
       brandId && (filtParams = filtParams + `&franchise_ids=[${brandId}]`)
       let where = ''
