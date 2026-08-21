@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { useSelectedStudent } from '../../hooks/useSelectedStudent'
 import PropTypes from 'prop-types'
 import dayjs from 'dayjs'
@@ -56,6 +56,7 @@ export const BusinessAndProductList = (props) => {
   const [loadedFirstTime, setLoadedFirstTime] = useState(false)
   const [categoriesState, setCategoriesState] = useState({})
   const [orderOptions, setOrderOptions] = useState({})
+  const pendingBusinessFetchRef = useRef(false)
   const [productModal, setProductModal] = useState({ product: null, loading: false, error: null })
   const [notFound, setNotFound] = useState(false)
   const [featuredProducts, setFeaturedProducts] = useState(false)
@@ -1022,16 +1023,33 @@ export const BusinessAndProductList = (props) => {
   }, [priceFilterValues])
 
   useEffect(() => {
-    if (!orderState.loading && Object.keys(orderOptions || {})?.length > 0 && !languageState.loading && !props.avoidBusinessLoading && !props.isExternalLoading) {
-      getBusiness()
+    if (Object.keys(orderOptions || {})?.length === 0 || languageState.loading || props.avoidBusinessLoading || props.isExternalLoading) return
+    if (orderState.loading) {
+      pendingBusinessFetchRef.current = true
+      return
     }
+    pendingBusinessFetchRef.current = false
+    getBusiness()
   }, [JSON.stringify(orderOptions), languageState.loading, slug, filterByMenus, professionalSelected, props.isExternalLoading, schoolStudentId])
 
   useEffect(() => {
-    if (!orderState.loading && Object.keys(orderOptions || {})?.length > 0 && !languageState.loading && !businessState.loading && props.avoidBusinessLoading) {
-      getBusiness()
+    if (Object.keys(orderOptions || {})?.length === 0 || languageState.loading || !props.avoidBusinessLoading) return
+    if (orderState.loading || businessState.loading) {
+      pendingBusinessFetchRef.current = true
+      return
     }
+    pendingBusinessFetchRef.current = false
+    getBusiness()
   }, [JSON.stringify(orderOptions), languageState.loading, slug, filterByMenus, professionalSelected, schoolStudentId])
+
+  /**
+   * getBusiness pending after order options or business finish loading
+   */
+  useEffect(() => {
+    if (orderState.loading || businessState.loading || !pendingBusinessFetchRef.current) return
+    pendingBusinessFetchRef.current = false
+    getBusiness()
+  }, [orderState.loading, businessState.loading])
 
   /**
    * getBusiness if orderState is loading the first time when is rendered
