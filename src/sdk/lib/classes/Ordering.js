@@ -79,10 +79,12 @@ const __rest = (this && this.__rest) || function (s, e) {
   }
   return t
 }
+const stripTrailingSlashes = function (url) { return typeof url === 'string' ? url.replace(/\/+$/, '') : url }
+const joinUrl = function (root, path) { return stripTrailingSlashes(root) + '/' + String(path !== null && path !== void 0 ? path : '').replace(/^\/+/, '') }
 const Ordering = /** @class */ (function () {
   function Ordering (_a) {
     const _b = _a === void 0 ? {} : _a; const _c = _b.url; const url = _c === void 0 ? 'https://apiv4.ordering.co' : _c; const _d = _b.version; const version = _d === void 0 ? 'v400' : _d; const _e = _b.project; const project = _e === void 0 ? 'demo' : _e; const _f = _b.language; const language = _f === void 0 ? 'en' : _f; const _g = _b.accessToken; const accessToken = _g === void 0 ? null : _g; const _h = _b.apiKey; const apiKey = _h === void 0 ? null : _h; const _j = _b.appId; const appId = _j === void 0 ? null : _j; const _k = _b.billing; const billing = _k === void 0 ? null : _k; const _l = _b.countryCode; const countryCode = _l === void 0 ? null : _l; const _m = _b.appInternalName; const appInternalName = _m === void 0 ? null : _m
-    this.url = url
+    this.url = stripTrailingSlashes(url)
     this.version = version
     this.project = project
     this.language = language
@@ -138,7 +140,7 @@ const Ordering = /** @class */ (function () {
     return this
   }
   Ordering.prototype.setUrl = function (url) {
-    this.url = url
+    this.url = stripTrailingSlashes(url)
     return this
   }
   Ordering.prototype.setProject = function (project) {
@@ -332,7 +334,7 @@ const Ordering = /** @class */ (function () {
         switch (_b.label) {
           case 0:
             _a = this.getRequestProps(options), root = _a[0], reqOptions = _a[1]
-            return [4 /* yield */, this.makeRequest('GET', root + path, null, reqOptions)]
+            return [4 /* yield */, this.makeRequest('GET', joinUrl(root, path), null, reqOptions)]
           case 1:
             response = _b.sent()
             return [2 /* return */, new ApiResponse(response, options, options.api)]
@@ -356,7 +358,7 @@ const Ordering = /** @class */ (function () {
                 }
               }
             }
-            return [4 /* yield */, this.makeRequest('POST', root + path, data, reqOptions)]
+            return [4 /* yield */, this.makeRequest('POST', joinUrl(root, path), data, reqOptions)]
           case 1:
             response = _b.sent()
             return [2 /* return */, new ApiResponse(response, options, options.api)]
@@ -380,7 +382,7 @@ const Ordering = /** @class */ (function () {
                 }
               }
             }
-            return [4 /* yield */, this.makeRequest('PUT', root + path, data, reqOptions)]
+            return [4 /* yield */, this.makeRequest('PUT', joinUrl(root, path), data, reqOptions)]
           case 1:
             response = _b.sent()
             return [2 /* return */, new ApiResponse(response, options, options.api)]
@@ -396,7 +398,7 @@ const Ordering = /** @class */ (function () {
         switch (_b.label) {
           case 0:
             _a = this.getRequestProps(options), root = _a[0], reqOptions = _a[1]
-            return [4 /* yield */, this.makeRequest('DELETE', root + path, null, reqOptions)]
+            return [4 /* yield */, this.makeRequest('DELETE', joinUrl(root, path), null, reqOptions)]
           case 1:
             response = _b.sent()
             return [2 /* return */, new ApiResponse(response, options, options.api)]
