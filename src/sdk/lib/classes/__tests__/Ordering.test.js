@@ -24,6 +24,35 @@ describe('Ordering', () => {
     expect(ordering.systemRoot).toBe('https://api.test/v1')
   })
 
+  it('strips trailing slashes from the base url', () => {
+    const ordering = new Ordering({ url: 'https://api.test/', version: 'v400', language: 'en', project: 'orderingv1' })
+    expect(ordering.root).toBe('https://api.test/v400/en/orderingv1')
+    expect(ordering.systemRoot).toBe('https://api.test/v400')
+    expect(ordering.setUrl('https://other.test//').root).toBe('https://other.test/v400/en/orderingv1')
+  })
+
+  it.each([
+    ['https://api.test', '/users/1/addresses'],
+    ['https://api.test/', '/users/1/addresses'],
+    ['https://api.test', 'users/1/addresses'],
+    ['https://api.test/', 'users/1/addresses']
+  ])('requests exactly one slash between root and path (base %s, path %s)', async (url, path) => {
+    const captured = []
+    installXhrMock({
+      response: { error: false, result: [] },
+      onRequest: (xhr) => captured.push(xhr)
+    })
+    const ordering = new Ordering({ url, version: 'v400', language: 'en', project: 'orderingv1' })
+    await ordering.get(path)
+    await ordering.post(path, {})
+    await ordering.put(path, {})
+    await ordering.delete(path)
+    expect(captured).toHaveLength(4)
+    captured.forEach((xhr) => {
+      expect(xhr.url).toBe('https://api.test/v400/en/orderingv1/users/1/addresses')
+    })
+  })
+
   it('supports fluent setters', () => {
     const ordering = new Ordering()
     expect(ordering.setLanguage('es').language).toBe('es')

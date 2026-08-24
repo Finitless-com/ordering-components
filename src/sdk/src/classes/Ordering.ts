@@ -16,6 +16,10 @@ import { ApiOrderOption } from './ApiOrderOption'
 import { ApiCart } from './ApiCart'
 import { ApiPaymentCards } from './ApiPaymentCards'
 
+const stripTrailingSlashes = (url: string) => typeof url === 'string' ? url.replace(/\/+$/, '') : url
+
+const joinUrl = (root: string, path: string) => `${stripTrailingSlashes(root)}/${String(path ?? '').replace(/^\/+/, '')}`
+
 interface SettingProps {
   url?: string
   version?: string
@@ -52,7 +56,7 @@ export class Ordering {
     countryCode = null,
     appInternalName = null
   }: SettingProps = {}) {
-    this.url = url
+    this.url = stripTrailingSlashes(url)
     this.version = version
     this.project = project
     this.language = language
@@ -101,7 +105,7 @@ export class Ordering {
   }
 
   setUrl (url: string) {
-    this.url = url
+    this.url = stripTrailingSlashes(url)
     return this
   }
 
@@ -310,7 +314,7 @@ export class Ordering {
   async get (path: string, options: RequestOptionsProps = { CastClass: null, json: true, system: false }) {
     const [root, reqOptions] = this.getRequestProps(options)
 
-    const response = await this.makeRequest('GET', root + path, null, reqOptions)
+    const response = await this.makeRequest('GET', joinUrl(root, path), null, reqOptions)
 
     return new ApiResponse(response, options, options.api)
   }
@@ -326,7 +330,7 @@ export class Ordering {
       }
     }
 
-    const response = await this.makeRequest('POST', root + path, data, reqOptions)
+    const response = await this.makeRequest('POST', joinUrl(root, path), data, reqOptions)
     return new ApiResponse(response, options, options.api)
   }
 
@@ -341,14 +345,14 @@ export class Ordering {
       }
     }
 
-    const response = await this.makeRequest('PUT', root + path, data, reqOptions)
+    const response = await this.makeRequest('PUT', joinUrl(root, path), data, reqOptions)
     return new ApiResponse(response, options, options.api)
   }
 
   async delete (path: string, options: RequestOptionsProps = { CastClass: null, json: true, system: false }) {
     const [root, reqOptions] = this.getRequestProps(options)
 
-    const response = await this.makeRequest('DELETE', root + path, null, reqOptions)
+    const response = await this.makeRequest('DELETE', joinUrl(root, path), null, reqOptions)
     return new ApiResponse(response, options, options.api)
   }
 }
