@@ -3,6 +3,7 @@ import propTypes from 'prop-types'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useSession } from '../../contexts/SessionContext'
 import { useOrder } from '../../contexts/OrderContext'
+import { getSquareSdkUrl } from '../../utils/squareSdk'
 
 export const PaymentOptionSquare = (props) => {
   const {
@@ -11,7 +12,8 @@ export const PaymentOptionSquare = (props) => {
     onPlaceOrderClick,
     body,
     data,
-    setCreateOrder
+    setCreateOrder,
+    sandbox
   } = props
 
   const [, t] = useLanguage()
@@ -43,7 +45,10 @@ export const PaymentOptionSquare = (props) => {
   useEffect(() => {
     const script = document.createElement('script')
     script.type = 'text/javascript'
-    script.src = 'https://sandbox.web.squarecdn.com/v1/square.js'
+    script.src = getSquareSdkUrl({
+      sandbox: sandbox ?? data?.sandbox,
+      applicationId: data?.application_id
+    })
     script.async = true
     script.onload = () => {
       setIsLoading(false)
