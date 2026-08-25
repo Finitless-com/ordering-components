@@ -3,6 +3,7 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { useApi } from '../ApiContext'
 import { useToast, ToastType } from '../ToastContext'
 import { useLanguage } from '../LanguageContext'
+import { getSessionStorageSyncDecision } from './getSessionStorageSyncDecision'
 /**
  * Create SessionContext
  * This context will manage the session internally and provide an easy interface
@@ -105,14 +106,27 @@ export const SessionProvider = ({ children, strategy }) => {
 
   const checkLocalStorage = async () => {
     try {
-      const { token, user } = await getValuesFromLocalStorage()
-      if (token && !state.token) {
+      const stored = await getValuesFromLocalStorage()
+      const { token, user, device_code } = stored || {}
+      const currentState = stateRef.current
+      if (device_code && device_code !== currentState.device_code) {
+        setState(prevState => ({
+          ...prevState,
+          device_code
+        }))
+      }
+      const syncDecision = getSessionStorageSyncDecision({
+        stored: { token, user },
+        current: currentState
+      })
+      if (syncDecision.action === 'login') {
         login({
-          user,
-          token
+          user: syncDecision.user,
+          token: syncDecision.token,
+          device_code: device_code || currentState.device_code
         })
       }
-      if ((!token && state.token) || (!user?.enabled)) {
+      if (syncDecision.action === 'logout') {
         logout()
       }
     } catch (err) {
