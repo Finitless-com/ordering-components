@@ -16,6 +16,7 @@ const ProductProviderWrapper = ({ children }) => (
 describe('ProductComponent', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.localStorage.clear()
   })
 
   it('initializes ingredients and options on mount', async () => {
@@ -25,6 +26,19 @@ describe('ProductComponent', () => {
     })
     expect(lastControllerProps.options).toHaveLength(1)
     expect(lastControllerProps.productPrice).toBe(9.5)
+  })
+
+  it('does not overwrite guest order options in storage when product extras initialize', async () => {
+    const guestOrderOptions = {
+      type: 1,
+      address: { id: 9, address: '123 Main St' },
+      address_id: 9
+    }
+    window.localStorage.setItem('options', JSON.stringify(guestOrderOptions))
+    renderController(ProductComponent, { product: productForComponent }, { wrapper: ProductProviderWrapper })
+    await waitFor(() => expect(lastControllerProps.options).toHaveLength(1))
+    expect(JSON.parse(window.localStorage.getItem('options'))).toEqual(guestOrderOptions)
+    expect(JSON.parse(window.localStorage.getItem('product_options'))).toHaveLength(1)
   })
 
   it('increments quantity and recalculates price', async () => {
