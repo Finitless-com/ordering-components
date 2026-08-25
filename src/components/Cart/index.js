@@ -162,9 +162,11 @@ export const Cart = (props) => {
               showToast(ToastType.Error, result)
               return
             }
-            const carts = orderState.carts
-            carts[`businessId:${result.business_id}`] = result
-            setStateValues({ carts })
+            setStateValues({
+              carts: {
+                [`businessId:${result.business_id}`]: result
+              }
+            })
             setCommentState(prev => ({ ...prev, loading: false, error: null, result }))
           } catch (err) {
             if (err.name !== 'AbortError') {
