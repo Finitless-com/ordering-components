@@ -1,6 +1,7 @@
+import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { waitFor, act } from '@testing-library/react'
-import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
+import { render, waitFor, act } from '@testing-library/react'
+import { renderController, lastControllerProps, ControllerUI } from '../../../__tests__/helpers/renderController'
 
 const orders = vi.hoisted(() => {
   const { createCustomerOrdersTestContext } = require('../../../__tests__/helpers/customerOrdersTestHelpers')
@@ -58,6 +59,9 @@ vi.mock('../../../contexts/UtilsContext', () => ({
   useUtils: () => [{ parsePrice: mockParsePrice }]
 }))
 
+// eslint-disable-next-line import/first
+import { EventProvider } from '../../../contexts/EventContext'
+// eslint-disable-next-line import/first
 import { OrderDetails } from '../index'
 
 describe('OrderDetails', () => {
@@ -177,6 +181,55 @@ describe('OrderDetails', () => {
     expect(lastControllerProps.order.order.id).toBe(101)
     expect(orders.mockOrderGet).toHaveBeenCalled()
     expect(orders.mockBusinessGet).toHaveBeenCalled()
+  })
+
+  it('cancels the previous order GET when orderId changes and ignores a late response', async () => {
+    const pending = []
+    orders.mockOrderGet.mockImplementation(async (options) => {
+      if (options?.cancelToken) {
+        options.cancelToken.cancel = vi.fn()
+      }
+      return new Promise(resolve => {
+        pending.push({ options, resolve })
+      })
+    })
+    const view = render(
+      <EventProvider>
+        <OrderDetails UIComponent={ControllerUI} orderId={101} />
+      </EventProvider>
+    )
+    await waitFor(() => expect(orders.mockOrderGet).toHaveBeenCalledTimes(1))
+    const firstToken = orders.mockOrderGet.mock.calls[0][0].cancelToken
+
+    view.rerender(
+      <EventProvider>
+        <OrderDetails UIComponent={ControllerUI} orderId={202} />
+      </EventProvider>
+    )
+
+    await waitFor(() => expect(firstToken.cancel).toHaveBeenCalled())
+    await waitFor(() => expect(orders.mockOrderGet).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      pending[1].resolve({
+        content: { error: false, result: { id: 202, status: 1, business_id: 5 } }
+      })
+    })
+    await waitFor(() => {
+      expect(lastControllerProps.order.loading).toBe(false)
+      expect(lastControllerProps.order.order.id).toBe(202)
+    })
+
+    await act(async () => {
+      pending[0].resolve({
+        content: { error: false, result: { id: 101, status: 0, business_id: 5 } }
+      })
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(lastControllerProps.order.order?.id).toBe(202)
+    expect(lastControllerProps.order.loading).toBe(false)
+    expect(orders.mockBusinessGet).toHaveBeenCalledTimes(1)
   })
 
   it('updates driver GPS position', async () => {
