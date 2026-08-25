@@ -43,6 +43,7 @@ vi.mock('../../../contexts/ApiContext', () => ({
   useApi: () => [addr.mockOrdering]
 }))
 
+// eslint-disable-next-line import/first
 import { PhoneAutocomplete } from '../index'
 
 describe('PhoneAutocomplete', () => {
@@ -70,5 +71,11 @@ describe('PhoneAutocomplete', () => {
     const b = { address: '123 Main', location: { lat: 1, lng: 2 } }
     expect(lastControllerProps.checkAddress(a, b)).toBe(true)
     expect(lastControllerProps.checkAddress(a, { address: 'Other', location: { lat: 0, lng: 0 } })).toBe(false)
+  })
+
+  it('renders when user-customer storage is corrupt JSON', () => {
+    window.localStorage.setItem('user-customer', 'undefined')
+    expect(() => renderController(PhoneAutocomplete, {})).not.toThrow()
+    expect(lastControllerProps.customersPhones.users).toEqual([])
   })
 })
