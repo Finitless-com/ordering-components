@@ -8,6 +8,7 @@ import { useToast, ToastType } from '../../contexts/ToastContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
 import { isBlockingApplePayConfirmError } from '../../utils/applePayConfirm'
+import { getPlaceAmount } from '../../utils/placeAmount'
 
 /**
  * Component to manage Multi businesses checkout page behavior without UI component
@@ -80,7 +81,7 @@ export const MultiCheckout = (props) => {
       paymethodData = JSON.stringify(paymethodSelected.paymethod_data)
     }
     let payload = {
-      amount: cartGroup?.result?.balance
+      amount: getPlaceAmount(cartGroup?.result)
     }
     if (paymethodSelected?.paymethod) {
       payload = {
