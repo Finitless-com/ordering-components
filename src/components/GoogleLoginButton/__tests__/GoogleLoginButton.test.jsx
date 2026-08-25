@@ -9,6 +9,7 @@ const social = vi.hoisted(() => {
     appId: 'app',
     appInternalName: 'web',
     root: 'https://api.test',
+    setAccessToken: vi.fn(function () { return mockOrdering }),
     users: vi.fn(() => ({ authGoogle: mockAuthGoogle }))
   }
   const reset = () => {
@@ -68,6 +69,9 @@ describe('GoogleLoginButton', () => {
     await waitFor(() => {
       expect(social.mockAuthGoogle).toHaveBeenCalledWith({ access_token: 'google-id-token' })
     })
+    expect(social.mockOrdering.setAccessToken).toHaveBeenCalledWith(null)
+    expect(social.mockOrdering.setAccessToken.mock.invocationCallOrder[0])
+      .toBeLessThan(social.mockOrdering.users.mock.invocationCallOrder[0])
     expect(handleSuccessGoogleLogin).toHaveBeenCalled()
     expect(signIn).toHaveBeenCalled()
   })

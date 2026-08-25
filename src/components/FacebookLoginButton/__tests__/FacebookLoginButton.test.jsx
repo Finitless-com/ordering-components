@@ -6,6 +6,7 @@ import { setupFacebook, resetSocialAuthDom } from '../../../__tests__/helpers/so
 const social = vi.hoisted(() => {
   const mockAuthFacebook = vi.fn()
   const mockOrdering = {
+    setAccessToken: vi.fn(function () { return mockOrdering }),
     users: vi.fn(() => ({ authFacebook: mockAuthFacebook }))
   }
   const reset = () => {
@@ -75,6 +76,9 @@ describe('FacebookLoginButton', () => {
         guest_token: 'guest-1'
       })
     })
+    expect(social.mockOrdering.setAccessToken).toHaveBeenCalledWith(null)
+    expect(social.mockOrdering.setAccessToken.mock.invocationCallOrder[0])
+      .toBeLessThan(social.mockOrdering.users.mock.invocationCallOrder[0])
     expect(handleSuccessFacebookLogin).toHaveBeenCalled()
   })
 

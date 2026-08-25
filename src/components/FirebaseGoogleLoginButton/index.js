@@ -55,7 +55,7 @@ export const FirebaseGoogleLoginButton = (props) => {
         lastname: tokenResponse?.lastName
       }
       if (isGuest && user?.guest_id) _credentials.guest_token = user?.guest_id
-      const { content: { error, result } } = await ordering.users().authGoogle(_credentials)
+      const { content: { error, result } } = await ordering.setAccessToken(null).users().authGoogle(_credentials)
       if (!error) {
         if (handleSuccessGoogleLogin) {
           handleSuccessGoogleLogin(result)
