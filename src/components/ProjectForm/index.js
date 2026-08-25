@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import PropTypes from 'prop-types'
 import { useApi } from '../../contexts/ApiContext'
+import { useSession } from '../../contexts/SessionContext'
 
 export const ProjectForm = (props) => {
   const {
@@ -10,14 +11,24 @@ export const ProjectForm = (props) => {
   } = props
 
   const [ordering, { setOrdering }] = useApi()
+  const [, { logout }] = useSession()
 
   const [projectState, setProjectState] = useState({ data: null, loading: false })
 
-  const onSubmit = (values) => {
+  const onSubmit = async (values) => {
     setProjectState({ data: values, loading: true })
-    setOrdering({ ...ordering, project: values?.project_name })
-    setStoreData('project_name', JSON.stringify(values?.project_name))
-    EventEmitter.emit('change_project', { setted: !!values?.project_name, changed: !!values?.project_name })
+    const nextProject = values?.project_name
+    const projectChanged = nextProject !== ordering.project
+    if (projectChanged && typeof logout === 'function') {
+      await logout()
+    }
+    setOrdering({
+      ...ordering,
+      project: nextProject,
+      ...(projectChanged ? { accessToken: null } : {})
+    })
+    setStoreData('project_name', JSON.stringify(nextProject))
+    EventEmitter.emit('change_project', { setted: !!nextProject, changed: !!nextProject })
   }
 
   return (
