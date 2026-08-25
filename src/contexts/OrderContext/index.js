@@ -11,6 +11,11 @@ import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { parseUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
 import { isUnchangedDriverTip } from './isUnchangedDriverTip'
+import {
+  mergeCartResult,
+  mergeCartsByUpdatedAt,
+  resolveOrderOptionsCarts
+} from './mergeCartsByUpdatedAt'
 
 dayjs.extend(utc)
 
@@ -138,30 +143,9 @@ export const OrderProvider = ({
         const { carts, ...options } = result
 
         if (!Array.isArray(carts)) {
+          setState(prevState => ({ ...prevState, loading: false }))
           return
         }
-
-        const newCarts = {}
-        carts.forEach(cart => {
-          if (!cart || typeof cart !== 'object' || !cart.business_id) {
-            return
-          }
-
-          const cartFound = state.carts[`businessId:${cart.business_id}`]
-
-          if (cartFound?.updated_at && cart?.updated_at) {
-            const cartFoundTime = dayjs(cartFound.updated_at)
-            const cartTime = dayjs(cart.updated_at)
-
-            if (cartFoundTime.isValid() && cartTime.isValid() && cartFoundTime.isAfter(cartTime)) {
-              newCarts[`businessId:${cart.business_id}`] = { ...cartFound }
-            } else {
-              newCarts[`businessId:${cart.business_id}`] = { ...cart }
-            }
-          } else {
-            newCarts[`businessId:${cart.business_id}`] = { ...cart }
-          }
-        })
 
         setState(prevState => {
           const mergedOptions = { ...prevState.options, ...options }
@@ -171,7 +155,7 @@ export const OrderProvider = ({
           return {
             ...prevState,
             options: mergedOptions,
-            carts: newCarts
+            carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
           }
         })
 
@@ -506,11 +490,11 @@ export const OrderProvider = ({
           .save(body, options)
         if (!error) {
           const { carts, ...options } = result
-          const newCarts = {}
-          carts.forEach(cart => {
-            newCarts[`businessId:${cart.business_id}`] = cart
-          })
-          setState(prevState => ({ ...prevState, options: { ...prevState.options, ...options }, carts: newCarts }))
+          setState(prevState => ({
+            ...prevState,
+            options: { ...prevState.options, ...options },
+            carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
+          }))
         } else {
           setAlert({ show: true, content: result, status })
         }
@@ -557,7 +541,7 @@ export const OrderProvider = ({
         }
       }
 
-      setState({ ...state, loading: true })
+      setState(prevState => ({ ...prevState, loading: true }))
       const countryCode = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
       const userCustomerId = customerFromLocalStorage?.id
@@ -581,13 +565,9 @@ export const OrderProvider = ({
       const { content: { error, result }, status } = await ordering.setAccessToken(session.token).carts().addProduct(body, { headers })
 
       if (!error) {
-        const newCarts = {
-          ...state.carts,
-          [`businessId:${result.business_id}`]: result
-        }
         setState(prevState => ({
           ...prevState,
-          carts: newCarts
+          carts: mergeCartResult(prevState.carts, result)
         }))
         events.emit('cart_product_added', product, result)
         if (product?.favorite) {
@@ -657,11 +637,10 @@ export const OrderProvider = ({
       })
       const { result, error } = await response.json()
       if (!error) {
-        const newCarts = {
-          ...state.carts,
-          [`businessId:${result.business_id}`]: result
-        }
-        setState(prevState => ({ ...prevState, carts: newCarts }))
+        setState(prevState => ({
+          ...prevState,
+          carts: mergeCartResult(prevState.carts, result)
+        }))
         events.emit('cart_product_added', product, result)
         if (product?.favorite) {
           events.emit('wishlist_product_added_to_cart', product, result)
@@ -708,11 +687,10 @@ export const OrderProvider = ({
         }
       })
       if (!error) {
-        const newCarts = {
-          ...state.carts,
-          [`businessId:${result.business_id}`]: result
-        }
-        setState(prevState => ({ ...prevState, carts: newCarts }))
+        setState(prevState => ({
+          ...prevState,
+          carts: mergeCartResult(prevState.carts, result)
+        }))
         events.emit('cart_product_removed', product, result)
         events.emit('cart_updated', result)
         setTimeout(() => {
@@ -789,11 +767,10 @@ export const OrderProvider = ({
         }
       })
       if (!error) {
-        const newCarts = {
-          ...state.carts,
-          [`businessId:${result.business_id}`]: result
-        }
-        setState(prevState => ({ ...prevState, carts: newCarts }))
+        setState(prevState => ({
+          ...prevState,
+          carts: mergeCartResult(prevState.carts, result)
+        }))
         events.emit('cart_product_updated', product, result)
         events.emit('cart_updated', result)
         isQuickAddProduct && !isDisableToast && showToast(ToastType.Success, t('PRODUCT_UPDATED_NOTIFICATION', 'Product _PRODUCT_ updated succesfully').replace('_PRODUCT_', product.name))
@@ -1488,7 +1465,16 @@ export const OrderProvider = ({
   }
 
   const setStateValues = (values) => {
-    setState({ ...state, ...values })
+    setState(prevState => {
+      if (!values?.carts) {
+        return { ...prevState, ...values }
+      }
+      return {
+        ...prevState,
+        ...values,
+        carts: mergeCartsByUpdatedAt(prevState.carts, values.carts)
+      }
+    })
   }
 
   const setUserCustomerOptions = async (params) => {
@@ -1632,27 +1618,14 @@ export const OrderProvider = ({
         showToast(ToastType.Info, t('UPDATING_ORDER_OPTIONS', 'Updating order options...'))
       }
 
-      const newCarts = {}
-      carts.forEach(cart => {
-        const cartFound = state.carts[`businessId:${cart.business_id}`]
-        newCarts[`businessId:${cart.business_id}`] = cartFound && dayjs(cartFound?.updated_at).isAfter(dayjs(cart?.updated_at))
-          ? cartFound
-          : cart
-      })
-      setState((prevState) => {
-        const newState = {
-          ...prevState,
-          options: {
-            ...prevState.options,
-            ...options
-          },
-          carts: {
-            ...prevState.carts,
-            ...newCarts
-          }
-        }
-        return newState
-      })
+      setState((prevState) => ({
+        ...prevState,
+        options: {
+          ...prevState.options,
+          ...options
+        },
+        carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
+      }))
     }
     socket.on('carts_update', handleCartUpdate)
     socket.on('order_options_update', handleOrderOptionUpdate)
