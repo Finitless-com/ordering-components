@@ -215,7 +215,11 @@ export const Checkout = (props) => {
       payload.paymethod_data.urlscheme = options.urlscheme
     }
     setPlacing(true)
-    await onChangeSpot()
+    const spotReady = await onChangeSpot()
+    if (!spotReady) {
+      setPlacing(false)
+      return { error: true }
+    }
     if (paymethodsWithoutSaveCard.includes(_paymethodSelected?.paymethod?.gateway)) {
       delete payload.paymethod_data
     }
@@ -335,7 +339,10 @@ export const Checkout = (props) => {
           ? t('ERROR', result[0])
           : t('SPOT_CHANGE_SUCCESS_CONTENT', 'Changes applied correctly')
       )
-    } catch {}
+      return !error
+    } catch {
+      return false
+    }
   }
 
   const onChangeSpot = async () => {
@@ -344,9 +351,10 @@ export const Checkout = (props) => {
       placeSpotNumber && (bodyToSend.spot_number = placeSpotNumber)
 
       if (Object.keys(bodyToSend).length) {
-        handleChangeSpot({ bodyToSend })
+        return handleChangeSpot({ bodyToSend })
       }
     }
+    return true
   }
 
   /**
