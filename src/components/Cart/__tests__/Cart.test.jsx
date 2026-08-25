@@ -48,6 +48,7 @@ vi.mock('../../../contexts/WebsocketContext', () => ({
   useWebsocket: () => ({ getId: () => 'socket-14' })
 }))
 
+// eslint-disable-next-line import/first
 import { Cart } from '../index'
 
 describe('Cart', () => {
@@ -90,7 +91,20 @@ describe('Cart', () => {
       'https://api.test/carts/cart-uuid-5',
       expect.objectContaining({ method: 'PUT' })
     )
-    expect(cart.mockSetStateValues).toHaveBeenCalled()
+    expect(cart.mockSetStateValues).toHaveBeenCalledWith({
+      carts: {
+        'businessId:5': expect.objectContaining({
+          business_id: 5,
+          comment: 'No onions'
+        })
+      }
+    })
+    expect(Object.keys(cart.mockSetStateValues.mock.calls[0][0].carts)).toEqual(['businessId:5'])
+    expect(cart.mockOrderState.carts['businessId:5'].comment).toBeUndefined()
+    expect(cart.mockOrderState.carts['businessId:6']).toEqual(expect.objectContaining({
+      business_id: 6,
+      uuid: 'cart-uuid-6'
+    }))
   })
 
   it('delegates offer removal to order context', () => {
