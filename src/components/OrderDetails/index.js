@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
 import { useSession } from '../../contexts/SessionContext'
 import { useApi } from '../../contexts/ApiContext'
@@ -11,6 +11,7 @@ import { useUtils } from '../../contexts/UtilsContext'
 import { useConfig } from '../../contexts/ConfigContext'
 import { PROJECTS_WITH_LOGISTIC_DEFAULT_ETA } from '../../constants/logistic'
 import { isOrderStatusRegressionError } from '../../constants/orderStatusRegression'
+import { shouldApplyOrderFetch } from './shouldApplyOrderFetch'
 
 export const OrderDetails = (props) => {
   const {
@@ -39,6 +40,8 @@ export const OrderDetails = (props) => {
   const [{ parsePrice }] = useUtils()
 
   const [orderState, setOrderState] = useState({ order: props.order ?? null, businessData: {}, loading: !props.order, error: null })
+  const requestedOrderIdRef = useRef(orderId)
+  requestedOrderIdRef.current = orderId
   const [drivers, setDrivers] = useState({ drivers: [], loadingDriver: false, error: null })
   const [messageErrors, setMessageErrors] = useState({ status: null, loading: false, error: null })
   const [messages, setMessages] = useState({ loading: true, error: null, messages: [] })
@@ -426,7 +429,8 @@ export const OrderDetails = (props) => {
    * Method to get order from API
    */
   const getOrder = async () => {
-    setOrderState({ ...orderState, loading: true })
+    const requestedOrderId = orderId
+    setOrderState(prev => ({ ...prev, loading: true }))
     const source = {}
     requestsState.order = source
     requestsState.business = source
@@ -462,22 +466,25 @@ export const OrderDetails = (props) => {
         result = content.result
         error = content.error
       }
+      if (!shouldApplyOrderFetch(requestedOrderId, requestedOrderIdRef.current)) return
       const order = error ? null : result?.order || result
       let err = error ? Array.isArray(result) ? result[0] : result : null
       let businessData = null
       if (err) {
-        setOrderState({
-          ...orderState,
+        setOrderState(prev => ({
+          ...prev,
           loading: false,
           error: [err ?? 'ERROR']
-        })
+        }))
         return
       }
       try {
         const { content } = await ordering.setAccessToken(token).businesses(order?.business_id).select(propsToFetch).get({ cancelToken: source })
+        if (!shouldApplyOrderFetch(requestedOrderId, requestedOrderIdRef.current)) return
         businessData = content.result
         content.error && (err = content.result[0])
       } catch (e) {
+        if (!shouldApplyOrderFetch(requestedOrderId, requestedOrderIdRef.current)) return
         err = [e.message ?? 'ERROR']
       }
 
@@ -485,19 +492,21 @@ export const OrderDetails = (props) => {
         getDrivers(order?.id ?? orderId)
       }
 
-      setOrderState({
-        ...orderState,
+      if (!shouldApplyOrderFetch(requestedOrderId, requestedOrderIdRef.current)) return
+      setOrderState(prev => ({
+        ...prev,
         loading: false,
         order,
         businessData,
         error: err
-      })
+      }))
     } catch (e) {
-      setOrderState({
-        ...orderState,
+      if (!shouldApplyOrderFetch(requestedOrderId, requestedOrderIdRef.current)) return
+      setOrderState(prev => ({
+        ...prev,
         loading: false,
         error: [e.message ?? 'ERROR']
-      })
+      }))
     }
   }
 
@@ -639,10 +648,10 @@ export const OrderDetails = (props) => {
     }
 
     return () => {
-      if (requestsState.orders) {
-        requestsState.orders.cancel()
+      if (requestsState.order?.cancel) {
+        requestsState.order.cancel()
       }
-      if (requestsState.business) {
+      if (requestsState.business?.cancel) {
         requestsState.business.cancel()
       }
     }
