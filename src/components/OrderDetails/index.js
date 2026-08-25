@@ -8,8 +8,10 @@ import { useLanguage } from '../../contexts/LanguageContext'
 import { useEvent } from '../../contexts/EventContext'
 import { useOrder } from '../../contexts/OrderContext'
 import { useUtils } from '../../contexts/UtilsContext'
+import { useConfig } from '../../contexts/ConfigContext'
 import { PROJECTS_WITH_LOGISTIC_DEFAULT_ETA } from '../../constants/logistic'
 import { shouldApplyOrderFetch } from './shouldApplyOrderFetch'
+import { isOrderStatusRegressionError } from '../../constants/orderStatusRegression'
 
 export const OrderDetails = (props) => {
   const {
@@ -30,6 +32,8 @@ export const OrderDetails = (props) => {
   const accessToken = props.accessToken || token
   const [ordering] = useApi()
   const [, { showToast }] = useToast()
+  const [{ configs }] = useConfig()
+  const isRegressionValidationEnabled = configs?.order_status_regression_validation_enabled?.value === '1'
   const [, t] = useLanguage()
   const [events] = useEvent()
   const [{ carts }, { reorder, clearCart }] = useOrder()
@@ -46,6 +50,7 @@ export const OrderDetails = (props) => {
   const [messagesReadList, setMessagesReadList] = useState([])
   const [driverUpdateLocation, setDriverUpdateLocation] = useState({ loading: false, error: null, newLocation: null })
   const [forceUpdate, setForceUpdate] = useState(null)
+  const [regressionRequest, setRegressionRequest] = useState(null)
   const [reorderState, setReorderState] = useState({ loading: false, result: [], error: null })
   const [cartState, setCartState] = useState({ loading: false, error: null })
   const [showReservationAlert, setShowReservationAlert] = useState(false)
@@ -305,7 +310,7 @@ export const OrderDetails = (props) => {
 
       const isFormData = bodyToSend && bodyToSend instanceof FormData
 
-      let result, error
+      let result, error, errorCodes
 
       if (isFormData) {
         const response = await fetch(`${ordering.root}/orders/${orderState?.order?.id ?? orderId}`, {
@@ -322,11 +327,13 @@ export const OrderDetails = (props) => {
         const responseData = await response.json()
         result = responseData.result
         error = responseData.error
+        errorCodes = responseData.error_codes
       } else {
         const requestOptions = {}
         const { content } = await ordering.setAccessToken(token).orders(orderState.order?.id ?? orderId).save(bodyToSend, requestOptions)
         result = content.result
         error = content.error
+        errorCodes = content.error_codes
       }
 
       if (!error) {
@@ -352,6 +359,9 @@ export const OrderDetails = (props) => {
           setForceUpdate(null)
           setOrderState({ ...orderState, loading: false })
           setForceUpdate(selected.value)
+        } else if (isRegressionValidationEnabled && !isFormData && !bodyToSend?.reasons && isOrderStatusRegressionError(errorCodes)) {
+          setOrderState({ ...orderState, loading: false })
+          setRegressionRequest({ status, body: { ...bodyToSend, status } })
         } else {
           const message = Array.isArray(result) ? result[0] : typeof result === 'string' ? result : 'INTERNAL_ERROR'
           const defaultMessage = message !== 'INTERNAL_ERROR' ? message : t('INTERNAL_ERROR', 'Internal Error')
@@ -813,6 +823,8 @@ export const OrderDetails = (props) => {
           driverUpdateLocation={driverUpdateLocation}
           setDriverUpdateLocation={setDriverUpdateLocation}
           forceUpdate={forceUpdate}
+          regressionRequest={regressionRequest}
+          clearRegressionRequest={() => setRegressionRequest(null)}
           getOrder={getOrder}
           reorderState={reorderState}
           handleReorder={handleReorder}
