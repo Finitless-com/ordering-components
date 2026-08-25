@@ -3,6 +3,7 @@ import React, { createContext, useContext, useEffect, useState, useRef } from 'r
 import { useApi } from '../ApiContext'
 import { useToast, ToastType } from '../ToastContext'
 import { useLanguage } from '../LanguageContext'
+import { getSessionStorageSyncDecision } from './getSessionStorageSyncDecision'
 /**
  * Create SessionContext
  * This context will manage the session internally and provide an easy interface
@@ -120,16 +121,18 @@ export const SessionProvider = ({ children, strategy, checkInterval = 2000 }) =>
           device_code
         }))
       }
-      if ((token || user?.session?.access_token) && !currentState.token) {
+      const syncDecision = getSessionStorageSyncDecision({
+        stored: { token, user },
+        current: currentState
+      })
+      if (syncDecision.action === 'login') {
         login({
-          user,
-          token: token || user?.session?.access_token,
+          user: syncDecision.user,
+          token: syncDecision.token,
           device_code: device_code || currentState.device_code
         })
       }
-      // Only logout if we had a token but now it's removed (explicit logout)
-      // Don't logout if user is just not enabled - that should be handled differently
-      if (!token && !user?.session?.access_token && currentState.token) {
+      if (syncDecision.action === 'logout') {
         logout()
       }
     } catch (err) {
