@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useGoogleMaps } from '../../hooks/useGoogleMaps'
+import { sanitizeInfoWindowHtml } from '../../utils/sanitizeInfoWindowHtml'
 
 const isValidCoordinate = (value) => Number.isFinite(Number(value))
 
@@ -59,7 +60,7 @@ export const LocationsMap = (props) => {
       marker.addListener('click', () => {
         if (business.markerPopup) {
           const infowindow = new window.google.maps.InfoWindow()
-          infowindow.setContent(business.markerPopup)
+          infowindow.setContent(sanitizeInfoWindowHtml(business.markerPopup))
           infowindow.open(map, marker)
 
           infowindow.addListener('closeclick', () => {
@@ -120,7 +121,7 @@ export const LocationsMap = (props) => {
 
       if (marker) {
         const infowindow = new window.google.maps.InfoWindow()
-        infowindow.setContent(content)
+        infowindow.setContent(sanitizeInfoWindowHtml(content))
         infowindow.open(googleMap, marker)
 
         infowindow.addListener('closeclick', () => {
