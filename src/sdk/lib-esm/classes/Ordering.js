@@ -210,11 +210,11 @@ const Ordering = /** @class */ (function () {
   Ordering.prototype.getRequestProps = function (options) {
     let _a
     const root = options.system ? this.systemRoot : this.root
-    const query = options.query; const mode = options.mode; const conditions = options.conditions; const headers = options.headers; const otherOptions = __rest(options
+    const query = options.query; const mode = options.mode; const conditions = options.conditions; const headers = options.headers; const requestAccessToken = options.accessToken; const otherOptions = __rest(options
       /**
          * Parse query
          */
-      , ['query', 'mode', 'conditions', 'headers'])
+      , ['query', 'mode', 'conditions', 'headers', 'accessToken'])
     /**
          * Parse query
          */
@@ -248,8 +248,9 @@ const Ordering = /** @class */ (function () {
          * Parse headers from options and default
          */
     const authHeaders = {}
-    if (this.accessToken && !this.apiKey) {
-      authHeaders.Authorization = 'Bearer ' + this.accessToken
+    const token = requestAccessToken || this.accessToken
+    if (token && !this.apiKey) {
+      authHeaders.Authorization = 'Bearer ' + token
     }
     if (this.apiKey) {
       authHeaders['X-Api-Key'] = this.apiKey

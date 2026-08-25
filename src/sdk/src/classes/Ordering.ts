@@ -196,7 +196,7 @@ export class Ordering {
 
   getRequestProps (options: RequestOptionsProps): [string, any] {
     const root: string = options.system ? this.systemRoot : this.root
-    const { query, mode, conditions, headers, ...otherOptions } = options
+    const { query, mode, conditions, headers, accessToken: requestAccessToken, ...otherOptions } = options
     /**
      * Parse query
      */
@@ -231,8 +231,9 @@ export class Ordering {
      * Parse headers from options and default
      */
     const authHeaders: any = {}
-    if (this.accessToken && !this.apiKey) {
-      authHeaders.Authorization = `Bearer ${this.accessToken}`
+    const token = requestAccessToken || this.accessToken
+    if (token && !this.apiKey) {
+      authHeaders.Authorization = `Bearer ${token}`
     }
     if (this.apiKey) {
       authHeaders['X-Api-Key'] = this.apiKey
