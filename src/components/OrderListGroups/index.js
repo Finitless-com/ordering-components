@@ -8,6 +8,7 @@ import { useLanguage } from '../../contexts/LanguageContext'
 import { useEvent } from '../../contexts/EventContext'
 import { useConfig } from '../../contexts/ConfigContext'
 import { PROJECTS_WITH_LOGISTIC_DEFAULT_ETA } from '../../constants/logistic'
+import { isOrderStatusRegressionError } from '../../constants/orderStatusRegression'
 import { mergeAssignRequestOrders } from './utils'
 
 export const OrderListGroups = (props) => {
@@ -107,6 +108,8 @@ export const OrderListGroups = (props) => {
   const [orderLogisticUpdated, setOrderLogisticUpdated] = useState(null)
   const [recentlyReceivedMessage, setRecentlyReceivedMessage] = useState(null)
   const [loadingChangeOrder, setLoadingChangeOrder] = useState(false)
+  const [regressionRequest, setRegressionRequest] = useState(null)
+  const isRegressionValidationEnabled = configs?.order_status_regression_validation_enabled?.value === '1'
   const resolvedAssignRequestsRef = useRef(new Map())
 
   const [ordersFiltered, setOrdersFiltered] = useState({
@@ -917,15 +920,29 @@ export const OrderListGroups = (props) => {
       const bodyToSend = Object.keys(body || {}).length > 0 ? body : { status }
       const setOrderStatus = async (id) => {
         try {
-          const { content: { result, error } } = await ordering.setAccessToken(session?.token).orders(id).save({ ...bodyToSend, id })
-          return error ? null : result
-        } catch {
-          return null
+          const { content: { result, error, error_codes: errorCodes } } = await ordering.setAccessToken(session?.token).orders(id).save({ ...bodyToSend, id })
+          return { id, result, error, errorCodes }
+        } catch (err) {
+          return { id, result: [err?.message], error: true }
         }
       }
 
-      const result = await Promise.all(orderIds?.map(id => setOrderStatus(id)))
-      return result
+      const responses = await Promise.all(orderIds?.map(id => setOrderStatus(id)))
+      const failed = responses.filter(response => response.error)
+      if (failed.length) {
+        const regressionFailed = isRegressionValidationEnabled && !bodyToSend?.reasons
+          ? failed.filter(response => isOrderStatusRegressionError(response.errorCodes))
+          : []
+        const otherFailed = failed.filter(response => !regressionFailed.includes(response))
+        if (otherFailed.length) {
+          const message = otherFailed[0].result
+          showToast(ToastType.Error, Array.isArray(message) ? message[0] : message)
+        }
+        if (regressionFailed.length) {
+          setRegressionRequest({ status, body: { ...bodyToSend, status }, ids: regressionFailed.map(response => response.id) })
+        }
+      }
+      return responses.map(response => (response.error ? null : response.result))
     } catch (err) {
       return err?.message ?? err
     } finally {
@@ -1335,6 +1352,8 @@ export const OrderListGroups = (props) => {
           isLogisticActivated={isLogisticActivated}
           ordersFiltered={ordersFiltered}
           loadingChangeOrder={loadingChangeOrder}
+          regressionRequest={regressionRequest}
+          clearRegressionRequest={() => setRegressionRequest(null)}
         />
       )}
     </>

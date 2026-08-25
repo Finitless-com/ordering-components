@@ -291,4 +291,85 @@ describe('OrderDetails', () => {
     })
     expect(lastControllerProps.loyaltyPlansState.result).toHaveLength(1)
   })
+
+  describe('order status regression', () => {
+    it('asks for a reason when the project blocks regressions and the API rejects the change', async () => {
+      orders.mockConfigState.order_status_regression_validation_enabled = { value: '1' }
+      orders.mockOrderSave.mockResolvedValueOnce({
+        content: { error: true, result: ['The order cannot go back from delivery_completed_by_driver to accepted_by_business.'] }
+      })
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder })
+      await act(async () => {
+        await lastControllerProps.handleChangeOrderStatus(7)
+      })
+      await waitFor(() => {
+        expect(lastControllerProps.regressionRequest).toEqual({ status: 7, body: { status: 7 } })
+      })
+      expect(lastControllerProps.order.error).toBeNull()
+      expect(lastControllerProps.order.loading).toBe(false)
+      act(() => lastControllerProps.clearRegressionRequest())
+      await waitFor(() => expect(lastControllerProps.regressionRequest).toBeNull())
+    })
+
+    it('keeps the pending body when the rejected change carried extra fields', async () => {
+      orders.mockConfigState.order_status_regression_validation_enabled = { value: '1' }
+      orders.mockOrderSave.mockResolvedValueOnce({ content: { error: true, result: ['blocked'] } })
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder })
+      await act(async () => {
+        await lastControllerProps.handleChangeOrderStatus(8, { status: 8, delivered_in: 15 })
+      })
+      await waitFor(() => {
+        expect(lastControllerProps.regressionRequest).toEqual({ status: 8, body: { status: 8, delivered_in: 15 } })
+      })
+    })
+
+    it('does not ask for a reason when the request already carried one', async () => {
+      orders.mockConfigState.order_status_regression_validation_enabled = { value: '1' }
+      orders.mockOrderSave.mockResolvedValueOnce({ content: { error: true, result: ['still blocked'] } })
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder })
+      await act(async () => {
+        await lastControllerProps.handleChangeOrderStatus(7, { status: 7, reasons: 'customer asked' })
+      })
+      await waitFor(() => expect(lastControllerProps.order.error).toEqual(['still blocked']))
+      expect(lastControllerProps.regressionRequest).toBeNull()
+    })
+
+    it('surfaces the plain error when the project does not block regressions', async () => {
+      orders.mockConfigState.order_status_regression_validation_enabled = { value: '0' }
+      orders.mockOrderSave.mockResolvedValueOnce({ content: { error: true, result: ['not allowed'] } })
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder })
+      await act(async () => {
+        await lastControllerProps.handleChangeOrderStatus(7)
+      })
+      await waitFor(() => expect(lastControllerProps.order.error).toEqual(['not allowed']))
+      expect(lastControllerProps.regressionRequest).toBeNull()
+    })
+  })
+
+  describe('order status regression error codes', () => {
+    it('asks for a reason when the API flags the regression error code', async () => {
+      orders.mockConfigState.order_status_regression_validation_enabled = { value: '1' }
+      orders.mockOrderSave.mockResolvedValueOnce({
+        content: { error: true, result: ['blocked'], error_codes: ['order.status_regression'] }
+      })
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder })
+      await act(async () => {
+        await lastControllerProps.handleChangeOrderStatus(7)
+      })
+      await waitFor(() => expect(lastControllerProps.regressionRequest).toEqual({ status: 7, body: { status: 7 } }))
+    })
+
+    it('surfaces the plain error when the API flags a different error code', async () => {
+      orders.mockConfigState.order_status_regression_validation_enabled = { value: '1' }
+      orders.mockOrderSave.mockResolvedValueOnce({
+        content: { error: true, result: ['location required'], error_codes: ['order.location_required'] }
+      })
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder })
+      await act(async () => {
+        await lastControllerProps.handleChangeOrderStatus(7)
+      })
+      await waitFor(() => expect(lastControllerProps.order.error).toEqual(['location required']))
+      expect(lastControllerProps.regressionRequest).toBeNull()
+    })
+  })
 })
