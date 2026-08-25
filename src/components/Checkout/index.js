@@ -8,6 +8,7 @@ import { useToast, ToastType } from '../../contexts/ToastContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
 import { isBlockingApplePayConfirmError } from '../../utils/applePayConfirm'
+import { getPlaceAmount } from '../../utils/placeAmount'
 
 const forterGateways = ['braintree', 'paypal_braintree', 'google_pay_braintree', 'apple_pay_braintree']
 
@@ -172,7 +173,7 @@ export const Checkout = (props) => {
       }
     }
     let payload = {
-      amount: _cart?.balance ?? _cart?.total
+      amount: getPlaceAmount(_cart)
     }
 
     if (_cart?.offer_id) payload.offer_id = _cart?.offer_id
@@ -482,7 +483,7 @@ export const Checkout = (props) => {
         key_id: keyId,
         hash: cart?.paymethod_data?.result?.hash,
         time: cart?.paymethod_data?.result?.time,
-        amount: cart?.total,
+        amount: getPlaceAmount(cart),
         orderid: cartUuid,
         ccnumber: paymethodSelected?.data?.ccnumber,
         cvv: paymethodSelected?.data?.cvv,

@@ -157,4 +157,39 @@ describe('Checkout', () => {
     lastControllerProps.handlerClickPlaceOrder({}, {}, null, null, lastControllerProps.paymethodSelected)
     expect(cart.mockShowToast).toHaveBeenCalled()
   })
+
+  it('posts Credomatic amount from remaining cart balance', async () => {
+    document.querySelectorAll('form').forEach(form => form.remove())
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
+    renderController(Checkout, { businessId: 5 })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    await lastControllerProps.handleConfirmCredomaticPage(
+      {
+        uuid: 'cart-uuid-5',
+        total: 40,
+        balance: 10,
+        paymethod_data: { result: { hash: 'hash1', time: '123' } }
+      },
+      { data: { ccnumber: '4111111111111111', cvv: '123', ccexp: '1228' } }
+    )
+    expect(document.querySelector('form input[name="amount"]').value).toBe('10')
+    submit.mockRestore()
+  })
+
+  it('posts Credomatic amount from total when there is no remainder', async () => {
+    document.querySelectorAll('form').forEach(form => form.remove())
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
+    renderController(Checkout, { businessId: 5 })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    await lastControllerProps.handleConfirmCredomaticPage(
+      {
+        uuid: 'cart-uuid-5',
+        total: 40,
+        paymethod_data: { result: { hash: 'hash1', time: '123' } }
+      },
+      { data: { ccnumber: '4111111111111111', cvv: '123', ccexp: '1228' } }
+    )
+    expect(document.querySelector('form input[name="amount"]').value).toBe('40')
+    submit.mockRestore()
+  })
 })
