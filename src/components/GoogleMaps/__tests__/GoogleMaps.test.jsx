@@ -52,6 +52,28 @@ describe('GoogleMaps', () => {
     })
   })
 
+  it('sanitizes markerPopup HTML before opening InfoWindow', async () => {
+    const setContent = vi.spyOn(window.google.maps.InfoWindow.prototype, 'setContent')
+    render(
+      <GoogleMaps
+        {...baseProps}
+        businessMap
+        locations={[{
+          ...baseProps.locations[0],
+          markerPopup: '<div>Pizza<script>alert(1)</script><img src=x onerror=alert(1)></div>'
+        }]}
+      />
+    )
+    await waitFor(() => {
+      expect(setContent).toHaveBeenCalled()
+    })
+    const html = setContent.mock.calls[0][0]
+    expect(html).toContain('Pizza')
+    expect(html).not.toMatch(/script/i)
+    expect(html).not.toMatch(/onerror/i)
+    expect(html).not.toMatch(/alert\(/)
+  })
+
   it('geocodes dragged marker position when isSetInputs is enabled', async () => {
     render(
       <GoogleMaps

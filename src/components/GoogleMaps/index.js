@@ -4,6 +4,7 @@ import PropTypes from 'prop-types'
 import { useEvent } from '../../contexts/EventContext'
 import { useUtils } from '../../contexts/UtilsContext'
 import { useGoogleMaps } from '../../hooks/useGoogleMaps'
+import { sanitizeInfoWindowHtml } from '../../utils/sanitizeInfoWindowHtml'
 
 const ZONES_MAP_FIT_PADDING = { top: 20, right: 20, bottom: 20, left: 20 }
 const MAX_ZOOM_AFTER_ZONE_FIT = 17
@@ -161,14 +162,14 @@ export const GoogleMaps = (props) => {
         if (isNear) {
           if (i === 0 && locations[0]?.markerPopup) {
             const infowindow = new window.google.maps.InfoWindow()
-            infowindow.setContent(locations[0]?.markerPopup)
+            infowindow.setContent(sanitizeInfoWindowHtml(locations[0]?.markerPopup))
             infowindow.open(map, marker)
             markerRef.current = infowindow
           }
           marker.addListener('click', () => {
             if (locations[i]?.markerPopup) {
               const infowindow = new window.google.maps.InfoWindow()
-              infowindow.setContent(locations[i]?.markerPopup)
+              infowindow.setContent(sanitizeInfoWindowHtml(locations[i]?.markerPopup))
               infowindow.open(map, marker)
             } else {
               onBusinessClick && onBusinessClick(locations[i]?.slug, locations[i])
@@ -190,7 +191,7 @@ export const GoogleMaps = (props) => {
             }
 
             const infowindow = new window.google.maps.InfoWindow()
-            infowindow.setContent(locations[i]?.markerPopup)
+            infowindow.setContent(sanitizeInfoWindowHtml(locations[i]?.markerPopup))
             infowindow.open(map, marker)
 
             activeInfoWindowRef.current = infowindow
