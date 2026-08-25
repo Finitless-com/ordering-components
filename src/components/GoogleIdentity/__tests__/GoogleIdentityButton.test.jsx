@@ -6,6 +6,7 @@ import { resetSocialAuthDom } from '../../../__tests__/helpers/socialAuthTestHel
 const social = vi.hoisted(() => {
   const mockAuthGoogle = vi.fn()
   const mockOrdering = {
+    setAccessToken: vi.fn(function () { return mockOrdering }),
     users: vi.fn(() => ({ authGoogle: mockAuthGoogle }))
   }
   const reset = () => {
@@ -47,6 +48,9 @@ describe('GoogleIdentityButton', () => {
     await waitFor(() => {
       expect(social.mockAuthGoogle).toHaveBeenCalledWith({ access_token: 'identity-token' })
     })
+    expect(social.mockOrdering.setAccessToken).toHaveBeenCalledWith(null)
+    expect(social.mockOrdering.setAccessToken.mock.invocationCallOrder[0])
+      .toBeLessThan(social.mockOrdering.users.mock.invocationCallOrder[0])
     expect(handleSuccessGoogleLogin).toHaveBeenCalled()
   })
 })
