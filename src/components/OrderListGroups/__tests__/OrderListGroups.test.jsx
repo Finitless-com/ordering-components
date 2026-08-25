@@ -303,4 +303,71 @@ describe('OrderListGroups', () => {
       expect(reviewed?.user_review).toEqual(expect.objectContaining({ order_id: 101, rating: 5 }))
     })
   })
+
+  describe('order status regression', () => {
+    it('asks for a reason for the rejected orders when the project blocks regressions', async () => {
+      orders.mockConfigState.order_status_regression_validation_enabled = { value: '1' }
+      orders.mockOrderSave
+        .mockResolvedValueOnce({ content: { error: false, result: { id: 101, status: 7 } } })
+        .mockResolvedValueOnce({ content: { error: true, result: ['blocked'] } })
+      renderController(OrderListGroups, { isNetConnected: true })
+      await waitFor(() => expect(lastControllerProps.ordersGroup.pending.orders.length).toBeGreaterThan(0))
+      let result
+      await act(async () => {
+        result = await lastControllerProps.handleChangeOrderStatus(7, [101, 102])
+      })
+      expect(result).toEqual([{ id: 101, status: 7 }, null])
+      await waitFor(() => {
+        expect(lastControllerProps.regressionRequest).toEqual({ status: 7, body: { status: 7 }, ids: [102] })
+      })
+      expect(orders.mockShowToast).not.toHaveBeenCalled()
+      act(() => lastControllerProps.clearRegressionRequest())
+      await waitFor(() => expect(lastControllerProps.regressionRequest).toBeNull())
+    })
+
+    it('shows the error and does not ask again when the retry with a reason fails', async () => {
+      orders.mockConfigState.order_status_regression_validation_enabled = { value: '1' }
+      orders.mockOrderSave.mockResolvedValueOnce({ content: { error: true, result: ['still blocked'] } })
+      renderController(OrderListGroups, { isNetConnected: true })
+      await waitFor(() => expect(lastControllerProps.ordersGroup.pending.orders.length).toBeGreaterThan(0))
+      await act(async () => {
+        await lastControllerProps.handleChangeOrderStatus(7, [101], { status: 7, reasons: 'customer asked' })
+      })
+      expect(orders.mockShowToast).toHaveBeenCalledTimes(1)
+      expect(orders.mockShowToast.mock.calls[0][1]).toBe('still blocked')
+      expect(lastControllerProps.regressionRequest).toBeNull()
+    })
+
+    it('shows the error instead of asking for a reason when the project does not block regressions', async () => {
+      orders.mockConfigState.order_status_regression_validation_enabled = { value: '0' }
+      orders.mockOrderSave.mockResolvedValueOnce({ content: { error: true, result: ['not allowed'] } })
+      renderController(OrderListGroups, { isNetConnected: true })
+      await waitFor(() => expect(lastControllerProps.ordersGroup.pending.orders.length).toBeGreaterThan(0))
+      await act(async () => {
+        await lastControllerProps.handleChangeOrderStatus(7, [101])
+      })
+      expect(orders.mockShowToast).toHaveBeenCalledTimes(1)
+      expect(orders.mockShowToast.mock.calls[0][1]).toBe('not allowed')
+      expect(lastControllerProps.regressionRequest).toBeNull()
+    })
+  })
+
+  describe('order status regression error codes', () => {
+    it('only asks for a reason for the orders flagged with the regression error code', async () => {
+      orders.mockConfigState.order_status_regression_validation_enabled = { value: '1' }
+      orders.mockOrderSave
+        .mockResolvedValueOnce({ content: { error: true, result: ['blocked'], error_codes: ['order.status_regression'] } })
+        .mockResolvedValueOnce({ content: { error: true, result: ['location required'], error_codes: ['order.location_required'] } })
+      renderController(OrderListGroups, { isNetConnected: true })
+      await waitFor(() => expect(lastControllerProps.ordersGroup.pending.orders.length).toBeGreaterThan(0))
+      await act(async () => {
+        await lastControllerProps.handleChangeOrderStatus(7, [101, 102])
+      })
+      await waitFor(() => {
+        expect(lastControllerProps.regressionRequest).toEqual({ status: 7, body: { status: 7 }, ids: [101] })
+      })
+      expect(orders.mockShowToast).toHaveBeenCalledTimes(1)
+      expect(orders.mockShowToast.mock.calls[0][1]).toBe('location required')
+    })
+  })
 })
