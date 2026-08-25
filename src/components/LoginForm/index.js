@@ -7,6 +7,7 @@ import { useEvent } from '../../contexts/EventContext'
 import { useConfig } from '../../contexts/ConfigContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+import { getLoginSessionDecision } from './getLoginSessionDecision'
 
 /**
  * Component to manage login behavior without UI component
@@ -54,8 +55,22 @@ export const LoginForm = (props) => {
   const [otpType, setOtpType] = useState((!useLoginOtpEmail && useLoginOtpCellphone) ? 'cellphone' : 'email')
   const [otpState, setOtpState] = useState('')
 
-  const [{ user }, { login, logout }] = useSession()
+  const [{ user }, { login }] = useSession()
   const [, t] = useLanguage()
+
+  const invalidateDisallowedSession = async (sessionUser) => {
+    const sessionDecision = getLoginSessionDecision({
+      user: sessionUser,
+      allowedLevels
+    })
+    if (sessionDecision.persistSession) return null
+    try {
+      await ordering.setAccessToken(sessionDecision.logoutToken).users().logout()
+    } catch (error) {
+      return { ...sessionDecision, catchError: error.message }
+    }
+    return sessionDecision
+  }
 
   /**
    * Default fuction for login workflow
@@ -153,33 +168,16 @@ export const LoginForm = (props) => {
 
       if (!error) {
         if (useDefualtSessionManager) {
-          if (allowedLevels && allowedLevels?.length > 0) {
-            const { level, session } = result
-            const accessToken = session?.access_token
-            if (!allowedLevels.includes(level)) {
-              try {
-                const { content: logoutResp } = await ordering.setAccessToken(accessToken).users().logout()
-                if (!logoutResp.error) {
-                  logout()
-                }
-                setFormState({
-                  result: {
-                    error: true,
-                    result: [t('YOU_DO_NOT_HAVE_PERMISSION', 'Your session have been closed')]
-                  },
-                  loading: false
-                })
-              } catch (error) {
-                setFormState({
-                  result: {
-                    error: true,
-                    result: error.message
-                  },
-                  loading: false
-                })
-              }
-              return
-            }
+          const rejected = await invalidateDisallowedSession(result)
+          if (rejected) {
+            setFormState({
+              result: {
+                error: true,
+                result: rejected.catchError || [t(rejected.error, 'Your session have been closed')]
+              },
+              loading: false
+            })
+            return
           }
           if (values?.device_code) {
             login({
@@ -320,6 +318,18 @@ export const LoginForm = (props) => {
       })
       const res = await response.json()
       if (!res?.error && res?.result?.id) {
+        const rejected = await invalidateDisallowedSession(res?.result)
+        if (rejected) {
+          setCheckPhoneCodeState({
+            ...checkPhoneCodeState,
+            loading: false,
+            result: {
+              error: true,
+              result: rejected.catchError || [t(rejected.error, 'Your session have been closed')]
+            }
+          })
+          return
+        }
         login({
           user: res?.result,
           token: res?.result?.session?.access_token
@@ -411,6 +421,17 @@ export const LoginForm = (props) => {
           result: {
             error: true,
             result
+          },
+          loading: false
+        })
+        return
+      }
+      const rejected = await invalidateDisallowedSession(result)
+      if (rejected) {
+        setFormState({
+          result: {
+            error: true,
+            result: rejected.catchError || [t(rejected.error, 'Your session have been closed')]
           },
           loading: false
         })
