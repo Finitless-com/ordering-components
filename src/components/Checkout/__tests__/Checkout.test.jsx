@@ -44,6 +44,7 @@ vi.mock('../../../contexts/WebsocketContext', () => ({
   useWebsocket: () => ({ getId: () => 'socket-14' })
 }))
 
+// eslint-disable-next-line import/first
 import { Checkout } from '../index'
 
 describe('Checkout', () => {
@@ -77,6 +78,69 @@ describe('Checkout', () => {
     await lastControllerProps.handlerClickPlaceOrder({}, {}, null, null, lastControllerProps.paymethodSelected)
     expect(cart.mockPlaceCart).toHaveBeenCalledWith('cart-uuid-5', expect.any(Object))
     expect(onPlaceOrderClick).toHaveBeenCalled()
+    expect(cart.mockCartSet).not.toHaveBeenCalled()
+  })
+
+  it('waits for eat-in spot save before placing', async () => {
+    cart.mockOrderState.options.type = 3
+    let resolveSpot
+    cart.mockCartSet.mockImplementationOnce(() => new Promise(resolve => {
+      resolveSpot = () => resolve({
+        content: {
+          error: false,
+          result: { uuid: 'cart-uuid-5', business_id: 5, spot_number: 12 }
+        }
+      })
+    }))
+    const onPlaceOrderClick = vi.fn()
+    renderController(Checkout, { businessId: 5, onPlaceOrderClick })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    lastControllerProps.handlePaymethodChange({ paymethodId: 3, gateway: 'cash', data: {} })
+    lastControllerProps.setPlaceSpotNumber(12)
+    await waitFor(() => expect(lastControllerProps.placeSpotNumber).toBe(12))
+
+    const placePromise = lastControllerProps.handlerClickPlaceOrder(
+      {},
+      {},
+      null,
+      null,
+      lastControllerProps.paymethodSelected
+    )
+    await waitFor(() => {
+      expect(cart.mockCartSet).toHaveBeenCalledWith({ spot_number: 12 })
+    })
+    expect(cart.mockPlaceCart).not.toHaveBeenCalled()
+
+    resolveSpot()
+    await placePromise
+    expect(cart.mockPlaceCart).toHaveBeenCalledWith('cart-uuid-5', expect.any(Object))
+    expect(onPlaceOrderClick).toHaveBeenCalled()
+  })
+
+  it('does not place when eat-in spot save fails', async () => {
+    cart.mockOrderState.options.type = 3
+    cart.mockCartSet.mockResolvedValueOnce({
+      content: { error: true, result: ['Invalid spot'] }
+    })
+    const onPlaceOrderClick = vi.fn()
+    renderController(Checkout, { businessId: 5, onPlaceOrderClick })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    lastControllerProps.handlePaymethodChange({ paymethodId: 3, gateway: 'cash', data: {} })
+    lastControllerProps.setPlaceSpotNumber(12)
+    await waitFor(() => expect(lastControllerProps.placeSpotNumber).toBe(12))
+
+    await lastControllerProps.handlerClickPlaceOrder(
+      {},
+      {},
+      null,
+      null,
+      lastControllerProps.paymethodSelected
+    )
+
+    expect(cart.mockCartSet).toHaveBeenCalledWith({ spot_number: 12 })
+    expect(cart.mockPlaceCart).not.toHaveBeenCalled()
+    expect(onPlaceOrderClick).not.toHaveBeenCalled()
+    expect(lastControllerProps.placing).toBe(false)
   })
 
   it('updates delivery option on cart', async () => {
