@@ -7,6 +7,7 @@ import { useSession } from '../../contexts/SessionContext'
 import { useToast, ToastType } from '../../contexts/ToastContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+import { isBlockingApplePayConfirmError } from '../../utils/applePayConfirm'
 
 /**
  * Component to manage Multi businesses checkout page behavior without UI component
@@ -133,13 +134,11 @@ export const MultiCheckout = (props) => {
       const paymentEvent = result?.payment_events?.find(event => event?.data?.extra?.client_secret)
       if (paymentEvent?.data?.extra?.client_secret) {
         const { error: confirmApplePayError } = await confirmPayment(paymentEvent?.data?.extra?.client_secret)
-        if (confirmApplePayError?.message || confirmApplePayError?.localizedMessage) {
+        if (isBlockingApplePayConfirmError(confirmApplePayError)) {
           showToast(ToastType.Error, confirmApplePayError?.message || confirmApplePayError?.localizedMessage)
+          setPlacing(false)
+          return
         }
-      }
-      setPlacing(false)
-      if (!error) {
-        onPlaceOrderClick && onPlaceOrderClick(result)
       }
     }
     setPlacing(false)

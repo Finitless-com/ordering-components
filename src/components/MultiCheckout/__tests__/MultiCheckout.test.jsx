@@ -60,6 +60,61 @@ describe('MultiCheckout', () => {
     })
   })
 
+  it('does not treat Apple Pay as placed when confirmPayment fails', async () => {
+    cart.mockPlaceMultiCarts.mockResolvedValue({
+      error: false,
+      result: {
+        status: 'completed',
+        id: 99,
+        payment_events: [{ data: { extra: { client_secret: 'secret_group' } } }]
+      }
+    })
+    const onPlaceOrderClick = vi.fn()
+    const confirmPayment = vi.fn().mockResolvedValue({ error: { message: 'Card declined' } })
+    renderController(MultiCheckout, {
+      cartUuid: 'group-uuid-1',
+      onPlaceOrderClick
+    })
+    await waitFor(() => expect(lastControllerProps.cartGroup.loading).toBe(false))
+    lastControllerProps.handleSelectPaymethod({
+      gateway: 'global_apple_pay',
+      paymethod: { id: 9, gateway: 'global_apple_pay' }
+    })
+    await waitFor(() => {
+      expect(lastControllerProps.paymethodSelected.gateway).toBe('global_apple_pay')
+    })
+    await lastControllerProps.handleGroupPlaceOrder(confirmPayment)
+    expect(confirmPayment).toHaveBeenCalledWith('secret_group')
+    expect(onPlaceOrderClick).not.toHaveBeenCalled()
+  })
+
+  it('calls onPlaceOrderClick once after a successful Apple Pay confirm', async () => {
+    cart.mockPlaceMultiCarts.mockResolvedValue({
+      error: false,
+      result: {
+        status: 'completed',
+        id: 99,
+        payment_events: [{ data: { extra: { client_secret: 'secret_group' } } }]
+      }
+    })
+    const onPlaceOrderClick = vi.fn()
+    const confirmPayment = vi.fn().mockResolvedValue({ error: null })
+    renderController(MultiCheckout, {
+      cartUuid: 'group-uuid-1',
+      onPlaceOrderClick
+    })
+    await waitFor(() => expect(lastControllerProps.cartGroup.loading).toBe(false))
+    lastControllerProps.handleSelectPaymethod({
+      gateway: 'global_apple_pay',
+      paymethod: { id: 9, gateway: 'global_apple_pay' }
+    })
+    await waitFor(() => {
+      expect(lastControllerProps.paymethodSelected.gateway).toBe('global_apple_pay')
+    })
+    await lastControllerProps.handleGroupPlaceOrder(confirmPayment)
+    expect(onPlaceOrderClick).toHaveBeenCalledTimes(1)
+  })
+
   it('places multi-cart order on success', async () => {
     const onPlaceOrderClick = vi.fn()
     renderController(MultiCheckout, {

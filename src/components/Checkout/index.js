@@ -7,6 +7,7 @@ import { useSession } from '../../contexts/SessionContext'
 import { useToast, ToastType } from '../../contexts/ToastContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+import { isBlockingApplePayConfirmError } from '../../utils/applePayConfirm'
 
 const forterGateways = ['braintree', 'paypal_braintree', 'google_pay_braintree', 'apple_pay_braintree']
 
@@ -268,8 +269,10 @@ export const Checkout = (props) => {
     }
     if (confirmPayment && parsedPaymethodData?.gateway === 'apple_pay') {
       const { error: confirmApplePayError } = await confirmPayment(parsedPaymethodData?.result?.client_secret)
-      if (confirmApplePayError && confirmApplePayError?.message !== 'You must provide the `applePay` parameter.') {
+      if (isBlockingApplePayConfirmError(confirmApplePayError)) {
         setErrors(confirmApplePayError)
+        setPlacing(false)
+        return { error: true, result: confirmApplePayError }
       }
     }
     if (paymethodsWithoutSaveCard.includes(parsedPaymethodData?.gateway) &&

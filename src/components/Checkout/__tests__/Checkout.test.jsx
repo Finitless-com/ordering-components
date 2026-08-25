@@ -89,6 +89,58 @@ describe('Checkout', () => {
     expect(cart.mockSetStateValues).toHaveBeenCalled()
   })
 
+  it('does not treat Apple Pay as placed when confirmPayment fails', async () => {
+    cart.mockPlaceCart.mockResolvedValue({
+      error: false,
+      result: {
+        uuid: 'cart-uuid-5',
+        status: 1,
+        paymethod_data: {
+          gateway: 'apple_pay',
+          result: { client_secret: 'secret_apple' }
+        }
+      }
+    })
+    const onPlaceOrderClick = vi.fn()
+    const confirmPayment = vi.fn().mockResolvedValue({ error: { message: 'Card declined' } })
+    renderController(Checkout, {
+      businessId: 5,
+      onPlaceOrderClick
+    })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    const applePaymethod = { paymethodId: 9, paymethod: { gateway: 'apple_pay' }, data: {} }
+    lastControllerProps.handlePaymethodChange(applePaymethod)
+    await lastControllerProps.handlerClickPlaceOrder({}, {}, confirmPayment, null, applePaymethod)
+    expect(confirmPayment).toHaveBeenCalledWith('secret_apple')
+    expect(onPlaceOrderClick).not.toHaveBeenCalled()
+  })
+
+  it('still places when Apple Pay confirm only reports the missing applePay parameter', async () => {
+    cart.mockPlaceCart.mockResolvedValue({
+      error: false,
+      result: {
+        uuid: 'cart-uuid-5',
+        status: 1,
+        paymethod_data: {
+          gateway: 'apple_pay',
+          result: { client_secret: 'secret_apple' }
+        }
+      }
+    })
+    const onPlaceOrderClick = vi.fn()
+    const confirmPayment = vi.fn().mockResolvedValue({
+      error: { message: 'You must provide the `applePay` parameter.' }
+    })
+    renderController(Checkout, {
+      businessId: 5,
+      onPlaceOrderClick
+    })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    const applePaymethod = { paymethodId: 9, paymethod: { gateway: 'apple_pay' }, data: {} }
+    await lastControllerProps.handlerClickPlaceOrder({}, {}, confirmPayment, null, applePaymethod)
+    expect(onPlaceOrderClick).toHaveBeenCalled()
+  })
+
   it('blocks duplicate place order while checkout is in progress', async () => {
     cart.mockPlaceCart.mockImplementationOnce(() => new Promise(() => {}))
     const onPlaceOrderClick = vi.fn()
