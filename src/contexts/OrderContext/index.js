@@ -10,6 +10,7 @@ import { ToastType, useToast } from '../ToastContext'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { parseUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
+import { isUnchangedDriverTip } from './isUnchangedDriverTip'
 
 dayjs.extend(utc)
 
@@ -1001,7 +1002,7 @@ export const OrderProvider = ({
     if (!driverTipRate && driverTipRate !== 0) {
       throw new Error('`driverTipRate` is required.')
     }
-    if (!state.carts[`businessId:${businessId}`] || state.carts[`businessId:${businessId}`]?.driver_tip_rate === driverTipRate) {
+    if (isUnchangedDriverTip(state.carts[`businessId:${businessId}`], driverTipRate, isFixedPrice)) {
       return
     }
     try {
