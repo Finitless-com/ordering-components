@@ -136,6 +136,30 @@ describe('Ordering', () => {
     expect(response.content.result).toEqual({ id: 1, name: 'demo' })
   })
 
+  it('does not throw when the API body is not JSON', async () => {
+    installXhrMock({
+      status: 200,
+      response: '<html>404</html>'
+    })
+    const ordering = new Ordering({ project: 'demo' })
+    const response = await ordering.get('/languages', { CastClass: null, json: true })
+    expect(response.status).toBe(200)
+    expect(response.content.error).toBe(true)
+    expect(response.content.result).toEqual(['Invalid JSON response'])
+  })
+
+  it('still parses JSON error envelopes', async () => {
+    installXhrMock({
+      status: 404,
+      response: { error: true, result: ['Not found'] }
+    })
+    const ordering = new Ordering({ project: 'demo' })
+    const response = await ordering.get('/languages', { CastClass: null, json: true })
+    expect(response.status).toBe(404)
+    expect(response.content.error).toBe(true)
+    expect(response.content.result).toEqual(['Not found'])
+  })
+
   it('stringifies nested POST body fields', async () => {
     const captured = []
     installXhrMock({
