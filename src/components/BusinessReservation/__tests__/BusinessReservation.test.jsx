@@ -81,6 +81,31 @@ describe('BusinessReservation', () => {
     expect(acms.mockCreateReservation).toHaveBeenCalled()
   })
 
+  it('does not crash when reservation_setting is invalid JSON', () => {
+    const business = {
+      ...acms.sampleBusiness,
+      configs: [{ key: 'reservation_setting', value: '{not-json' }]
+    }
+    expect(() => renderController(BusinessReservation, {
+      business,
+      cart: { products: [], reservation: {} }
+    })).not.toThrow()
+    expect(lastControllerProps.reservationSetting).toEqual({})
+  })
+
+  it('uses valid business reservation_setting JSON', () => {
+    const setting = { min_time_reserve_minutes: 15, max_time_reserve_days: 3 }
+    const business = {
+      ...acms.sampleBusiness,
+      configs: [{ key: 'reservation_setting', value: JSON.stringify(setting) }]
+    }
+    renderController(BusinessReservation, {
+      business,
+      cart: { products: [], reservation: {} }
+    })
+    expect(lastControllerProps.reservationSetting).toEqual(setting)
+  })
+
   it('generates hour list when reserve date changes', async () => {
     renderController(BusinessReservation, {
       business: acms.sampleBusiness,
