@@ -8,6 +8,7 @@ import { useLanguage } from '../../contexts/LanguageContext'
 import { CODES } from '../../constants/code-numbers'
 import { TIMEZONES } from '../../constants/timezones'
 import { useConfig } from '../../contexts/ConfigContext'
+import { parseJsonStorage } from '../../utils/parseJsonStorage'
 
 export const PhoneAutocomplete = (props) => {
   props = { ...defaultProps, ...props }
@@ -18,7 +19,7 @@ export const PhoneAutocomplete = (props) => {
   const [orderState, { setUserCustomerOptions }] = useOrder()
   const [businessState] = useBusiness()
   const [{ configs }] = useConfig()
-  const userCustomer = JSON.parse(window.localStorage.getItem('user-customer'))
+  const userCustomer = parseJsonStorage(window.localStorage.getItem('user-customer'))
 
   const [phone, setPhone] = useState('')
   const [, t] = useLanguage()

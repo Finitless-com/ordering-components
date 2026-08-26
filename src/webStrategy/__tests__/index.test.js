@@ -20,4 +20,11 @@ describe('WebStrategy', () => {
     await strategy.removeItem('temp')
     await expect(strategy.getItem('temp', false)).resolves.toBeNull()
   })
+
+  it('treats corrupt JSON as missing instead of throwing', async () => {
+    window.localStorage.setItem('language', 'undefined')
+    await expect(strategy.getItem('language', true)).resolves.toBeNull()
+    window.localStorage.setItem('options', '{"type":1')
+    await expect(strategy.getItem('options', true)).resolves.toBeNull()
+  })
 })

@@ -1,8 +1,10 @@
+import { parseJsonStorage } from '../utils/parseJsonStorage'
+
 export class WebStrategy {
   async getItem (storageKey, isJson) {
     const value = await window.localStorage.getItem(storageKey)
-    if (isJson && typeof value !== 'object') {
-      return JSON.parse(value)
+    if (isJson) {
+      return parseJsonStorage(value)
     }
     return value
   }
