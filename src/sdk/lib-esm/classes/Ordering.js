@@ -17,6 +17,7 @@ import { ApiCountry } from './ApiCountry'
 import { ApiOrderOption } from './ApiOrderOption'
 import { ApiCart } from './ApiCart'
 import { ApiPaymentCards } from './ApiPaymentCards'
+import { parseApiJsonBody } from '../../../utils/parseApiJsonBody'
 var __assign = (this && this.__assign) || function () {
   __assign = Object.assign || function (t) {
     for (var s, i = 1, n = arguments.length; i < n; i++) {
@@ -210,11 +211,11 @@ const Ordering = /** @class */ (function () {
   Ordering.prototype.getRequestProps = function (options) {
     let _a
     const root = options.system ? this.systemRoot : this.root
-    const query = options.query; const mode = options.mode; const conditions = options.conditions; const headers = options.headers; const otherOptions = __rest(options
+    const query = options.query; const mode = options.mode; const conditions = options.conditions; const headers = options.headers; const requestAccessToken = options.accessToken; const otherOptions = __rest(options
       /**
          * Parse query
          */
-      , ['query', 'mode', 'conditions', 'headers'])
+      , ['query', 'mode', 'conditions', 'headers', 'accessToken'])
     /**
          * Parse query
          */
@@ -248,8 +249,9 @@ const Ordering = /** @class */ (function () {
          * Parse headers from options and default
          */
     const authHeaders = {}
-    if (this.accessToken && !this.apiKey) {
-      authHeaders.Authorization = 'Bearer ' + this.accessToken
+    const token = requestAccessToken || this.accessToken
+    if (token && !this.apiKey) {
+      authHeaders.Authorization = 'Bearer ' + token
     }
     if (this.apiKey) {
       authHeaders['X-Api-Key'] = this.apiKey
@@ -295,7 +297,7 @@ const Ordering = /** @class */ (function () {
       }
       xhr.onload = function () {
         if (xhr.status < 500) {
-          const data_1 = options.json ? JSON.parse(xhr.response) : xhr.response
+          const data_1 = options.json ? parseApiJsonBody(xhr.response) : xhr.response
           resolve({
             request: xhr,
             data: data_1,

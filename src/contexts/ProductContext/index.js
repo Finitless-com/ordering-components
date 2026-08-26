@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useReducer } from 'react'
+import { persistProductOptions } from './persistProductOptions'
 
 export const PRODUCT_ACTIONS = {
   CHANGE_INGREDIENTS: 'change_ingredients',
@@ -31,7 +32,7 @@ const defaultReducer = (state, action) => {
       }
     }
     case PRODUCT_ACTIONS.CHANGE_OPTIONS: {
-      window.localStorage.setItem('options', JSON.stringify(action.options))
+      persistProductOptions(action.options)
       return {
         ...state,
         options: action.options

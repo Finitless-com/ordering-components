@@ -93,11 +93,71 @@ describe('Ordering', () => {
     expect(options.params.nested).toBe('{"a":1}')
   })
 
+  it('uses per-request accessToken when the instance has none', () => {
+    const ordering = new Ordering({ project: 'demo' })
+    const [, options] = ordering.getRequestProps({ accessToken: 'per-request-tok' })
+    expect(options.headers.Authorization).toBe('Bearer per-request-tok')
+    expect(options.accessToken).toBeUndefined()
+  })
+
+  it('prefers per-request accessToken over the instance token', () => {
+    const ordering = new Ordering({ accessToken: 'instance-tok', project: 'demo' })
+    const [, options] = ordering.getRequestProps({ accessToken: 'per-request-tok' })
+    expect(options.headers.Authorization).toBe('Bearer per-request-tok')
+    expect(options.accessToken).toBeUndefined()
+  })
+
+  it('does not set Bearer from accessToken when apiKey is present', () => {
+    const ordering = new Ordering({
+      accessToken: 'instance-tok',
+      apiKey: 'api-key',
+      project: 'demo'
+    })
+    const [, options] = ordering.getRequestProps({ accessToken: 'per-request-tok' })
+    expect(options.headers.Authorization).toBeUndefined()
+    expect(options.headers['X-Api-Key']).toBe('api-key')
+  })
+
+  it('sends per-request Bearer on POST when the instance has no token', async () => {
+    const captured = []
+    installXhrMock({
+      response: { error: false, result: { id: 1 } },
+      onRequest: (xhr) => captured.push(xhr)
+    })
+    const ordering = new Ordering({ project: 'demo' })
+    await ordering.post('/users/1/addresses', { address: '1 Main' }, { accessToken: 'confirm-tok' })
+    expect(captured[0].requestHeaders.Authorization).toBe('Bearer confirm-tok')
+  })
+
   it('performs GET requests via XMLHttpRequest', async () => {
     const ordering = new Ordering({ project: 'demo' })
     const response = await ordering.get('/languages', { CastClass: null, json: true })
     expect(response.status).toBe(200)
     expect(response.content.result).toEqual({ id: 1, name: 'demo' })
+  })
+
+  it('does not throw when the API body is not JSON', async () => {
+    installXhrMock({
+      status: 200,
+      response: '<html>404</html>'
+    })
+    const ordering = new Ordering({ project: 'demo' })
+    const response = await ordering.get('/languages', { CastClass: null, json: true })
+    expect(response.status).toBe(200)
+    expect(response.content.error).toBe(true)
+    expect(response.content.result).toEqual(['Invalid JSON response'])
+  })
+
+  it('still parses JSON error envelopes', async () => {
+    installXhrMock({
+      status: 404,
+      response: { error: true, result: ['Not found'] }
+    })
+    const ordering = new Ordering({ project: 'demo' })
+    const response = await ordering.get('/languages', { CastClass: null, json: true })
+    expect(response.status).toBe(404)
+    expect(response.content.error).toBe(true)
+    expect(response.content.result).toEqual(['Not found'])
   })
 
   it('stringifies nested POST body fields', async () => {

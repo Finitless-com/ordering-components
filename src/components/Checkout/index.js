@@ -7,6 +7,8 @@ import { useSession } from '../../contexts/SessionContext'
 import { useToast, ToastType } from '../../contexts/ToastContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+import { isBlockingApplePayConfirmError } from '../../utils/applePayConfirm'
+import { getPlaceAmount } from '../../utils/placeAmount'
 
 const forterGateways = ['braintree', 'paypal_braintree', 'google_pay_braintree', 'apple_pay_braintree']
 
@@ -171,7 +173,7 @@ export const Checkout = (props) => {
       }
     }
     let payload = {
-      amount: _cart?.balance ?? _cart?.total
+      amount: getPlaceAmount(_cart)
     }
 
     if (_cart?.offer_id) payload.offer_id = _cart?.offer_id
@@ -213,7 +215,11 @@ export const Checkout = (props) => {
       payload.paymethod_data.urlscheme = options.urlscheme
     }
     setPlacing(true)
-    await onChangeSpot()
+    const spotReady = await onChangeSpot()
+    if (!spotReady) {
+      setPlacing(false)
+      return { error: true }
+    }
     if (paymethodsWithoutSaveCard.includes(_paymethodSelected?.paymethod?.gateway)) {
       delete payload.paymethod_data
     }
@@ -268,8 +274,10 @@ export const Checkout = (props) => {
     }
     if (confirmPayment && parsedPaymethodData?.gateway === 'apple_pay') {
       const { error: confirmApplePayError } = await confirmPayment(parsedPaymethodData?.result?.client_secret)
-      if (confirmApplePayError && confirmApplePayError?.message !== 'You must provide the `applePay` parameter.') {
+      if (isBlockingApplePayConfirmError(confirmApplePayError)) {
         setErrors(confirmApplePayError)
+        setPlacing(false)
+        return { error: true, result: confirmApplePayError }
       }
     }
     if (paymethodsWithoutSaveCard.includes(parsedPaymethodData?.gateway) &&
@@ -331,7 +339,10 @@ export const Checkout = (props) => {
           ? t('ERROR', result[0])
           : t('SPOT_CHANGE_SUCCESS_CONTENT', 'Changes applied correctly')
       )
-    } catch {}
+      return !error
+    } catch {
+      return false
+    }
   }
 
   const onChangeSpot = async () => {
@@ -340,9 +351,10 @@ export const Checkout = (props) => {
       placeSpotNumber && (bodyToSend.spot_number = placeSpotNumber)
 
       if (Object.keys(bodyToSend).length) {
-        handleChangeSpot({ bodyToSend })
+        return handleChangeSpot({ bodyToSend })
       }
     }
+    return true
   }
 
   /**
@@ -479,7 +491,7 @@ export const Checkout = (props) => {
         key_id: keyId,
         hash: cart?.paymethod_data?.result?.hash,
         time: cart?.paymethod_data?.result?.time,
-        amount: cart?.total,
+        amount: getPlaceAmount(cart),
         orderid: cartUuid,
         ccnumber: paymethodSelected?.data?.ccnumber,
         cvv: paymethodSelected?.data?.cvv,

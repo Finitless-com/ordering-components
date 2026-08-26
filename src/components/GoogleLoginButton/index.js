@@ -154,7 +154,7 @@ export const GoogleLoginButton = (props) => {
     // login with backend
     try {
       setFormState({ ...formState, loading: true })
-      const response = await ordering.users().authGoogle({ access_token: authResponse?.id_token })
+      const response = await ordering.setAccessToken(null).users().authGoogle({ access_token: authResponse?.id_token })
       setFormState({
         result: response.content,
         loading: false

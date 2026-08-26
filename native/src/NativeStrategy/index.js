@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { parseJsonStorage } from '../../../src/utils/parseJsonStorage'
 
 export class NativeStrategy {
   async getItem (storageKey, isJson) {
     const value = await AsyncStorage.getItem(storageKey)
-    if (isJson && typeof value !== 'object') {
-      return JSON.parse(value)
+    if (isJson) {
+      return parseJsonStorage(value)
     }
     return value
   }

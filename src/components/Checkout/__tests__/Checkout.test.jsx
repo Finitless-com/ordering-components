@@ -44,6 +44,7 @@ vi.mock('../../../contexts/WebsocketContext', () => ({
   useWebsocket: () => ({ getId: () => 'socket-14' })
 }))
 
+// eslint-disable-next-line import/first
 import { Checkout } from '../index'
 
 describe('Checkout', () => {
@@ -77,6 +78,69 @@ describe('Checkout', () => {
     await lastControllerProps.handlerClickPlaceOrder({}, {}, null, null, lastControllerProps.paymethodSelected)
     expect(cart.mockPlaceCart).toHaveBeenCalledWith('cart-uuid-5', expect.any(Object))
     expect(onPlaceOrderClick).toHaveBeenCalled()
+    expect(cart.mockCartSet).not.toHaveBeenCalled()
+  })
+
+  it('waits for eat-in spot save before placing', async () => {
+    cart.mockOrderState.options.type = 3
+    let resolveSpot
+    cart.mockCartSet.mockImplementationOnce(() => new Promise(resolve => {
+      resolveSpot = () => resolve({
+        content: {
+          error: false,
+          result: { uuid: 'cart-uuid-5', business_id: 5, spot_number: 12 }
+        }
+      })
+    }))
+    const onPlaceOrderClick = vi.fn()
+    renderController(Checkout, { businessId: 5, onPlaceOrderClick })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    lastControllerProps.handlePaymethodChange({ paymethodId: 3, gateway: 'cash', data: {} })
+    lastControllerProps.setPlaceSpotNumber(12)
+    await waitFor(() => expect(lastControllerProps.placeSpotNumber).toBe(12))
+
+    const placePromise = lastControllerProps.handlerClickPlaceOrder(
+      {},
+      {},
+      null,
+      null,
+      lastControllerProps.paymethodSelected
+    )
+    await waitFor(() => {
+      expect(cart.mockCartSet).toHaveBeenCalledWith({ spot_number: 12 })
+    })
+    expect(cart.mockPlaceCart).not.toHaveBeenCalled()
+
+    resolveSpot()
+    await placePromise
+    expect(cart.mockPlaceCart).toHaveBeenCalledWith('cart-uuid-5', expect.any(Object))
+    expect(onPlaceOrderClick).toHaveBeenCalled()
+  })
+
+  it('does not place when eat-in spot save fails', async () => {
+    cart.mockOrderState.options.type = 3
+    cart.mockCartSet.mockResolvedValueOnce({
+      content: { error: true, result: ['Invalid spot'] }
+    })
+    const onPlaceOrderClick = vi.fn()
+    renderController(Checkout, { businessId: 5, onPlaceOrderClick })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    lastControllerProps.handlePaymethodChange({ paymethodId: 3, gateway: 'cash', data: {} })
+    lastControllerProps.setPlaceSpotNumber(12)
+    await waitFor(() => expect(lastControllerProps.placeSpotNumber).toBe(12))
+
+    await lastControllerProps.handlerClickPlaceOrder(
+      {},
+      {},
+      null,
+      null,
+      lastControllerProps.paymethodSelected
+    )
+
+    expect(cart.mockCartSet).toHaveBeenCalledWith({ spot_number: 12 })
+    expect(cart.mockPlaceCart).not.toHaveBeenCalled()
+    expect(onPlaceOrderClick).not.toHaveBeenCalled()
+    expect(lastControllerProps.placing).toBe(false)
   })
 
   it('updates delivery option on cart', async () => {
@@ -87,6 +151,58 @@ describe('Checkout', () => {
       expect(lastControllerProps.deliveryOptionSelected).toBe(2)
     })
     expect(cart.mockSetStateValues).toHaveBeenCalled()
+  })
+
+  it('does not treat Apple Pay as placed when confirmPayment fails', async () => {
+    cart.mockPlaceCart.mockResolvedValue({
+      error: false,
+      result: {
+        uuid: 'cart-uuid-5',
+        status: 1,
+        paymethod_data: {
+          gateway: 'apple_pay',
+          result: { client_secret: 'secret_apple' }
+        }
+      }
+    })
+    const onPlaceOrderClick = vi.fn()
+    const confirmPayment = vi.fn().mockResolvedValue({ error: { message: 'Card declined' } })
+    renderController(Checkout, {
+      businessId: 5,
+      onPlaceOrderClick
+    })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    const applePaymethod = { paymethodId: 9, paymethod: { gateway: 'apple_pay' }, data: {} }
+    lastControllerProps.handlePaymethodChange(applePaymethod)
+    await lastControllerProps.handlerClickPlaceOrder({}, {}, confirmPayment, null, applePaymethod)
+    expect(confirmPayment).toHaveBeenCalledWith('secret_apple')
+    expect(onPlaceOrderClick).not.toHaveBeenCalled()
+  })
+
+  it('still places when Apple Pay confirm only reports the missing applePay parameter', async () => {
+    cart.mockPlaceCart.mockResolvedValue({
+      error: false,
+      result: {
+        uuid: 'cart-uuid-5',
+        status: 1,
+        paymethod_data: {
+          gateway: 'apple_pay',
+          result: { client_secret: 'secret_apple' }
+        }
+      }
+    })
+    const onPlaceOrderClick = vi.fn()
+    const confirmPayment = vi.fn().mockResolvedValue({
+      error: { message: 'You must provide the `applePay` parameter.' }
+    })
+    renderController(Checkout, {
+      businessId: 5,
+      onPlaceOrderClick
+    })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    const applePaymethod = { paymethodId: 9, paymethod: { gateway: 'apple_pay' }, data: {} }
+    await lastControllerProps.handlerClickPlaceOrder({}, {}, confirmPayment, null, applePaymethod)
+    expect(onPlaceOrderClick).toHaveBeenCalled()
   })
 
   it('blocks duplicate place order while checkout is in progress', async () => {
@@ -104,5 +220,40 @@ describe('Checkout', () => {
     })
     lastControllerProps.handlerClickPlaceOrder({}, {}, null, null, lastControllerProps.paymethodSelected)
     expect(cart.mockShowToast).toHaveBeenCalled()
+  })
+
+  it('posts Credomatic amount from remaining cart balance', async () => {
+    document.querySelectorAll('form').forEach(form => form.remove())
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
+    renderController(Checkout, { businessId: 5 })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    await lastControllerProps.handleConfirmCredomaticPage(
+      {
+        uuid: 'cart-uuid-5',
+        total: 40,
+        balance: 10,
+        paymethod_data: { result: { hash: 'hash1', time: '123' } }
+      },
+      { data: { ccnumber: '4111111111111111', cvv: '123', ccexp: '1228' } }
+    )
+    expect(document.querySelector('form input[name="amount"]').value).toBe('10')
+    submit.mockRestore()
+  })
+
+  it('posts Credomatic amount from total when there is no remainder', async () => {
+    document.querySelectorAll('form').forEach(form => form.remove())
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
+    renderController(Checkout, { businessId: 5 })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    await lastControllerProps.handleConfirmCredomaticPage(
+      {
+        uuid: 'cart-uuid-5',
+        total: 40,
+        paymethod_data: { result: { hash: 'hash1', time: '123' } }
+      },
+      { data: { ccnumber: '4111111111111111', cvv: '123', ccexp: '1228' } }
+    )
+    expect(document.querySelector('form input[name="amount"]').value).toBe('40')
+    submit.mockRestore()
   })
 })

@@ -15,6 +15,7 @@ import { ApiCountry } from './ApiCountry'
 import { ApiOrderOption } from './ApiOrderOption'
 import { ApiCart } from './ApiCart'
 import { ApiPaymentCards } from './ApiPaymentCards'
+import { parseApiJsonBody } from '../../../utils/parseApiJsonBody'
 
 const stripTrailingSlashes = (url: string) => typeof url === 'string' ? url.replace(/\/+$/, '') : url
 
@@ -196,7 +197,7 @@ export class Ordering {
 
   getRequestProps (options: RequestOptionsProps): [string, any] {
     const root: string = options.system ? this.systemRoot : this.root
-    const { query, mode, conditions, headers, ...otherOptions } = options
+    const { query, mode, conditions, headers, accessToken: requestAccessToken, ...otherOptions } = options
     /**
      * Parse query
      */
@@ -231,8 +232,9 @@ export class Ordering {
      * Parse headers from options and default
      */
     const authHeaders: any = {}
-    if (this.accessToken && !this.apiKey) {
-      authHeaders.Authorization = `Bearer ${this.accessToken}`
+    const token = requestAccessToken || this.accessToken
+    if (token && !this.apiKey) {
+      authHeaders.Authorization = `Bearer ${token}`
     }
     if (this.apiKey) {
       authHeaders['X-Api-Key'] = this.apiKey
@@ -286,7 +288,7 @@ export class Ordering {
       }
       xhr.onload = function () {
         if (this.status < 500) {
-          const data = options.json ? JSON.parse(this.response) : this.response
+          const data = options.json ? parseApiJsonBody(this.response) : this.response
           resolve({
             request: this,
             data,

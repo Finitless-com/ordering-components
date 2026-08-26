@@ -49,6 +49,7 @@ export const GoogleIdentityButton = (props) => {
     try {
       setFormState({ ...formState, loading: true })
       const response = await ordering
+        .setAccessToken(null)
         .users()
         .authGoogle({ access_token: token })
       setFormState({

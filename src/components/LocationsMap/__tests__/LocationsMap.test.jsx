@@ -63,6 +63,47 @@ describe('LocationsMap', () => {
     })
   })
 
+  it('sanitizes activeInfoWindow HTML before setContent', async () => {
+    const setContent = vi.fn()
+    window.google.maps.InfoWindow = vi.fn(() => ({
+      setContent,
+      open: vi.fn(),
+      close: vi.fn(),
+      addListener: vi.fn()
+    }))
+    const { rerender } = render(
+      <LocationsMap
+        apiKey='test-key'
+        locations={[{ lat: 40.7, lng: -74, icon: 'pin.png' }]}
+        location={{ lat: 40.7, lng: -74 }}
+        mapControls={{ defaultZoom: 12 }}
+        listenLocations
+      />
+    )
+    await waitFor(() => expect(window.google.maps.Map).toHaveBeenCalled())
+    rerender(
+      <LocationsMap
+        apiKey='test-key'
+        locations={[{ lat: 40.7, lng: -74, icon: 'pin.png' }]}
+        location={{ lat: 40.7, lng: -74 }}
+        mapControls={{ defaultZoom: 12 }}
+        listenLocations
+        activeInfoWindow={{
+          location: { lat: 40.7, lng: -74 },
+          content: '<div>Store<script>alert(1)</script><img src=x onerror=alert(1)></div>'
+        }}
+      />
+    )
+    await waitFor(() => {
+      expect(setContent).toHaveBeenCalled()
+    })
+    const html = setContent.mock.calls[0][0]
+    expect(html).toContain('Store')
+    expect(html).not.toMatch(/script/i)
+    expect(html).not.toMatch(/onerror/i)
+    expect(html).not.toMatch(/alert\(/)
+  })
+
   it('recenters map when forceCenter is enabled', async () => {
     const mapInstance = {
       fitBounds: vi.fn(),

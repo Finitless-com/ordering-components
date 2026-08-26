@@ -6,6 +6,7 @@ import { useSession } from '../../contexts/SessionContext'
 import { useToast, ToastType } from '../../contexts/ToastContext'
 import dayjs from 'dayjs'
 import moment from 'moment'
+import { parseReservationSetting } from './parseReservationSetting'
 
 /**
  * Component to manage Checkout page behavior without UI component
@@ -42,7 +43,9 @@ export const BusinessReservation = (props) => {
   const [isEnabled, setIsEnabled] = useState(true)
 
   const businessConfig = business?.configs?.find(config => config?.key === 'reservation_setting')
-  const reservationSetting = businessConfig ? JSON.parse(businessConfig?.value || '{}') : JSON.parse(configs?.reservation_setting?.value || '{}')
+  const reservationSetting = parseReservationSetting(
+    businessConfig ? businessConfig?.value : configs?.reservation_setting?.value
+  )
   const currentDate = new Date()
   const timeRange = 15
   const getValidationFieldOrderTypes = async () => {

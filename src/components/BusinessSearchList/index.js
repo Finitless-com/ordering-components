@@ -51,6 +51,8 @@ export const BusinessSearchList = (props) => {
   const prevLocationKeyRef = useRef(null)
   const abortControllerRef = useRef(null)
   const searchDebounceRef = useRef(null)
+  const orderOptionsRef = useRef(orderState?.options)
+  orderOptionsRef.current = orderState?.options
 
   const isValidMoment = (date, format) => dayjs.utc(date, format).format(format) === date
 
@@ -178,6 +180,7 @@ export const BusinessSearchList = (props) => {
     try {
       const effectiveTerm = val ?? termValue
       const hasSearchTerm = effectiveTerm?.length >= 3
+      const currentOrderOptions = orderOptionsRef.current
       let filtParams = hasSearchTerm
         ? `&term=${isIos ? effectiveTerm : encodeURI(effectiveTerm)}`
         : '&excludes=categories'

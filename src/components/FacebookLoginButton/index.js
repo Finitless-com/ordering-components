@@ -76,7 +76,7 @@ export const FacebookLoginButton = (props) => {
       setFormState({ ...formState, loading: true })
       const _credentials = { access_token: facebookResponse.authResponse?.accessToken }
       if (isGuest && user?.guest_id) _credentials.guest_token = user?.guest_id
-      const response = await ordering.users().authFacebook(_credentials)
+      const response = await ordering.setAccessToken(null).users().authFacebook(_credentials)
       setFormState({
         result: response.content,
         loading: false
