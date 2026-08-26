@@ -17,6 +17,7 @@ import { ApiCountry } from './ApiCountry'
 import { ApiOrderOption } from './ApiOrderOption'
 import { ApiCart } from './ApiCart'
 import { ApiPaymentCards } from './ApiPaymentCards'
+import { parseApiJsonBody } from '../../../utils/parseApiJsonBody'
 var __assign = (this && this.__assign) || function () {
   __assign = Object.assign || function (t) {
     for (var s, i = 1, n = arguments.length; i < n; i++) {
@@ -296,7 +297,7 @@ const Ordering = /** @class */ (function () {
       }
       xhr.onload = function () {
         if (xhr.status < 500) {
-          const data_1 = options.json ? JSON.parse(xhr.response) : xhr.response
+          const data_1 = options.json ? parseApiJsonBody(xhr.response) : xhr.response
           resolve({
             request: xhr,
             data: data_1,
