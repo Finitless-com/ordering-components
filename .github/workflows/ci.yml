@@ -3,8 +3,10 @@ name: CI Quality Gate
 on:
   pull_request:
     branches: ["main", "production"]
-  push:
-    branches: ["main", "production"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -12,8 +14,8 @@ permissions:
   issues: write
 
 jobs:
-  lint:
-    name: Lint
+  quality-gate:
+    name: CI Quality Gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +45,7 @@ jobs:
           else
             yarn install --frozen-lockfile
           fi
+
       - name: ESLint
         run: |
           if [ "${{ steps.pm.outputs.manager }}" = "pnpm" ]; then
@@ -51,77 +54,7 @@ jobs:
             yarn lint:check
           fi
 
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Detect package manager
-        id: pm
-        run: |
-          if [ -f pnpm-lock.yaml ]; then
-            echo "manager=pnpm" >> $GITHUB_OUTPUT
-          elif [ -f yarn.lock ]; then
-            echo "manager=yarn" >> $GITHUB_OUTPUT
-          else
-            echo "::error::No lockfile found (pnpm-lock.yaml or yarn.lock)"
-            exit 1
-          fi
-      - uses: pnpm/action-setup@v4
-        if: steps.pm.outputs.manager == 'pnpm'
-        with:
-          version: 9.15.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: ${{ steps.pm.outputs.manager }}
-      - name: Install dependencies
-        run: |
-          if [ "${{ steps.pm.outputs.manager }}" = "pnpm" ]; then
-            pnpm install --frozen-lockfile
-          else
-            yarn install --frozen-lockfile
-          fi
-      - name: Run tests
-        run: |
-          if [ "${{ steps.pm.outputs.manager }}" = "pnpm" ]; then
-            pnpm test
-          else
-            yarn test
-          fi
-
-  coverage:
-    name: Test Coverage Report
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Detect package manager
-        id: pm
-        run: |
-          if [ -f pnpm-lock.yaml ]; then
-            echo "manager=pnpm" >> $GITHUB_OUTPUT
-          elif [ -f yarn.lock ]; then
-            echo "manager=yarn" >> $GITHUB_OUTPUT
-          else
-            echo "::error::No lockfile found (pnpm-lock.yaml or yarn.lock)"
-            exit 1
-          fi
-      - uses: pnpm/action-setup@v4
-        if: steps.pm.outputs.manager == 'pnpm'
-        with:
-          version: 9.15.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: ${{ steps.pm.outputs.manager }}
-      - name: Install dependencies
-        run: |
-          if [ "${{ steps.pm.outputs.manager }}" = "pnpm" ]; then
-            pnpm install --frozen-lockfile
-          else
-            yarn install --frozen-lockfile
-          fi
-      - name: Run coverage
+      - name: Test coverage
         run: |
           if [ "${{ steps.pm.outputs.manager }}" = "pnpm" ]; then
             pnpm test:coverage
@@ -242,6 +175,7 @@ jobs:
             echo "statements=0" >> $GITHUB_OUTPUT
             echo "Coverage report not found: $COVERAGE_FILE"
             ls -la coverage/ || echo "Coverage directory does not exist"
+            exit 1
           fi
 
       - name: Check Coverage Threshold
@@ -262,7 +196,6 @@ jobs:
           fi
 
       - name: Comment PR with Coverage
-        if: github.event_name == 'pull_request'
         continue-on-error: true
         uses: actions/github-script@v7
         with:
@@ -344,22 +277,3 @@ jobs:
               console.warn('Could not create PR comment (permissions may be restricted):', error.message);
               console.log('Coverage summary:', body);
             }
-
-  quality-gate:
-    name: CI Quality Gate
-    needs: [lint, test, coverage]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Require lint, test, and coverage
-        run: |
-          echo "Lint: ${{ needs.lint.result }}"
-          echo "Test: ${{ needs.test.result }}"
-          echo "Coverage: ${{ needs.coverage.result }}"
-          if [ "${{ needs.lint.result }}" != "success" ] || \
-             [ "${{ needs.test.result }}" != "success" ] || \
-             [ "${{ needs.coverage.result }}" != "success" ]; then
-            echo "❌ CI Quality Gate failed — fix failing jobs before merge."
-            exit 1
-          fi
-          echo "✅ CI Quality Gate passed (lint + test + 70% coverage)."
