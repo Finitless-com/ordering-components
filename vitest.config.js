@@ -23,7 +23,8 @@ export default defineConfig({
     css: false,
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html', 'lcov'],
+      // PR CI only needs json (70% gate) and text (job logs). Skip html/lcov.
+      reporter: ['text', 'json'],
       reportsDirectory: './coverage',
       // Interim: include grows per TEST_BATCH_REGISTRY.md batches.
       // Final (ship): must list ALL testable units (~210) at ≥70% avg — not this subset only.

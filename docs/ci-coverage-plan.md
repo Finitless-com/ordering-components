@@ -107,7 +107,7 @@ yarn test:coverage:summary
 
 ## Branch protection
 
-Enable after first green CI on GitHub — [BRANCH_PROTECTION.md](./BRANCH_PROTECTION.md). Required check: **CI Quality Gate**.
+Enable after first green CI on GitHub — [BRANCH_PROTECTION.md](./BRANCH_PROTECTION.md). Required check: **CI Quality Gate** (one job: lint + `test:coverage` + 70% gate). PRs only; no push rerun. Coverage reporters in CI: `text` + `json` only (no `html` / `lcov`).
 
 ## Consumer apps
 
