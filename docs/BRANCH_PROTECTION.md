@@ -4,11 +4,11 @@ Enable **after the first green CI run** on GitHub (merge the ORD-1084 PR to `mai
 
 ## Required status check
 
-| Check name | What it aggregates |
+| Check name | What it runs |
 |------------|-------------------|
-| **CI Quality Gate** | Lint + Test + Test Coverage Report (70% average gate) |
+| **CI Quality Gate** | One billed job: lint + `test:coverage` + 70% average gate |
 
-Individual jobs (`Lint`, `Test`, `Test Coverage Report`) also run, but branch protection should require the aggregate **`CI Quality Gate`** job — same pattern as [ordering-dashboard](https://github.com/Finitless-com/ordering-dashboard).
+Do not require extra job names. Lint, Test, and Test Coverage Report are no longer separate billed jobs. Same pattern as [ordering-dashboard](https://github.com/Finitless-com/ordering-dashboard).
 
 ## GitHub UI steps (repeat for `main` and `production`)
 
@@ -42,6 +42,6 @@ After ORD-1084 ships:
 
 | Symptom | Fix |
 |---------|-----|
-| `CI Quality Gate` not in the status-check dropdown | Push to `main` once so `.github/workflows/ci.yml` runs; wait for workflow to finish. |
+| `CI Quality Gate` not in the status-check dropdown | Open a PR so `.github/workflows/ci.yml` runs; wait for the job to finish. This workflow is PR-only. |
 | Coverage job fails locally but passes in CI | Run `yarn test:coverage:summary` in this repo; ensure `vitest.config.js` scoped include matches CI. |
 | Submodule consumers still on old SHA | Expected — consumers bump SHA in their own PRs after `ordering-components` merges. |
