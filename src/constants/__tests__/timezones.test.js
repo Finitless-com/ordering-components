@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import dayjs from 'dayjs'
 import {
   TIMEZONES,
   isValidTimezone,
@@ -80,6 +81,25 @@ describe('timezones', () => {
     it('uses default lookahead when limitDays is not positive', () => {
       const result = getPreorderMaxDate('America/New_York', 0)
       expect(result).toBeInstanceOf(Date)
+    })
+  })
+
+  describe('timezone plugin fallback', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('still converts to the business timezone when the plugin cannot parse the locale string', () => {
+      const toLocaleString = Date.prototype.toLocaleString
+      vi.spyOn(Date.prototype, 'toLocaleString').mockImplementation(function (...args) {
+        return `x${toLocaleString.apply(this, args)}`
+      })
+      const inTz = dayjs('2026-08-28T20:08:00Z').tz('America/Los_Angeles')
+      expect(inTz.isValid()).toBe(true)
+      expect(inTz.format('YYYY-MM-DD HH:mm')).toBe('2026-08-28 13:08')
+      expect(dayjs('2026-09-04T05:59:00Z').tz('America/Los_Angeles').isSameOrAfter(inTz, 'day')).toBe(true)
+      expect(createDayjsWithTimezone('America/Los_Angeles', '2026-08-28T20:08:00Z').format('YYYY-MM-DD HH:mm')).toBe('2026-08-28 13:08')
+      expect(formatUtcInBusinessTimezone('2026-08-28 20:08:00', 'America/Los_Angeles')).toBe('2026-08-28 13:08')
     })
   })
 })

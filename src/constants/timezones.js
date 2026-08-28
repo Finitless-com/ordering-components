@@ -7,6 +7,33 @@ dayjs.extend(utc)
 dayjs.extend(timezone)
 dayjs.extend(isSameOrAfter)
 
+const wallClockInTimezone = (date, timezone) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  }).formatToParts(date)
+  const get = (type) => parts.find((part) => part.type === type)?.value
+  const hour = get('hour') === '24' ? '00' : get('hour')
+  return `${get('year')}-${get('month')}-${get('day')} ${hour}:${get('minute')}:${get('second')}`
+}
+
+// dayjs timezone parses Date.toLocaleString(); ICU >= 72 (Android 14+) breaks it with U+202F
+const pluginTz = dayjs.prototype.tz
+dayjs.prototype.tz = function (timezone, keepLocalTime) {
+  const result = pluginTz.call(this, timezone, keepLocalTime)
+  if (result.isValid() || !this.isValid() || !timezone) return result
+  const wallClock = keepLocalTime
+    ? this.format('YYYY-MM-DD HH:mm:ss')
+    : wallClockInTimezone(this.toDate(), timezone)
+  return dayjs.tz(wallClock, 'YYYY-MM-DD HH:mm:ss', timezone).millisecond(this.millisecond())
+}
+
 export const TIMEZONES = {
   'Europe/Andorra': 'Andorra',
   'Asia/Dubai': 'United Arab Emirates',
