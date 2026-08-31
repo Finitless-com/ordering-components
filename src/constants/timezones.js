@@ -23,15 +23,22 @@ const wallClockInTimezone = (date, timezone) => {
   return `${get('year')}-${get('month')}-${get('day')} ${hour}:${get('minute')}:${get('second')}`
 }
 
-// dayjs timezone parses Date.toLocaleString(); ICU >= 72 (Android 14+) breaks it with U+202F
+// dayjs timezone parses Date.toLocaleString() with new Date(); ICU >= 72 (Android 14+) breaks that with U+202F
 const pluginTz = dayjs.prototype.tz
 dayjs.prototype.tz = function (timezone, keepLocalTime) {
-  const result = pluginTz.call(this, timezone, keepLocalTime)
-  if (result.isValid() || !this.isValid() || !timezone) return result
+  if (!timezone || !this.isValid()) return pluginTz.call(this, timezone, keepLocalTime)
+  let localeStringParses = true
+  try {
+    localeStringParses = !isNaN(new Date(this.toDate().toLocaleString('en-US', { timeZone: timezone })).getTime())
+  } catch (error) {
+    return pluginTz.call(this, timezone, keepLocalTime)
+  }
+  if (localeStringParses) return pluginTz.call(this, timezone, keepLocalTime)
   const wallClock = keepLocalTime
     ? this.format('YYYY-MM-DD HH:mm:ss')
     : wallClockInTimezone(this.toDate(), timezone)
-  return dayjs.tz(wallClock, 'YYYY-MM-DD HH:mm:ss', timezone).millisecond(this.millisecond())
+  const milliseconds = String(this.millisecond()).padStart(3, '0')
+  return dayjs.tz(`${wallClock}.${milliseconds}`, timezone)
 }
 
 export const TIMEZONES = {
