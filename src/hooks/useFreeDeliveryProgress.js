@@ -22,12 +22,14 @@ const OFFER_FIELDS = [
   'condition_type'
 ]
 
-const normalizeCoordinate = (value) => {
+const normalizeCoordinate = (value, minimum, maximum) => {
   if (typeof value !== 'number' && typeof value !== 'string') return null
   if (typeof value === 'string' && value.trim() === '') return null
 
   const coordinate = Number(value)
-  return Number.isFinite(coordinate) ? coordinate : null
+  return Number.isFinite(coordinate) && coordinate >= minimum && coordinate <= maximum
+    ? coordinate
+    : null
 }
 
 const normalizeIdentity = (value) => {
@@ -100,12 +102,20 @@ export const useFreeDeliveryProgress = ({
   const businessSlug = normalizeIdentity(business?.slug)
   const normalizedFranchiseId = normalizeIdentity(franchiseId)
   const orderType = orderState?.options?.type
-  const latitude = normalizeCoordinate(orderState?.options?.address?.location?.lat)
-  const longitude = normalizeCoordinate(orderState?.options?.address?.location?.lng)
+  const latitude = normalizeCoordinate(
+    orderState?.options?.address?.location?.lat,
+    -90,
+    90
+  )
+  const longitude = normalizeCoordinate(
+    orderState?.options?.address?.location?.lng,
+    -180,
+    180
+  )
   const sessionLoading = Boolean(session?.loading)
   const orderLoading = Boolean(orderState?.loading)
 
-  const request = useMemo(() => {
+  const eligibility = useMemo(() => {
     const location = latitude === null || longitude === null
       ? null
       : { lat: latitude, lng: longitude }
@@ -115,10 +125,7 @@ export const useFreeDeliveryProgress = ({
     }
 
     let unavailableReason = null
-    if (!enabled) unavailableReason = 'disabled'
-    else if (sessionLoading) unavailableReason = 'session-loading'
-    else if (!token) unavailableReason = 'missing-token'
-    else if (orderLoading) unavailableReason = 'order-loading'
+    if (!token) unavailableReason = 'missing-token'
     else if (orderType !== 1) unavailableReason = 'not-delivery'
     else if (!location) unavailableReason = 'missing-location'
     else if (!businessId && !businessSlug) unavailableReason = 'missing-business'
@@ -158,17 +165,22 @@ export const useFreeDeliveryProgress = ({
     appInternalName,
     businessId,
     businessSlug,
-    enabled,
     latitude,
     longitude,
     normalizedFranchiseId,
-    orderLoading,
     orderType,
     root,
-    sessionLoading,
     token,
     tokenIdentityRef.current.version
   ])
+
+  const gateReason = !enabled
+    ? 'disabled'
+    : sessionLoading
+      ? 'session-loading'
+      : orderLoading
+        ? 'order-loading'
+        : eligibility.unavailableReason
 
   const [refreshVersion, setRefreshVersion] = useState(0)
   const [requestState, setRequestState] = useState({
@@ -177,6 +189,8 @@ export const useFreeDeliveryProgress = ({
     publicOffer: null,
     refreshVersion: -1
   })
+  const requestStateRef = useRef(requestState)
+  requestStateRef.current = requestState
   const requestSequenceRef = useRef(0)
 
   const refresh = useCallback(() => {
@@ -186,24 +200,42 @@ export const useFreeDeliveryProgress = ({
   useEffect(() => {
     const sequence = ++requestSequenceRef.current
     let active = true
+    const cleanupRequest = () => {
+      active = false
+      if (requestSequenceRef.current === sequence) {
+        requestSequenceRef.current += 1
+      }
+    }
+    const commitRequestState = (nextState) => {
+      requestStateRef.current = nextState
+      setRequestState(nextState)
+    }
 
-    if (!request.canRequest) {
-      setRequestState({
-        key: request.key,
+    if (!eligibility.canRequest || !enabled) {
+      commitRequestState({
+        key: eligibility.key,
         phase: 'idle',
         publicOffer: null,
         refreshVersion
       })
-      return () => {
-        active = false
-        if (requestSequenceRef.current === sequence) {
-          requestSequenceRef.current += 1
-        }
-      }
+      return cleanupRequest
     }
 
-    setRequestState({
-      key: request.key,
+    if (sessionLoading || orderLoading) {
+      return cleanupRequest
+    }
+
+    const cachedRequest = requestStateRef.current
+    if (
+      cachedRequest.key === eligibility.key &&
+      cachedRequest.phase === 'success' &&
+      cachedRequest.refreshVersion === refreshVersion
+    ) {
+      return cleanupRequest
+    }
+
+    commitRequestState({
+      key: eligibility.key,
       phase: 'loading',
       publicOffer: null,
       refreshVersion
@@ -214,24 +246,24 @@ export const useFreeDeliveryProgress = ({
         const headers = {
           'Content-Type': 'application/json'
         }
-        if (request.token) headers.Authorization = `Bearer ${request.token}`
-        if (request.appId) headers['X-App-X'] = request.appId
-        if (request.appInternalName) {
-          headers['X-INTERNAL-PRODUCT-X'] = request.appInternalName
+        if (eligibility.token) headers.Authorization = `Bearer ${eligibility.token}`
+        if (eligibility.appId) headers['X-App-X'] = eligibility.appId
+        if (eligibility.appInternalName) {
+          headers['X-INTERNAL-PRODUCT-X'] = eligibility.appInternalName
         }
         const socketId = socketRef.current?.getId?.()
         if (socketId) headers['X-Socket-Id-X'] = socketId
 
-        const response = await fetch(buildRequestUrl(request), {
+        const response = await fetch(buildRequestUrl(eligibility), {
           method: 'GET',
           headers
         })
         const payload = await response.json()
 
         if (!active || requestSequenceRef.current !== sequence) return
-        if (payload?.error) {
-          setRequestState({
-            key: request.key,
+        if (response?.ok === false || payload?.error || !Array.isArray(payload?.result)) {
+          commitRequestState({
+            key: eligibility.key,
             phase: 'error',
             publicOffer: null,
             refreshVersion
@@ -241,18 +273,18 @@ export const useFreeDeliveryProgress = ({
 
         const publicOffer = selectFreeDeliveryOffer({
           publicOffers: payload?.result,
-          business: request.business
+          business: eligibility.business
         })
-        setRequestState({
-          key: request.key,
+        commitRequestState({
+          key: eligibility.key,
           phase: 'success',
           publicOffer,
           refreshVersion
         })
       } catch (error) {
         if (!active || requestSequenceRef.current !== sequence) return
-        setRequestState({
-          key: request.key,
+        commitRequestState({
+          key: eligibility.key,
           phase: 'error',
           publicOffer: null,
           refreshVersion
@@ -262,21 +294,16 @@ export const useFreeDeliveryProgress = ({
 
     loadOffer()
 
-    return () => {
-      active = false
-      if (requestSequenceRef.current === sequence) {
-        requestSequenceRef.current += 1
-      }
-    }
-  }, [refreshVersion, request])
+    return cleanupRequest
+  }, [eligibility, enabled, orderLoading, refreshVersion, sessionLoading])
 
-  const isCurrentRequest = request.canRequest &&
-    requestState.key === request.key &&
+  const isCurrentRequest = !gateReason &&
+    requestState.key === eligibility.key &&
     requestState.refreshVersion === refreshVersion
 
   if (!isCurrentRequest) {
     return {
-      ...hiddenProgress(request.unavailableReason || 'loading'),
+      ...hiddenProgress(gateReason || 'loading'),
       refresh
     }
   }
@@ -293,13 +320,13 @@ export const useFreeDeliveryProgress = ({
   const offer = selectFreeDeliveryOffer({
     publicOffers: requestState.publicOffer ? [requestState.publicOffer] : [],
     cartOffers: cart?.offers,
-    business: request.business
+    business: eligibility.business
   })
   const progress = deriveFreeDeliveryProgress({
     offer,
     cart,
-    orderType: request.orderType,
-    hasLocation: request.hasLocation
+    orderType: eligibility.orderType,
+    hasLocation: eligibility.hasLocation
   })
 
   return { ...progress, refresh }

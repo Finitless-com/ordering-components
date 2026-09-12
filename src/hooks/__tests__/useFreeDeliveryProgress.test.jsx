@@ -35,7 +35,8 @@ import { useFreeDeliveryProgress } from '../useFreeDeliveryProgress'
 const business = { id: 6, slug: 'donospizza' }
 const location = { lat: 25.6866, lng: -100.3161 }
 
-const apiResponse = (payload) => ({
+const apiResponse = (payload, { ok = true } = {}) => ({
+  ok,
   json: vi.fn().mockResolvedValue(payload)
 })
 
@@ -101,6 +102,36 @@ describe('useFreeDeliveryProgress', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled()
     expect(result.current.status).toBe('hidden')
     expect(result.current.offer).toBeNull()
+  })
+
+  it.each([
+    ['latitude', 90.0001, location.lng],
+    ['latitude', -90.0001, location.lng],
+    ['longitude', location.lat, 180.0001],
+    ['longitude', location.lat, -180.0001]
+  ])('does not request when %s is outside its valid range', async (description, lat, lng) => {
+    context.order.options.address.location = { lat, lng }
+
+    const { result } = renderProgress()
+
+    await act(async () => {})
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(result.current).toMatchObject({
+      status: 'hidden',
+      diagnosticReason: 'missing-location'
+    })
+  })
+
+  it.each([
+    [90, 180],
+    [-90, -180]
+  ])('accepts the inclusive coordinate boundary at %s, %s', async (lat, lng) => {
+    context.order.options.address.location = { lat, lng }
+
+    const { result } = renderProgress()
+
+    await waitFor(() => expect(result.current.status).toBe('awareness'))
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
   })
 
   it('requests only the public eligibility fields and selects the open business', async () => {
@@ -281,6 +312,51 @@ describe('useFreeDeliveryProgress', () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    ['OrderContext', () => { context.order.loading = true }, () => { context.order.loading = false }],
+    ['SessionContext', () => { context.session.loading = true }, () => { context.session.loading = false }]
+  ])('retains successful eligibility across temporary %s loading', async (description, startLoading, finishLoading) => {
+    const hook = renderProgress()
+    await waitFor(() => expect(hook.result.current.status).toBe('awareness'))
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+
+    startLoading()
+    hook.rerender({ business, cart: null })
+    expect(hook.result.current.status).toBe('hidden')
+
+    finishLoading()
+    hook.rerender({ business, cart: null })
+    expect(hook.result.current.status).toBe('awareness')
+    await act(async () => {})
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['OrderContext', () => { context.order.loading = true }, () => { context.order.loading = false }],
+    ['SessionContext', () => { context.session.loading = true }, () => { context.session.loading = false }]
+  ])('retries a canceled pending request when %s loading stabilizes', async (description, startLoading, finishLoading) => {
+    const canceledRequest = deferred()
+    globalThis.fetch
+      .mockImplementationOnce(() => canceledRequest.promise)
+      .mockResolvedValueOnce(successfulResponse())
+    const hook = renderProgress()
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1))
+
+    startLoading()
+    hook.rerender({ business, cart: null })
+    expect(hook.result.current.status).toBe('hidden')
+
+    finishLoading()
+    hook.rerender({ business, cart: null })
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(hook.result.current.status).toBe('awareness'))
+
+    await act(async () => {
+      canceledRequest.resolve(successfulResponse([secondFreeDeliveryOffer]))
+    })
+    expect(hook.result.current.offer).toBe(freeDeliveryOffer)
+  })
+
   it.each(['root', 'appId', 'appInternalName'])(
     'keys the cached candidate by the API %s',
     async (identityField) => {
@@ -344,6 +420,43 @@ describe('useFreeDeliveryProgress', () => {
       error: true,
       result: ['private API detail']
     }))
+    const cart = {
+      products: [{ id: 1 }],
+      subtotal: 30,
+      offers: [freeDeliveryOffer]
+    }
+
+    const hook = renderProgress({ cart })
+
+    await waitFor(() => expect(hook.result.current.diagnosticReason).toBe('request-error'))
+    expect(hook.result.current.status).toBe('hidden')
+    expect(hook.result.current.offer).toBeNull()
+  })
+
+  it('does not treat an HTTP failure as successful eligibility for direct-cart fallback', async () => {
+    globalThis.fetch.mockResolvedValueOnce(apiResponse(
+      { error: false, result: [] },
+      { ok: false }
+    ))
+    const cart = {
+      products: [{ id: 1 }],
+      subtotal: 30,
+      offers: [freeDeliveryOffer]
+    }
+
+    const hook = renderProgress({ cart })
+
+    await waitFor(() => expect(hook.result.current.diagnosticReason).toBe('request-error'))
+    expect(hook.result.current.status).toBe('hidden')
+    expect(hook.result.current.offer).toBeNull()
+  })
+
+  it.each([
+    ['a missing payload', null],
+    ['a non-array result', { error: false, result: { id: freeDeliveryOffer.id } }],
+    ['a missing result', { error: false }]
+  ])('does not treat %s as successful eligibility for direct-cart fallback', async (description, payload) => {
+    globalThis.fetch.mockResolvedValueOnce(apiResponse(payload))
     const cart = {
       products: [{ id: 1 }],
       subtotal: 30,
