@@ -287,6 +287,71 @@ describe('useFreeDeliveryProgress', () => {
     expect(hook.result.current.offer).toBe(freeDeliveryOffer)
   })
 
+  it('prefers an ID-only applied non-lowest public candidate on direct mount', async () => {
+    globalThis.fetch.mockResolvedValueOnce(successfulResponse([
+      freeDeliveryOffer,
+      secondFreeDeliveryOffer
+    ]))
+    const cart = {
+      products: [{ id: 1 }],
+      subtotal: 30,
+      offers: [{ id: freeDeliveryOffer.id }]
+    }
+
+    const hook = renderProgress({ cart })
+
+    await waitFor(() => expect(hook.result.current.status).toBe('unlocked'))
+    expect(hook.result.current).toMatchObject({
+      offer: freeDeliveryOffer,
+      minimum: 30,
+      remainingAmount: 0,
+      progressPercent: 100
+    })
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('reselects all retained public candidates from the latest applied cart offer without refetching', async () => {
+    globalThis.fetch.mockResolvedValueOnce(successfulResponse([
+      freeDeliveryOffer,
+      secondFreeDeliveryOffer
+    ]))
+    const hook = renderProgress({
+      cart: { products: [{ id: 1 }], subtotal: 10, offers: [] }
+    })
+    await waitFor(() => expect(hook.result.current.status).toBe('progress'))
+    expect(hook.result.current).toMatchObject({
+      offer: secondFreeDeliveryOffer,
+      minimum: 20,
+      remainingAmount: 10
+    })
+
+    hook.rerender({
+      business,
+      cart: {
+        products: [{ id: 1 }],
+        subtotal: 30,
+        offers: [{ id: freeDeliveryOffer.id }]
+      }
+    })
+    expect(hook.result.current).toMatchObject({
+      status: 'unlocked',
+      offer: freeDeliveryOffer,
+      minimum: 30
+    })
+
+    hook.rerender({
+      business,
+      cart: { products: [{ id: 1 }], subtotal: 10, offers: [] }
+    })
+    expect(hook.result.current).toMatchObject({
+      status: 'progress',
+      offer: secondFreeDeliveryOffer,
+      minimum: 20,
+      remainingAmount: 10
+    })
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('does not refetch for equivalent API, business, location, socket, or cart object identities', async () => {
     const hook = renderProgress()
     await waitFor(() => expect(hook.result.current.status).toBe('awareness'))

@@ -186,7 +186,7 @@ export const useFreeDeliveryProgress = ({
   const [requestState, setRequestState] = useState({
     key: null,
     phase: 'idle',
-    publicOffer: null,
+    publicOffers: [],
     refreshVersion: -1
   })
   const requestStateRef = useRef(requestState)
@@ -215,7 +215,7 @@ export const useFreeDeliveryProgress = ({
       commitRequestState({
         key: eligibility.key,
         phase: 'idle',
-        publicOffer: null,
+        publicOffers: [],
         refreshVersion
       })
       return cleanupRequest
@@ -237,7 +237,7 @@ export const useFreeDeliveryProgress = ({
     commitRequestState({
       key: eligibility.key,
       phase: 'loading',
-      publicOffer: null,
+      publicOffers: [],
       refreshVersion
     })
 
@@ -265,20 +265,16 @@ export const useFreeDeliveryProgress = ({
           commitRequestState({
             key: eligibility.key,
             phase: 'error',
-            publicOffer: null,
+            publicOffers: [],
             refreshVersion
           })
           return
         }
 
-        const publicOffer = selectFreeDeliveryOffer({
-          publicOffers: payload?.result,
-          business: eligibility.business
-        })
         commitRequestState({
           key: eligibility.key,
           phase: 'success',
-          publicOffer,
+          publicOffers: payload.result,
           refreshVersion
         })
       } catch (error) {
@@ -286,7 +282,7 @@ export const useFreeDeliveryProgress = ({
         commitRequestState({
           key: eligibility.key,
           phase: 'error',
-          publicOffer: null,
+          publicOffers: [],
           refreshVersion
         })
       }
@@ -318,7 +314,7 @@ export const useFreeDeliveryProgress = ({
   }
 
   const offer = selectFreeDeliveryOffer({
-    publicOffers: requestState.publicOffer ? [requestState.publicOffer] : [],
+    publicOffers: requestState.publicOffers,
     cartOffers: cart?.offers,
     business: eligibility.business
   })
