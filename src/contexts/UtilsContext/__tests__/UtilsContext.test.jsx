@@ -41,6 +41,12 @@ const PriceConsumer = ({ onReady }) => {
   return null
 }
 
+const DateConsumer = ({ onReady }) => {
+  const [utils] = useUtils()
+  onReady(utils)
+  return null
+}
+
 describe('UtilsContext price formatting', () => {
   beforeEach(() => {
     mocks.configs = { ...baseConfigs }
@@ -70,5 +76,40 @@ describe('UtilsContext price formatting', () => {
     )
 
     expect(parsePrice(1617, { currency: '€', currencyPosition: 'right' })).toBe('1.617,00 €')
+  })
+})
+
+describe('UtilsContext derived date and distance helpers', () => {
+  beforeEach(() => {
+    mocks.configs = { ...baseConfigs }
+  })
+
+  it('exposes formats derived from dates_general_format', () => {
+    mocks.configs.dates_general_format = { value: 'MM/DD/YYYY hh:mm A' }
+    let utils
+
+    render(
+      <UtilsProviders strategy={strategy}>
+        <DateConsumer onReady={value => { utils = value }} />
+      </UtilsProviders>
+    )
+
+    expect(utils.dateFormat).toBe('MM/DD/YYYY')
+    expect(utils.timeFormat).toBe('hh:mm A')
+    expect(utils.is12Hours).toBe(true)
+    expect(utils.preorderDateFormat).toBe('MM/DD')
+  })
+
+  it('uses distance_unit only', () => {
+    mocks.configs.distance_unit = { value: 'MI' }
+    let utils
+
+    render(
+      <UtilsProviders strategy={strategy}>
+        <DateConsumer onReady={value => { utils = value }} />
+      </UtilsProviders>
+    )
+
+    expect(utils.parseDistance(1, { decimal: 2, separator: '.', thousand: ',' })).toBe('0.62 mi')
   })
 })

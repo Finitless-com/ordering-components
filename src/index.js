@@ -151,6 +151,11 @@ import {
   hasOrderAddress,
   shouldRequireOrderAddress
 } from './utils/orderTypeAddress'
+import {
+  getDateTimeFormats,
+  getMaxPreorderDays,
+  isWalletEnabled
+} from './utils/configHelpers'
 
 import {
   Appointments,
@@ -402,6 +407,9 @@ export {
   orderTypeRequiresAddress,
   hasOrderAddress,
   shouldRequireOrderAddress,
+  getDateTimeFormats,
+  getMaxPreorderDays,
+  isWalletEnabled,
   // School module
   useSchoolStudents,
   useCartStudent,

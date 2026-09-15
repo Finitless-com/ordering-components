@@ -17,6 +17,13 @@ export {
   normalizeAvailableTypeIds
 } from './businessTypes'
 
+export {
+  DEFAULT_DATES_GENERAL_FORMAT,
+  getDateTimeFormats,
+  getMaxPreorderDays,
+  isWalletEnabled
+} from './configHelpers'
+
 export const randomString = (length = 10, alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') => {
   let result = ''
   const charactersLength = alphabet.length
