@@ -3,6 +3,7 @@ import { useConfig } from '../ConfigContext'
 import { useLanguage } from '../LanguageContext'
 import { useApi } from '../ApiContext'
 import { useEvent } from '../EventContext'
+import { getDateTimeFormats, getMaxPreorderDays, isWalletEnabled } from '../../utils/configHelpers'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -172,11 +173,12 @@ export const UtilsProviders = ({ children, strategy }) => {
     return number
   }
 
+  const dateTimeFormats = getDateTimeFormats(configState.configs?.dates_general_format?.value)
+
   const parseDate = (date, options = {}) => {
-    const formatTime = options?.formatTime || configState.configs.format_time?.value || '24'
     const formatDate = {
       inputFormat: options?.inputFormat || ['YYYY-MM-DD HH:mm:ss', 'YYYY-MM-DD hh:mm:ss A', 'YYYY-MM-DD hh:mm:ss'],
-      outputFormat: options?.outputFormat || configState.configs?.dates_general_format?.value || (formatTime === '24' ? 'YYYY-MM-DD HH:mm:ss' : 'YYYY-MM-DD hh:mm:ss A'),
+      outputFormat: options?.outputFormat || configState.configs?.dates_general_format?.value || `${dateTimeFormats.dateFormat} ${dateTimeFormats.timeFormat}`,
       utc: typeof options?.utc === 'boolean' ? options?.utc : true
     }
     if (!dayjs(date, formatDate.inputFormat).isValid()) {
@@ -188,10 +190,14 @@ export const UtilsProviders = ({ children, strategy }) => {
 
   const parseTime = (time, options = {}) => {
     if (!time) return '00:00'
-    const _formatTime = options?.formatTime || configState.configs.format_time?.value || '24'
+    const optionTimeFormat = options?.formatTime === '12'
+      ? 'hh:mm A'
+      : options?.formatTime === '24'
+        ? 'HH:mm'
+        : null
     const formatTime = {
       inputFormat: options?.inputFormat || ['HH:mm', 'hh:mm A', 'hh:mm'],
-      outputFormat: options?.outputFormat || (_formatTime === '24' ? 'HH:mm' : 'hh:mm A'),
+      outputFormat: options?.outputFormat || optionTimeFormat || dateTimeFormats.timeFormat,
       utc: typeof options?.utc === 'boolean' ? options?.utc : true
     }
     if (!dayjs(time, formatTime.inputFormat).isValid()) {
@@ -215,13 +221,7 @@ export const UtilsProviders = ({ children, strategy }) => {
 
   const parseDistance = (distance, options = {}) => {
     distance = parseFloat(distance) || 0
-    let unit = options?.unit || 'KM'
-    if (configState.configs.distance_unit_km?.value === '1') {
-      unit = 'KM'
-    }
-    if (configState.configs.distance_unit?.value) {
-      unit = configState.configs.distance_unit?.value
-    }
+    const unit = options?.unit || configState.configs.distance_unit?.value || 'KM'
     if (unit.toUpperCase() === 'MI') {
       const dist = distance * 0.621371
       if (dist >= 1000) {
@@ -363,7 +363,13 @@ export const UtilsProviders = ({ children, strategy }) => {
     optimizeImage,
     getOrderState,
     GiftCardPaymethods,
-    getGiftCardPaymethods
+    getGiftCardPaymethods,
+    dateFormat: dateTimeFormats.dateFormat,
+    timeFormat: dateTimeFormats.timeFormat,
+    is12Hours: dateTimeFormats.is12Hours,
+    preorderDateFormat: dateTimeFormats.preorderDateFormat,
+    isWalletEnabled: (configs = configState.configs) => isWalletEnabled(configs),
+    getMaxPreorderDays: (orderType, configs = configState.configs) => getMaxPreorderDays(configs, orderType)
   }
 
   useEffect(() => {

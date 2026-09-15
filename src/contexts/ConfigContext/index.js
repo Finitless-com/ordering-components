@@ -5,6 +5,7 @@ import { useEvent } from '../EventContext'
 import { useOptimizationLoad } from '../OptimizationLoadContext'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
+import { DEFAULT_DATES_GENERAL_FORMAT, getDateTimeFormats } from '../../utils/configHelpers'
 
 dayjs.extend(utc)
 
@@ -142,16 +143,16 @@ export const ConfigProvider = ({ children, strategy }) => {
       } catch (error) {
         data = null
       }
+      const generalFormat = result?.dates_general_format?.value || DEFAULT_DATES_GENERAL_FORMAT
+      const { preorderDateFormat } = getDateTimeFormats(generalFormat)
       const conditionalConfigs = {
         dates_moment_format: {
           key: 'dates_moment_format',
-          value: result?.dates_moment_format?.value ||
-            (result?.format_time?.value === '24' ? 'MM/DD HH:mm' : 'MM/DD hh:mma')
+          value: preorderDateFormat
         },
         dates_general_format: {
           key: 'dates_general_format',
-          value: result?.dates_general_format?.value ||
-            (result?.format_time?.value === '24' ? 'YYYY-MM-DD HH:mm:ss' : 'YYYY-MM-DD hh:mm:ssa')
+          value: generalFormat
         }
       }
       const configsResult = {
