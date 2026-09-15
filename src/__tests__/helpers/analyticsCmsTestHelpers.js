@@ -19,7 +19,7 @@ export const mockT = (key, fallback) => fallback || key
 export function createInitialConfigState () {
   return {
     stripe_currency: { value: 'USD' },
-    general_hour_format: { value: 'HH:mm' },
+    dates_general_format: { value: 'YYYY-MM-DD HH:mm:ss' },
     reservation_setting: {
       value: JSON.stringify({
         min_time_reserve_minutes: 30,
