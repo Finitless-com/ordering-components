@@ -7,6 +7,7 @@ import { useToast, ToastType } from '../../contexts/ToastContext'
 import dayjs from 'dayjs'
 import moment from 'moment'
 import { parseReservationSetting } from './parseReservationSetting'
+import { getDateTimeFormats } from '../../utils/configHelpers'
 
 /**
  * Component to manage Checkout page behavior without UI component
@@ -24,7 +25,7 @@ export const BusinessReservation = (props) => {
   const [orderState, { createReservation }] = useOrder()
   const [{ user, token }] = useSession()
   const [, { showToast }] = useToast()
-  const is12hours = configs?.general_hour_format?.value?.includes('hh:mm')
+  const { is12Hours: is12hours } = getDateTimeFormats(configs?.dates_general_format?.value)
   const [checkoutFieldsState, setCheckoutFieldsState] = useState({ fields: [], loading: false, error: null })
   const [orderingMethod, setOrderingMethod] = useState(!cart?.products?.length ? 1 : 2)
   const [reservationState, setReservationState] = useState({
