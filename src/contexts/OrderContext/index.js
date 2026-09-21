@@ -11,6 +11,7 @@ import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { parseUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
 import { isUnchangedDriverTip } from './isUnchangedDriverTip'
+import { evictConsumedCart, shouldEvictConsumedCart } from './evictConsumedCart'
 import {
   mergeCartResult,
   mergeCartsByUpdatedAt,
@@ -1232,7 +1233,7 @@ export const OrderProvider = ({
    */
   const confirmCart = async (cardId, data) => {
     try {
-      setState({ ...state, loading: true })
+      setState(prevState => ({ ...prevState, loading: true }))
       const countryCode = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
       const userCustomerId = customerFromLocalStorage?.id
@@ -1257,21 +1258,40 @@ export const OrderProvider = ({
         })
       }
       const { content: { error, result, cart } } = fetchurl
-      if (!error) {
-        if (result.status !== 1) {
-          state.carts[`businessId:${result.business_id}`] = result
-          events.emit('cart_updated', result)
-        } else {
-          delete state.carts[`businessId:${result.business_id}`]
+      setState(prevState => {
+        let nextCarts = evictConsumedCart(prevState.carts, {
+          cartUuid: cardId,
+          error,
+          result
+        })
+        const confirmedCartStillPresent = Object.values(nextCarts).some((item) => item?.uuid === cardId)
+        if (!error && result?.status !== 1 && !result?.order && result?.business_id != null) {
+          nextCarts = {
+            ...nextCarts,
+            [`businessId:${result.business_id}`]: result
+          }
+        } else if (error && cart?.business_id != null && confirmedCartStillPresent) {
+          nextCarts = {
+            ...nextCarts,
+            [`businessId:${cart.business_id}`]: cart
+          }
         }
-      } else if (cart) {
-        state.carts[`businessId:${cart.business_id}`] = cart
-        events.emit('cart_updated', cart)
+        return {
+          ...prevState,
+          loading: false,
+          carts: nextCarts
+        }
+      })
+      if (!shouldEvictConsumedCart({ error, result })) {
+        if (!error && result?.status !== 1 && !result?.order) {
+          events.emit('cart_updated', result)
+        } else if (error && cart) {
+          events.emit('cart_updated', cart)
+        }
       }
-      setState({ ...state, loading: false })
       return { error, result }
     } catch (err) {
-      setState({ ...state, loading: false })
+      setState(prevState => ({ ...prevState, loading: false }))
       return {
         error: true,
         result: [err.message]
