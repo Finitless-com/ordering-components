@@ -304,7 +304,7 @@ describe('useFreeDeliveryProgress', () => {
     hook.rerender({ business, cart: { products: [], subtotal: 0, offers: [] } })
     expect(hook.result.current).toMatchObject({ status: 'awareness', minimum: 30 })
     hook.rerender({ business, cart: { products: [{ id: 1 }], subtotal: 35, offers: [] } })
-    expect(hook.result.current).toMatchObject({ status: 'hidden', diagnosticReason: 'threshold-not-applied' })
+    expect(hook.result.current).toMatchObject({ status: 'unconfirmed', diagnosticReason: 'threshold-not-applied' })
     hook.rerender({ business, cart: { products: [{ id: 1 }], subtotal: 35, offers: [{ id: freeDeliveryOffer.id }] } })
     expect(hook.result.current.status).toBe('unlocked')
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)

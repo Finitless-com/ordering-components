@@ -246,14 +246,14 @@ describe('deriveFreeDeliveryProgress', () => {
     })
   })
 
-  it('hides a numeric threshold match that the cart did not confirm', () => {
+  it('keeps an unconfirmed threshold visible without claiming a discount', () => {
     expect(deriveFreeDeliveryProgress({
       offer: freeDeliveryOffer,
       cart: { products: [{ id: 1 }], subtotal: 31, offers: [] },
       orderType: 1,
       hasLocation: true
     })).toEqual({
-      status: 'hidden',
+      status: 'unconfirmed',
       offer: freeDeliveryOffer,
       minimum: 30,
       currentAmount: 31,

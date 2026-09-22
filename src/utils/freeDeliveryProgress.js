@@ -186,14 +186,15 @@ export const deriveFreeDeliveryProgress = ({
   }
 
   if (currentAmount.gte(minimum)) {
-    return hiddenState({
+    return {
+      status: 'unconfirmed',
       offer,
-      minimum,
+      minimum: minimum.toNumber(),
       currentAmount: currentAmountNumber,
       remainingAmount,
       progressPercent,
       diagnosticReason: 'threshold-not-applied'
-    })
+    }
   }
 
   return {
