@@ -297,6 +297,30 @@ export const useFreeDeliveryProgress = ({
     requestState.key === eligibility.key &&
     requestState.refreshVersion === refreshVersion
 
+  const appliedCandidates = useMemo(() => {
+    const candidates = new Map((requestState.appliedOffers || []).map((offer) => [String(offer.id), offer]))
+    if (Array.isArray(cart?.offers)) {
+      cart.offers.forEach((offer) => {
+        const supportedOffer = selectFreeDeliveryOffer({ cartOffers: [offer], business: eligibility.business })
+        if (supportedOffer) candidates.set(String(supportedOffer.id), supportedOffer)
+      })
+    }
+    return [...candidates.values()]
+  }, [cart?.offers, eligibility.business, requestState.appliedOffers])
+
+  useEffect(() => {
+    if (!isCurrentRequest || requestState.phase !== 'success' || appliedCandidates.length === 0) return
+    const previousOffers = requestState.appliedOffers || []
+    if (previousOffers.length === appliedCandidates.length &&
+      previousOffers.every((offer, index) => offer === appliedCandidates[index])) return
+
+    // Scope fallback candidates to this successful request. Every new request,
+    // failure, or disabled state replaces requestState without appliedOffers.
+    setRequestState((current) => current === requestState
+      ? { ...current, appliedOffers: appliedCandidates }
+      : current)
+  }, [appliedCandidates, isCurrentRequest, requestState])
+
   if (!isCurrentRequest) {
     return {
       ...hiddenProgress(gateReason || 'loading'),
@@ -314,7 +338,7 @@ export const useFreeDeliveryProgress = ({
   }
 
   const offer = selectFreeDeliveryOffer({
-    publicOffers: requestState.publicOffers,
+    publicOffers: [...requestState.publicOffers, ...appliedCandidates],
     cartOffers: cart?.offers,
     business: eligibility.business
   })

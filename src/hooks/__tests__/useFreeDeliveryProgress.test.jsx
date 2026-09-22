@@ -287,6 +287,69 @@ describe('useFreeDeliveryProgress', () => {
     expect(hook.result.current.offer).toBe(freeDeliveryOffer)
   })
 
+  it('retains a direct-mount applied candidate through decrease, removal, and re-add without arithmetic unlocking or refetching', async () => {
+    globalThis.fetch.mockResolvedValue(successfulResponse([]))
+    const hook = renderProgress({
+      cart: { products: [{ id: 1 }], subtotal: 35, offers: [freeDeliveryOffer] }
+    })
+    await waitFor(() => expect(hook.result.current.status).toBe('unlocked'))
+
+    context.order.loading = true
+    hook.rerender({ business, cart: { products: [{ id: 1 }], subtotal: 20, offers: [] } })
+    expect(hook.result.current.status).toBe('hidden')
+    context.order.loading = false
+    hook.rerender({ business, cart: { products: [{ id: 1 }], subtotal: 20, offers: [] } })
+    expect(hook.result.current).toMatchObject({ status: 'progress', remainingAmount: 10 })
+
+    hook.rerender({ business, cart: { products: [], subtotal: 0, offers: [] } })
+    expect(hook.result.current).toMatchObject({ status: 'awareness', minimum: 30 })
+    hook.rerender({ business, cart: { products: [{ id: 1 }], subtotal: 35, offers: [] } })
+    expect(hook.result.current).toMatchObject({ status: 'hidden', diagnosticReason: 'threshold-not-applied' })
+    hook.rerender({ business, cart: { products: [{ id: 1 }], subtotal: 35, offers: [{ id: freeDeliveryOffer.id }] } })
+    expect(hook.result.current.status).toBe('unlocked')
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['business', (hook) => hook.rerender({ business: { id: 7, slug: 'other' }, cart: null })],
+    ['session', (hook) => { context.session.token = 'new-session'; hook.rerender({ business, cart: null }) }],
+    ['location', (hook) => { context.order.options.address.location = { lat: 20, lng: -99 }; hook.rerender({ business, cart: null }) }],
+    ['app', (hook) => { context.ordering.appId = 'other-app'; hook.rerender({ business, cart: null }) }],
+    ['franchise', (hook) => hook.rerender({ business, cart: null, franchiseId: 91 })],
+    ['refresh', (hook) => { hook.rerender({ business, cart: null }); act(() => hook.result.current.refresh()) }],
+    ['disable', (hook) => { hook.rerender({ business, cart: null, enabled: false }); hook.rerender({ business, cart: null }) }]
+  ])('does not retain applied fallback across a new %s eligibility generation', async (description, changeContext) => {
+    globalThis.fetch.mockResolvedValue(successfulResponse([]))
+    const hook = renderProgress({
+      cart: { products: [{ id: 1 }], subtotal: 35, offers: [freeDeliveryOffer] }
+    })
+    await waitFor(() => expect(hook.result.current.status).toBe('unlocked'))
+    hook.rerender({ business, cart: null })
+    expect(hook.result.current.status).toBe('awareness')
+
+    changeContext(hook)
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(hook.result.current.diagnosticReason).toBe('unsupported-offer'))
+    expect(hook.result.current.offer).toBeNull()
+  })
+
+  it('discards retained applied fallback after failed refresh and does not restore it on retry', async () => {
+    globalThis.fetch.mockResolvedValue(successfulResponse([]))
+    const hook = renderProgress({
+      cart: { products: [{ id: 1 }], subtotal: 35, offers: [freeDeliveryOffer] }
+    })
+    await waitFor(() => expect(hook.result.current.status).toBe('unlocked'))
+    hook.rerender({ business, cart: null })
+    expect(hook.result.current.status).toBe('awareness')
+    globalThis.fetch.mockRejectedValueOnce(new Error('network failure'))
+    act(() => hook.result.current.refresh())
+    await waitFor(() => expect(hook.result.current.diagnosticReason).toBe('request-error'))
+    act(() => hook.result.current.refresh())
+    await waitFor(() => expect(hook.result.current.diagnosticReason).toBe('unsupported-offer'))
+    expect(hook.result.current.offer).toBeNull()
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3)
+  })
+
   it('prefers an ID-only applied non-lowest public candidate on direct mount', async () => {
     globalThis.fetch.mockResolvedValueOnce(successfulResponse([
       freeDeliveryOffer,
