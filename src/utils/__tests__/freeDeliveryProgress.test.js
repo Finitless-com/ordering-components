@@ -32,6 +32,15 @@ describe('selectFreeDeliveryOffer', () => {
     })).toBe(freeDeliveryOffer)
   })
 
+  it('accepts an enabled-filtered public offer when the API omits the enabled field', () => {
+    const { enabled, ...apiOffer } = freeDeliveryOffer
+
+    expect(selectFreeDeliveryOffer({
+      publicOffers: [apiOffer],
+      business
+    })).toBe(apiOffer)
+  })
+
   it.each([
     ['another target', { target: 1 }],
     ['a numeric-string target', { target: '2' }],

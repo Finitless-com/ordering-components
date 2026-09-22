@@ -38,7 +38,7 @@ const isSupportedOffer = (offer) => {
     offer.rate_type === 1 &&
     rate?.gte(100) &&
     offer.auto === true &&
-    offer.enabled === true &&
+    (offer.enabled === true || offer.enabled === undefined) &&
     minimum?.gt(0)
   )
 }
