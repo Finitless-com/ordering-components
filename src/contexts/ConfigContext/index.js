@@ -8,6 +8,20 @@ import utc from 'dayjs/plugin/utc'
 
 dayjs.extend(utc)
 
+// first_load omits configs with enabled false. These keys are filled from the
+// dictionary in one request. Add a key here when another setting has the same gap.
+const dictionaryConfigKeys = [
+  'add_product_with_one_click'
+]
+
+const pickDictionaryConfigs = (result, keys) => {
+  if (!result) return {}
+  return keys.reduce((picked, key) => {
+    if (result[key]) picked[key] = result[key]
+    return picked
+  }, {})
+}
+
 /**
  * Create ConfigContext
  * This context will manage the current configs internally and provide an easy interface
@@ -91,10 +105,6 @@ export const ConfigProvider = ({ children, strategy }) => {
       key: 'validation_phone_number_lib',
       value: 1 // 0: disabled, 1: enabled
     },
-    add_product_with_one_click: {
-      key: 'add_product_with_one_click',
-      value: false
-    },
     use_parent_category1: {
       key: 'use_parent_category',
       value: '0'
@@ -130,6 +140,25 @@ export const ConfigProvider = ({ children, strategy }) => {
           handleUpdateOptimizationState('configs', result)
         } catch (apiError) {
           error = true
+        }
+      } else {
+        const missingKeys = dictionaryConfigKeys.filter(key => result?.[key] == null)
+        if (missingKeys.length) {
+          try {
+            const { content } = await ordering.configs()
+              .where([{ attribute: 'key', value: missingKeys }])
+              .asDictionary()
+              .get(options)
+            const picked = pickDictionaryConfigs(content?.result, missingKeys)
+            if (Object.keys(picked).length) {
+              result = {
+                ...result,
+                ...picked
+              }
+            }
+          } catch (apiError) {
+            // first_load omitted these rows; leave them unset
+          }
         }
       }
 
