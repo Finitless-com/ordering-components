@@ -22,6 +22,9 @@ const OFFER_FIELDS = [
   'condition_type',
   'max_discount'
 ]
+const OFFER_CACHE_TTL_MS = 10000
+const OFFER_CACHE_MAX_ENTRIES = 50
+const offerRequestCaches = new WeakMap()
 
 const normalizeCoordinate = (value, minimum, maximum) => {
   if (typeof value !== 'number' && typeof value !== 'string') return null
@@ -62,6 +65,44 @@ const buildRequestUrl = ({ root, location, franchiseId }) => {
   }
 
   return `${root}/offers/public?${query.join('&')}`
+}
+
+const requestPublicOffers = (fetchOffers, cacheKey, requestUrl, headers, force) => {
+  let cache = offerRequestCaches.get(fetchOffers)
+  if (!cache) {
+    cache = new Map()
+    offerRequestCaches.set(fetchOffers, cache)
+  }
+
+  const cached = cache.get(cacheKey)
+  if (!force && cached) {
+    if (cached.promise) return cached.promise
+    if (cached.expiresAt > Date.now()) return Promise.resolve(cached.result)
+  }
+
+  const promise = Promise.resolve()
+    .then(() => fetchOffers(requestUrl, { method: 'GET', headers }))
+    .then(async (response) => {
+      const payload = await response.json()
+      if (response?.ok === false || payload?.error || !Array.isArray(payload?.result)) {
+        throw new Error('Invalid public offers response')
+      }
+      return payload.result
+    })
+  const entry = { promise }
+  cache.set(cacheKey, entry)
+  while (cache.size > OFFER_CACHE_MAX_ENTRIES) cache.delete(cache.keys().next().value)
+  promise.then(
+    (result) => {
+      if (cache.get(cacheKey) === entry) {
+        cache.set(cacheKey, { result, expiresAt: Date.now() + OFFER_CACHE_TTL_MS })
+      }
+    },
+    () => {
+      if (cache.get(cacheKey) === entry) cache.delete(cacheKey)
+    }
+  )
+  return promise
 }
 
 const hiddenProgress = (diagnosticReason) => ({
@@ -126,8 +167,7 @@ export const useFreeDeliveryProgress = ({
     }
 
     let unavailableReason = null
-    if (!token) unavailableReason = 'missing-token'
-    else if (orderType !== 1) unavailableReason = 'not-delivery'
+    if (orderType !== 1) unavailableReason = 'not-delivery'
     else if (!location) unavailableReason = 'missing-location'
     else if (!businessId && !businessSlug) unavailableReason = 'missing-business'
     else if (!root) unavailableReason = 'missing-api-root'
@@ -146,12 +186,27 @@ export const useFreeDeliveryProgress = ({
         latitude,
         longitude
       ])
+    const cacheKey = unavailableReason
+      ? null
+      : JSON.stringify([
+        token,
+        root,
+        appId,
+        appInternalName,
+        normalizedFranchiseId,
+        businessId,
+        businessSlug,
+        orderType,
+        latitude,
+        longitude
+      ])
 
     return {
       appId,
       appInternalName,
       business: normalizedBusiness,
       canRequest: !unavailableReason,
+      cacheKey,
       franchiseId: normalizedFranchiseId,
       hasLocation: Boolean(location),
       key: requestKey,
@@ -193,8 +248,10 @@ export const useFreeDeliveryProgress = ({
   const requestStateRef = useRef(requestState)
   requestStateRef.current = requestState
   const requestSequenceRef = useRef(0)
+  const forceNextRequestRef = useRef(false)
 
   const refresh = useCallback(() => {
+    forceNextRequestRef.current = true
     setRefreshVersion((currentVersion) => currentVersion + 1)
   }, [])
 
@@ -213,6 +270,7 @@ export const useFreeDeliveryProgress = ({
     }
 
     if (!eligibility.canRequest || !enabled) {
+      if (requestStateRef.current.phase !== 'idle') forceNextRequestRef.current = true
       commitRequestState({
         key: eligibility.key,
         phase: 'idle',
@@ -223,6 +281,7 @@ export const useFreeDeliveryProgress = ({
     }
 
     if (sessionLoading || orderLoading) {
+      if (requestStateRef.current.phase === 'loading') forceNextRequestRef.current = true
       return cleanupRequest
     }
 
@@ -255,27 +314,22 @@ export const useFreeDeliveryProgress = ({
         const socketId = socketRef.current?.getId?.()
         if (socketId) headers['X-Socket-Id-X'] = socketId
 
-        const response = await fetch(buildRequestUrl(eligibility), {
-          method: 'GET',
-          headers
-        })
-        const payload = await response.json()
+        const force = forceNextRequestRef.current
+        forceNextRequestRef.current = false
+        const publicOffers = await requestPublicOffers(
+          fetch,
+          eligibility.cacheKey,
+          buildRequestUrl(eligibility),
+          headers,
+          force
+        )
 
         if (!active || requestSequenceRef.current !== sequence) return
-        if (response?.ok === false || payload?.error || !Array.isArray(payload?.result)) {
-          commitRequestState({
-            key: eligibility.key,
-            phase: 'error',
-            publicOffers: [],
-            refreshVersion
-          })
-          return
-        }
 
         commitRequestState({
           key: eligibility.key,
           phase: 'success',
-          publicOffers: payload.result,
+          publicOffers,
           refreshVersion
         })
       } catch (error) {

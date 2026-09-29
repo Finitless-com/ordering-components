@@ -1,6 +1,6 @@
 /* eslint-disable import/first */
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   freeDeliveryOffer,
   secondFreeDeliveryOffer,
@@ -64,6 +64,8 @@ const renderProgress = (props = {}) => renderHook(
 )
 
 describe('useFreeDeliveryProgress', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   beforeEach(() => {
     context.ordering = {
       root: 'https://api.ordering.test',
@@ -88,7 +90,6 @@ describe('useFreeDeliveryProgress', () => {
   })
 
   it.each([
-    ['the session token is missing', () => { context.session.token = null }, {}],
     ['OrderContext is loading', () => { context.order.loading = true }, {}],
     ['Delivery is not selected', () => { context.order.options.type = 2 }, {}],
     ['the delivery location is missing', () => { context.order.options.address = null }, {}],
@@ -102,6 +103,21 @@ describe('useFreeDeliveryProgress', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled()
     expect(result.current.status).toBe('hidden')
     expect(result.current.offer).toBeNull()
+  })
+
+  it('shows public delivery progress to a guest without sending an Authorization header', async () => {
+    context.session.token = null
+    const hook = renderProgress()
+
+    await waitFor(() => expect(hook.result.current.status).toBe('awareness'))
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(globalThis.fetch.mock.calls[0][1].headers).not.toHaveProperty('Authorization')
+
+    hook.rerender({
+      business,
+      cart: { products: [{ id: 1 }], subtotal: 10, offers: [] }
+    })
+    expect(hook.result.current).toMatchObject({ status: 'progress', remainingAmount: 20 })
   })
 
   it.each([
@@ -176,6 +192,75 @@ describe('useFreeDeliveryProgress', () => {
 
     const parsedUrl = new URL(globalThis.fetch.mock.calls[0][0])
     expect(parsedUrl.searchParams.has('franchise_id')).toBe(false)
+  })
+
+  it('shares one in-flight public-offer request across hook instances', async () => {
+    const pending = deferred()
+    globalThis.fetch.mockImplementationOnce(() => pending.promise)
+    const first = renderProgress()
+    const second = renderProgress()
+
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1))
+    await act(async () => pending.resolve(successfulResponse()))
+    await waitFor(() => expect(first.result.current.status).toBe('awareness'))
+    expect(second.result.current.status).toBe('awareness')
+  })
+
+  it('reuses a recent public-offer result across hook instances, then expires it', async () => {
+    let now = 1000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const first = renderProgress()
+    await waitFor(() => expect(first.result.current.status).toBe('awareness'))
+    first.unmount()
+
+    now += 9000
+    const second = renderProgress()
+    await waitFor(() => expect(second.result.current.status).toBe('awareness'))
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    second.unmount()
+
+    now += 1001
+    const third = renderProgress()
+    await waitFor(() => expect(third.result.current.status).toBe('awareness'))
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not share cached offers across session tokens', async () => {
+    const first = renderProgress()
+    await waitFor(() => expect(first.result.current.status).toBe('awareness'))
+    context.session = { ...context.session, token: 'another-session' }
+
+    const second = renderProgress()
+    await waitFor(() => expect(second.result.current.status).toBe('awareness'))
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    expect(globalThis.fetch.mock.calls[1][1].headers.Authorization).toBe('Bearer another-session')
+  })
+
+  it.each([
+    ['API root', () => { context.ordering.root = 'https://other-api.ordering.test' }, {}],
+    ['app identity', () => { context.ordering.appId = 'another-app' }, {}],
+    ['delivery location', () => { context.order.options.address.location = { lat: 20, lng: -99 } }, {}],
+    ['business', () => {}, { business: { id: 7, slug: 'another-business' } }],
+    ['franchise', () => {}, { franchiseId: 91 }]
+  ])('keeps the public-offer cache separate by %s', async (_identity, changeContext, secondProps) => {
+    const first = renderProgress()
+    await waitFor(() => expect(first.result.current.status).toBe('awareness'))
+    first.unmount()
+
+    changeContext()
+    renderProgress(secondProps)
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2))
+  })
+
+  it('does not cache a failed public-offer request for another hook', async () => {
+    globalThis.fetch.mockRejectedValueOnce(new Error('offline'))
+    const first = renderProgress()
+    await waitFor(() => expect(first.result.current.diagnosticReason).toBe('request-error'))
+    first.unmount()
+
+    const second = renderProgress()
+    await waitFor(() => expect(second.result.current.status).toBe('awareness'))
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
   })
 
   it('hides the old candidate synchronously when the request key changes and ignores its stale response', async () => {
