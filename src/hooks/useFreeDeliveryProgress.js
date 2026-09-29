@@ -19,7 +19,8 @@ const OFFER_FIELDS = [
   'auto',
   'enabled',
   'rank',
-  'condition_type'
+  'condition_type',
+  'max_discount'
 ]
 
 const normalizeCoordinate = (value, minimum, maximum) => {

@@ -152,7 +152,7 @@ describe('useFreeDeliveryProgress', () => {
     expect(requestUrl).toContain(`location=${encodeURIComponent(JSON.stringify(location))}`)
     expect(Object.fromEntries(parsedUrl.searchParams)).toEqual({
       enabled: 'true',
-      params: 'id,name,businesses,minimum,target,rate,rate_type,auto,enabled,rank,condition_type',
+      params: 'id,name,businesses,minimum,target,rate,rate_type,auto,enabled,rank,condition_type,max_discount',
       location: JSON.stringify(location),
       order_type_id: '1',
       franchise_id: '91'

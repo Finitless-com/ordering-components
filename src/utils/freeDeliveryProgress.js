@@ -30,13 +30,16 @@ const idsMatch = (first, second) => {
 const isSupportedOffer = (offer) => {
   const minimum = toDecimal(offer?.minimum)
   const rate = toDecimal(offer?.rate)
+  const maxDiscount = offer?.max_discount == null ? null : toDecimal(offer.max_discount)
 
   return Boolean(
     offer &&
     isValidId(offer.id) &&
     offer.target === 2 &&
+    offer.condition_type === 1 &&
     offer.rate_type === 1 &&
     rate?.gte(100) &&
+    (offer.max_discount == null || maxDiscount?.eq(0)) &&
     offer.auto === true &&
     (offer.enabled === true || offer.enabled === undefined) &&
     minimum?.gt(0)

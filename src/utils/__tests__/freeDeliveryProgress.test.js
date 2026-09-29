@@ -41,6 +41,12 @@ describe('selectFreeDeliveryOffer', () => {
     })).toBe(apiOffer)
   })
 
+  it('accepts an explicitly uncapped percentage offer', () => {
+    const offer = { ...freeDeliveryOffer, max_discount: 0 }
+
+    expect(selectFreeDeliveryOffer({ publicOffers: [offer], business })).toBe(offer)
+  })
+
   it.each([
     ['another target', { target: 1 }],
     ['a numeric-string target', { target: '2' }],
@@ -51,7 +57,10 @@ describe('selectFreeDeliveryOffer', () => {
     ['a disabled offer', disabledFreeDeliveryOffer],
     ['a missing threshold', missingThresholdFreeDeliveryOffer],
     ['a zero threshold', { minimum: 0 }],
-    ['a negative threshold', { minimum: -1 }]
+    ['a negative threshold', { minimum: -1 }],
+    ['a product-count threshold', { condition_type: 2 }],
+    ['a missing subtotal condition', { condition_type: null }],
+    ['a capped delivery discount', { max_discount: 5 }]
   ])('rejects %s', (description, override) => {
     const offer = override.id
       ? override

@@ -3,6 +3,7 @@ export const freeDeliveryOffer = {
   name: 'Free Delivery',
   businesses: [{ id: 6, slug: 'donospizza' }],
   minimum: 30,
+  condition_type: 1,
   target: 2,
   rate_type: 1,
   rate: 100,
