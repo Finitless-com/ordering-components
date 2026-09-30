@@ -234,7 +234,7 @@ describe('deriveFreeDeliveryProgress', () => {
     })
   })
 
-  it('returns unlocked only when the selected offer id is present in cart offers', () => {
+  it('returns unlocked when the selected offer id is present in cart offers', () => {
     expect(deriveFreeDeliveryProgress({
       offer: freeDeliveryOffer,
       cart: {
@@ -253,6 +253,60 @@ describe('deriveFreeDeliveryProgress', () => {
       progressPercent: 100,
       diagnosticReason: null
     })
+  })
+
+  it('returns unlocked when another applied offer fully covers the delivery fee', () => {
+    expect(deriveFreeDeliveryProgress({
+      offer: { ...freeDeliveryOffer, id: 299, minimum: 100 },
+      cart: {
+        products: [{ id: 1 }],
+        subtotal: 101.88,
+        delivery_price: 6,
+        delivery_price_with_discount: 0,
+        offers: [{
+          id: 34,
+          target: 2,
+          condition_type: 1,
+          rate_type: 1,
+          rate: 100,
+          summary: { discount: 6 }
+        }]
+      },
+      orderType: 1,
+      hasLocation: true
+    })).toMatchObject({
+      status: 'unlocked',
+      remainingAmount: 0,
+      progressPercent: 100,
+      diagnosticReason: null
+    })
+  })
+
+  it.each([
+    ['a partial discount', { discount: 5, discountedPrice: 1, target: 2, rate: 100 }],
+    ['a zero fee discount', { discount: 0, discountedPrice: 0, target: 2, rate: 100 }],
+    ['a product discount', { discount: 6, discountedPrice: 0, target: 1, rate: 100 }],
+    ['a non-full-rate delivery offer', { discount: 6, discountedPrice: 0, target: 2, rate: 50 }]
+  ])('does not claim unlocked for %s from a different offer', (description, applied) => {
+    expect(deriveFreeDeliveryProgress({
+      offer: { ...freeDeliveryOffer, id: 299, minimum: 100 },
+      cart: {
+        products: [{ id: 1 }],
+        subtotal: 101.88,
+        delivery_price: 6,
+        delivery_price_with_discount: applied.discountedPrice,
+        offers: [{
+          id: 34,
+          target: applied.target,
+          condition_type: 1,
+          rate_type: 1,
+          rate: applied.rate,
+          summary: { discount: applied.discount }
+        }]
+      },
+      orderType: 1,
+      hasLocation: true
+    }).status).toBe('unconfirmed')
   })
 
   it('keeps an unconfirmed threshold visible without claiming a discount', () => {

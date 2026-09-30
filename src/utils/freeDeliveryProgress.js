@@ -126,6 +126,23 @@ const hiddenState = ({ offer, minimum, diagnosticReason, ...amounts }) => ({
   ...amounts
 })
 
+const hasConfirmedFullDeliveryDiscount = (cart) => {
+  const deliveryPrice = toDecimal(cart?.delivery_price)
+  const discountedPrice = toDecimal(cart?.delivery_price_with_discount)
+  if (!deliveryPrice?.gt(0) || !discountedPrice?.eq(0)) return false
+
+  return Array.isArray(cart?.offers) && cart.offers.some((cartOffer) => {
+    const rate = toDecimal(cartOffer?.rate)
+    const discount = toDecimal(cartOffer?.summary?.discount)
+    return isValidId(cartOffer?.id) &&
+      cartOffer.target === 2 &&
+      cartOffer.condition_type === 1 &&
+      cartOffer.rate_type === 1 &&
+      rate?.gte(100) &&
+      discount?.gte(deliveryPrice)
+  })
+}
+
 export const deriveFreeDeliveryProgress = ({
   offer,
   cart,
@@ -172,9 +189,9 @@ export const deriveFreeDeliveryProgress = ({
     Decimal.max(currentAmount.dividedBy(minimum).times(100), 0),
     100
   ).toNumber()
-  const isApplied = Array.isArray(cart?.offers) && cart.offers.some((cartOffer) => (
+  const isApplied = (Array.isArray(cart?.offers) && cart.offers.some((cartOffer) => (
     idsMatch(cartOffer?.id, offer.id)
-  ))
+  ))) || hasConfirmedFullDeliveryDiscount(cart)
 
   if (isApplied) {
     return {
