@@ -1,0 +1,408 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useApi } from '../contexts/ApiContext'
+import { useSession } from '../contexts/SessionContext'
+import { useOrder } from '../contexts/OrderContext'
+import { useWebsocket } from '../contexts/WebsocketContext'
+import {
+  deriveFreeDeliveryProgress,
+  selectFreeDeliveryOffer
+} from '../utils/freeDeliveryProgress'
+
+const OFFER_FIELDS = [
+  'id',
+  'name',
+  'businesses',
+  'minimum',
+  'target',
+  'rate',
+  'rate_type',
+  'auto',
+  'enabled',
+  'rank',
+  'condition_type',
+  'max_discount'
+]
+const OFFER_CACHE_TTL_MS = 10000
+const OFFER_CACHE_MAX_ENTRIES = 50
+const offerRequestCaches = new WeakMap()
+
+const normalizeCoordinate = (value, minimum, maximum) => {
+  if (typeof value !== 'number' && typeof value !== 'string') return null
+  if (typeof value === 'string' && value.trim() === '') return null
+
+  const coordinate = Number(value)
+  return Number.isFinite(coordinate) && coordinate >= minimum && coordinate <= maximum
+    ? coordinate
+    : null
+}
+
+const normalizeIdentity = (value) => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? String(value) : null
+  }
+  if (typeof value !== 'string') return null
+
+  const identity = value.trim()
+  return identity || null
+}
+
+const normalizeRoot = (root) => {
+  if (typeof root !== 'string') return null
+  const normalizedRoot = root.trim().replace(/\/+$/, '')
+  return normalizedRoot || null
+}
+
+const buildRequestUrl = ({ root, location, franchiseId }) => {
+  const query = [
+    'enabled=true',
+    `params=${encodeURIComponent(OFFER_FIELDS.join(','))}`,
+    `location=${encodeURIComponent(JSON.stringify(location))}`,
+    'order_type_id=1'
+  ]
+
+  if (franchiseId) {
+    query.push(`franchise_id=${encodeURIComponent(franchiseId)}`)
+  }
+
+  return `${root}/offers/public?${query.join('&')}`
+}
+
+const requestPublicOffers = (fetchOffers, cacheKey, requestUrl, headers, force) => {
+  let cache = offerRequestCaches.get(fetchOffers)
+  if (!cache) {
+    cache = new Map()
+    offerRequestCaches.set(fetchOffers, cache)
+  }
+
+  const cached = cache.get(cacheKey)
+  if (!force && cached) {
+    if (cached.promise) return cached.promise
+    if (cached.expiresAt > Date.now()) return Promise.resolve(cached.result)
+  }
+
+  const promise = Promise.resolve()
+    .then(() => fetchOffers(requestUrl, { method: 'GET', headers }))
+    .then(async (response) => {
+      const payload = await response.json()
+      if (response?.ok === false || payload?.error || !Array.isArray(payload?.result)) {
+        throw new Error('Invalid public offers response')
+      }
+      return payload.result
+    })
+  const entry = { promise }
+  cache.set(cacheKey, entry)
+  while (cache.size > OFFER_CACHE_MAX_ENTRIES) cache.delete(cache.keys().next().value)
+  promise.then(
+    (result) => {
+      if (cache.get(cacheKey) === entry) {
+        cache.set(cacheKey, { result, expiresAt: Date.now() + OFFER_CACHE_TTL_MS })
+      }
+    },
+    () => {
+      if (cache.get(cacheKey) === entry) cache.delete(cacheKey)
+    }
+  )
+  return promise
+}
+
+const hiddenProgress = (diagnosticReason) => ({
+  status: 'hidden',
+  offer: null,
+  minimum: null,
+  currentAmount: 0,
+  remainingAmount: null,
+  progressPercent: 0,
+  diagnosticReason
+})
+
+export const useFreeDeliveryProgress = ({
+  business,
+  cart,
+  franchiseId,
+  enabled = true
+} = {}) => {
+  const [ordering] = useApi()
+  const [session] = useSession()
+  const [orderState] = useOrder()
+  const socket = useWebsocket()
+  const socketRef = useRef(socket)
+  socketRef.current = socket
+
+  const token = session?.token || null
+  const tokenIdentityRef = useRef({ token, version: 0 })
+  if (tokenIdentityRef.current.token !== token) {
+    tokenIdentityRef.current = {
+      token,
+      version: tokenIdentityRef.current.version + 1
+    }
+  }
+
+  const root = normalizeRoot(ordering?.root)
+  const appId = normalizeIdentity(ordering?.appId)
+  const appInternalName = normalizeIdentity(ordering?.appInternalName)
+  const businessId = normalizeIdentity(business?.id)
+  const businessSlug = normalizeIdentity(business?.slug)
+  const normalizedFranchiseId = normalizeIdentity(franchiseId)
+  const orderType = orderState?.options?.type
+  const latitude = normalizeCoordinate(
+    orderState?.options?.address?.location?.lat,
+    -90,
+    90
+  )
+  const longitude = normalizeCoordinate(
+    orderState?.options?.address?.location?.lng,
+    -180,
+    180
+  )
+  const sessionLoading = Boolean(session?.loading)
+  const orderLoading = Boolean(orderState?.loading)
+
+  const eligibility = useMemo(() => {
+    const location = latitude === null || longitude === null
+      ? null
+      : { lat: latitude, lng: longitude }
+    const normalizedBusiness = {
+      id: businessId,
+      slug: businessSlug
+    }
+
+    let unavailableReason = null
+    if (orderType !== 1) unavailableReason = 'not-delivery'
+    else if (!location) unavailableReason = 'missing-location'
+    else if (!businessId && !businessSlug) unavailableReason = 'missing-business'
+    else if (!root) unavailableReason = 'missing-api-root'
+
+    const requestKey = unavailableReason
+      ? null
+      : JSON.stringify([
+        tokenIdentityRef.current.version,
+        root,
+        appId,
+        appInternalName,
+        normalizedFranchiseId,
+        businessId,
+        businessSlug,
+        orderType,
+        latitude,
+        longitude
+      ])
+    const cacheKey = unavailableReason
+      ? null
+      : JSON.stringify([
+        token,
+        root,
+        appId,
+        appInternalName,
+        normalizedFranchiseId,
+        businessId,
+        businessSlug,
+        orderType,
+        latitude,
+        longitude
+      ])
+
+    return {
+      appId,
+      appInternalName,
+      business: normalizedBusiness,
+      canRequest: !unavailableReason,
+      cacheKey,
+      franchiseId: normalizedFranchiseId,
+      hasLocation: Boolean(location),
+      key: requestKey,
+      location,
+      orderType,
+      root,
+      token,
+      unavailableReason
+    }
+  }, [
+    appId,
+    appInternalName,
+    businessId,
+    businessSlug,
+    latitude,
+    longitude,
+    normalizedFranchiseId,
+    orderType,
+    root,
+    token,
+    tokenIdentityRef.current.version
+  ])
+
+  const gateReason = !enabled
+    ? 'disabled'
+    : sessionLoading
+      ? 'session-loading'
+      : orderLoading
+        ? 'order-loading'
+        : eligibility.unavailableReason
+
+  const [refreshVersion, setRefreshVersion] = useState(0)
+  const [requestState, setRequestState] = useState({
+    key: null,
+    phase: 'idle',
+    publicOffers: [],
+    refreshVersion: -1
+  })
+  const requestStateRef = useRef(requestState)
+  requestStateRef.current = requestState
+  const requestSequenceRef = useRef(0)
+  const forceNextRequestRef = useRef(false)
+
+  const refresh = useCallback(() => {
+    forceNextRequestRef.current = true
+    setRefreshVersion((currentVersion) => currentVersion + 1)
+  }, [])
+
+  useEffect(() => {
+    const sequence = ++requestSequenceRef.current
+    let active = true
+    const cleanupRequest = () => {
+      active = false
+      if (requestSequenceRef.current === sequence) {
+        requestSequenceRef.current += 1
+      }
+    }
+    const commitRequestState = (nextState) => {
+      requestStateRef.current = nextState
+      setRequestState(nextState)
+    }
+
+    if (!eligibility.canRequest || !enabled) {
+      if (requestStateRef.current.phase !== 'idle') forceNextRequestRef.current = true
+      commitRequestState({
+        key: eligibility.key,
+        phase: 'idle',
+        publicOffers: [],
+        refreshVersion
+      })
+      return cleanupRequest
+    }
+
+    if (sessionLoading || orderLoading) {
+      if (requestStateRef.current.phase === 'loading') forceNextRequestRef.current = true
+      return cleanupRequest
+    }
+
+    const cachedRequest = requestStateRef.current
+    if (
+      cachedRequest.key === eligibility.key &&
+      cachedRequest.phase === 'success' &&
+      cachedRequest.refreshVersion === refreshVersion
+    ) {
+      return cleanupRequest
+    }
+
+    commitRequestState({
+      key: eligibility.key,
+      phase: 'loading',
+      publicOffers: [],
+      refreshVersion
+    })
+
+    const loadOffer = async () => {
+      try {
+        const headers = {
+          'Content-Type': 'application/json'
+        }
+        if (eligibility.token) headers.Authorization = `Bearer ${eligibility.token}`
+        if (eligibility.appId) headers['X-App-X'] = eligibility.appId
+        if (eligibility.appInternalName) {
+          headers['X-INTERNAL-PRODUCT-X'] = eligibility.appInternalName
+        }
+        const socketId = socketRef.current?.getId?.()
+        if (socketId) headers['X-Socket-Id-X'] = socketId
+
+        const force = forceNextRequestRef.current
+        forceNextRequestRef.current = false
+        const publicOffers = await requestPublicOffers(
+          fetch,
+          eligibility.cacheKey,
+          buildRequestUrl(eligibility),
+          headers,
+          force
+        )
+
+        if (!active || requestSequenceRef.current !== sequence) return
+
+        commitRequestState({
+          key: eligibility.key,
+          phase: 'success',
+          publicOffers,
+          refreshVersion
+        })
+      } catch (error) {
+        if (!active || requestSequenceRef.current !== sequence) return
+        commitRequestState({
+          key: eligibility.key,
+          phase: 'error',
+          publicOffers: [],
+          refreshVersion
+        })
+      }
+    }
+
+    loadOffer()
+
+    return cleanupRequest
+  }, [eligibility, enabled, orderLoading, refreshVersion, sessionLoading])
+
+  const isCurrentRequest = !gateReason &&
+    requestState.key === eligibility.key &&
+    requestState.refreshVersion === refreshVersion
+
+  const appliedCandidates = useMemo(() => {
+    const candidates = new Map((requestState.appliedOffers || []).map((offer) => [String(offer.id), offer]))
+    if (Array.isArray(cart?.offers)) {
+      cart.offers.forEach((offer) => {
+        const supportedOffer = selectFreeDeliveryOffer({ cartOffers: [offer], business: eligibility.business })
+        if (supportedOffer) candidates.set(String(supportedOffer.id), supportedOffer)
+      })
+    }
+    return [...candidates.values()]
+  }, [cart?.offers, eligibility.business, requestState.appliedOffers])
+
+  useEffect(() => {
+    if (!isCurrentRequest || requestState.phase !== 'success' || appliedCandidates.length === 0) return
+    const previousOffers = requestState.appliedOffers || []
+    if (previousOffers.length === appliedCandidates.length &&
+      previousOffers.every((offer, index) => offer === appliedCandidates[index])) return
+
+    // Scope fallback candidates to this successful request. Every new request,
+    // failure, or disabled state replaces requestState without appliedOffers.
+    setRequestState((current) => current === requestState
+      ? { ...current, appliedOffers: appliedCandidates }
+      : current)
+  }, [appliedCandidates, isCurrentRequest, requestState])
+
+  if (!isCurrentRequest) {
+    return {
+      ...hiddenProgress(gateReason || 'loading'),
+      refresh
+    }
+  }
+  if (requestState.phase === 'loading') {
+    return { ...hiddenProgress('loading'), refresh }
+  }
+  if (requestState.phase === 'error') {
+    return { ...hiddenProgress('request-error'), refresh }
+  }
+  if (requestState.phase !== 'success') {
+    return { ...hiddenProgress('loading'), refresh }
+  }
+
+  const offer = selectFreeDeliveryOffer({
+    publicOffers: [...requestState.publicOffers, ...appliedCandidates],
+    cartOffers: cart?.offers,
+    business: eligibility.business
+  })
+  const progress = deriveFreeDeliveryProgress({
+    offer,
+    cart,
+    orderType: eligibility.orderType,
+    hasLocation: eligibility.hasLocation
+  })
+
+  return { ...progress, refresh }
+}
