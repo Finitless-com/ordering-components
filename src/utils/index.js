@@ -23,6 +23,10 @@ export {
   getMaxPreorderDays,
   isWalletEnabled
 } from './configHelpers'
+export {
+  deriveFreeDeliveryProgress,
+  selectFreeDeliveryOffer
+} from './freeDeliveryProgress'
 
 export const randomString = (length = 10, alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') => {
   let result = ''

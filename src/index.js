@@ -194,6 +194,7 @@ import { useSchoolStudents } from './hooks/useSchoolStudents'
 import { useCartStudent } from './hooks/useCartStudent'
 import { useSchools } from './hooks/useSchools'
 import { useSelectedStudent } from './hooks/useSelectedStudent'
+import { useFreeDeliveryProgress } from './hooks/useFreeDeliveryProgress'
 import { SCHOOL_ALLERGENS, SCHOOL_DIETARY_TAGS } from './constants/school'
 
 export {
@@ -417,6 +418,7 @@ export {
   useCartStudent,
   useSchools,
   useSelectedStudent,
+  useFreeDeliveryProgress,
   SCHOOL_ALLERGENS,
   SCHOOL_DIETARY_TAGS,
   // Constants

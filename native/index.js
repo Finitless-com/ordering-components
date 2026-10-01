@@ -123,6 +123,7 @@ import { useSchoolStudents } from '../src/hooks/useSchoolStudents'
 import { useCartStudent } from '../src/hooks/useCartStudent'
 import { useSchools } from '../src/hooks/useSchools'
 import { useSelectedStudent } from '../src/hooks/useSelectedStudent'
+import { useFreeDeliveryProgress } from '../src/hooks/useFreeDeliveryProgress'
 import { SCHOOL_ALLERGENS, SCHOOL_DIETARY_TAGS } from '../src/constants/school'
 
 export {
@@ -277,6 +278,7 @@ export {
   useCartStudent,
   useSchools,
   useSelectedStudent,
+  useFreeDeliveryProgress,
   // Constants
   CODES,
   TIMEZONES,
