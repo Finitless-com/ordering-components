@@ -86,6 +86,7 @@ import { SingleProductCard } from './components/SingleProductCard'
 import { SingleProfessionalCard } from './components/SingleProfessionalCard'
 import { SmartAppBanner } from './components/SmartAppBanner'
 import { StoreProductList } from './components/StoreProductList'
+import { StoreProductOptions } from './components/StoreProductOptions'
 import { UserFormDetails } from './components/UserFormDetails'
 import { UpsellingPage } from './components/UpsellingPage'
 import { OrderDetails } from './components/OrderDetails'
@@ -290,6 +291,7 @@ export {
   SingleProfessionalCard,
   SmartAppBanner,
   StoreProductList,
+  StoreProductOptions,
   UserFormDetails,
   UpsellingPage,
   OrderDetails,
