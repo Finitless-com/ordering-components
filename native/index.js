@@ -85,6 +85,7 @@ import { SingleOrderCard } from '../src/components/SingleOrderCard'
 import { SingleProductCard } from '../src/components/SingleProductCard'
 import { SingleProfessionalCard } from '../src/components/SingleProfessionalCard'
 import { StoreProductList } from '../src/components/StoreProductList'
+import { StoreProductOptions } from '../src/components/StoreProductOptions'
 import { StripeElementsForm } from '../src/components/StripeElementsForm'
 import { StripeRedirectForm } from '../src/components/PaymentOptionStripeRedirect/StripeRedirectForm'
 import { UserFormDetails } from '../src/components/UserFormDetails'
@@ -214,6 +215,7 @@ export {
   SingleProductCard,
   SingleProfessionalCard,
   StoreProductList,
+  StoreProductOptions,
   StripeElementsForm,
   StripeRedirectForm,
   UserFormDetails,

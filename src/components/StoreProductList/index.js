@@ -43,7 +43,7 @@ export const StoreProductList = (props) => {
       products: [],
       loading: true
     })
-    setCategory(value)
+    setCategory({ ...value })
   }
 
   /**
