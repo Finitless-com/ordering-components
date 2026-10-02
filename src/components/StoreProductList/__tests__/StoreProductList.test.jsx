@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { waitFor } from '@testing-library/react'
+import { waitFor, act } from '@testing-library/react'
 import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
 
 const menu = vi.hoisted(() => {
@@ -105,5 +105,24 @@ describe('StoreProductList', () => {
     await waitFor(() => {
       expect(menu.mockProductsGet).toHaveBeenCalled()
     })
+  })
+
+  it('reloads products when the same category object is selected again', async () => {
+    renderController(StoreProductList, {
+      slug: 'taco-shop',
+      businessProps: ['id', 'name', 'categories']
+    })
+    await waitFor(() => expect(lastControllerProps.businessState.business?.id).toBe(5))
+    const category = { id: 1, name: 'Mains' }
+    act(() => lastControllerProps.handleChangeCategory(category))
+    await waitFor(() => expect(lastControllerProps.productsList.products).toHaveLength(2))
+    expect(menu.mockProductsGet).toHaveBeenCalledTimes(1)
+    act(() => lastControllerProps.handleChangeCategory(category))
+    expect(lastControllerProps.productsList.loading).toBe(true)
+    await waitFor(() => {
+      expect(lastControllerProps.productsList.loading).toBe(false)
+      expect(lastControllerProps.productsList.products).toHaveLength(2)
+    })
+    expect(menu.mockProductsGet).toHaveBeenCalledTimes(2)
   })
 })
