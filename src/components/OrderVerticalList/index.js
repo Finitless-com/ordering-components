@@ -376,10 +376,6 @@ export const OrderVerticalList = (props) => {
 
   useEffect(() => {
     if (!session.user) return
-    socket.on('disconnect', () => {
-      const ordersRoom = session?.user?.level === 0 ? 'orders' : `orders_${session?.user?.id}`
-      socket.join(ordersRoom)
-    })
     const ordersRoom = session?.user?.level === 0 ? 'orders' : `orders_${session?.user?.id}`
     socket.join(ordersRoom)
     return () => {

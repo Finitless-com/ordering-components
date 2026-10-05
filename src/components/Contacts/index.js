@@ -299,11 +299,6 @@ export const Contacts = (props) => {
       user?.level === 0 ? 'messages_orders' : `messages_orders_${user?.id}`
     const ordersRoom = user?.level === 0 ? 'orders' : `orders_${user?.id}`
 
-    socket.socket.on('connect', () => {
-      socket.join(messagesOrdersRoom)
-      socket.join(ordersRoom)
-    })
-
     socket.join(messagesOrdersRoom)
     socket.join(ordersRoom)
 

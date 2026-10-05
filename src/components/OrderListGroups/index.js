@@ -1278,13 +1278,10 @@ export const OrderListGroups = (props) => {
       socket.leave(messagesOrdersRoom)
     }
 
-    socket.on('disconnect', joinRooms)
-
     joinRooms()
 
     return () => {
       leaveRooms()
-      socket.off('disconnect', joinRooms)
     }
   }, [socket, session])
 

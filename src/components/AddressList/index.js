@@ -166,10 +166,6 @@ export const AddressList = (props) => {
       user_id: user?.id
     }
     socket.on('addresses_register', handleAddressRegister)
-
-    socket.socket.on('connect', () => {
-      socket.join(room)
-    })
     socket.join(room)
     return () => {
       socket.leave(room)

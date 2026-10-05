@@ -510,10 +510,6 @@ export const OrderList = props => {
 
   useEffect(() => {
     if (!session.user || isCustomerMode) return
-    socket.on('disconnect', (reason) => {
-      const ordersRoom = !props.isAsCustomer && session?.user?.level === 0 ? 'orders' : `orders_${session?.user?.id}`
-      socket.join(ordersRoom)
-    })
     const ordersRoom = !props.isAsCustomer && session?.user?.level === 0 ? 'orders' : `orders_${session?.user?.id}`
     socket.join(ordersRoom)
     return () => {
