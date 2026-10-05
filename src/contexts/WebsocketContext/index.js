@@ -64,25 +64,6 @@ export const WebsocketProvider = ({ settings, children, strategy }) => {
     return () => clearInterval(projectInputInterval)
   }, [session])
 
-  useEffect(() => {
-    if (!socket?.socket) return
-    let disconnectTimeout = null
-    let connectionErrorTimeout = null
-    socket.socket.on('disconnect', () => {
-      disconnectTimeout = setTimeout(() => socket.socket.connect(), 1000)
-    })
-
-    socket.socket.on('connect_error', (error) => {
-      if (error.message !== 'invalid signature') {
-        connectionErrorTimeout = setTimeout(() => socket.socket.connect(), 1000)
-      }
-    })
-    return () => {
-      clearInterval(disconnectTimeout)
-      clearInterval(connectionErrorTimeout)
-    }
-  }, [socket?.socket, session])
-
   return (
     <WebsocketContext.Provider value={socket}>
       {children}

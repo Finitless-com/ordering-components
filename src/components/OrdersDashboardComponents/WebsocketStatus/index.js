@@ -34,21 +34,27 @@ export const WebsocketStatus = (props) => {
   }
 
   useEffect(() => {
-    if (socket?.socket) {
-      socket.socket.on('connect', () => {
-        setReconnectAttemptCount(0)
-        setSocketStatus(1)
-        setConnectedDate(new Date())
-      })
-
-      socket.socket.on('disconnect', (reason) => {
-        setSocketStatus(2)
-      })
-
-      socket.socket.on('reconnect_attempt', () => {
-        setReconnectAttemptCount(prev => prev + 1)
-        setSocketStatus(0)
-      })
+    const ioSocket = socket?.socket
+    if (!ioSocket) return
+    const handleConnect = () => {
+      setReconnectAttemptCount(0)
+      setSocketStatus(1)
+      setConnectedDate(new Date())
+    }
+    const handleDisconnect = () => {
+      setSocketStatus(2)
+    }
+    const handleReconnectAttempt = () => {
+      setReconnectAttemptCount(prev => prev + 1)
+      setSocketStatus(0)
+    }
+    ioSocket.on('connect', handleConnect)
+    ioSocket.on('disconnect', handleDisconnect)
+    ioSocket.on('reconnect_attempt', handleReconnectAttempt)
+    return () => {
+      ioSocket.off('connect', handleConnect)
+      ioSocket.off('disconnect', handleDisconnect)
+      ioSocket.off('reconnect_attempt', handleReconnectAttempt)
     }
   }, [socket?.socket])
 
