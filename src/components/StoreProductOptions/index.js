@@ -22,6 +22,20 @@ const getErrorMessage = (result, fallback) => {
 
 const emptyExtraOptions = { options: [], loading: false, error: null, loaded: false }
 
+const normalizeText = (value) => `${value ?? ''}`
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .trim()
+
+const extraAttributes = ['id', 'business_id', 'name', 'description', 'enabled', 'external_id', 'rank']
+
+const mergeGroups = (businessExtras, productExtras) => {
+  const groups = toGroups(businessExtras)
+  const missing = toGroups(productExtras).filter(extra => !groups.some(group => group.id === extra.id))
+  return sortByRank([...groups, ...missing])
+}
+
 export const StoreProductOptions = (props) => {
   const { UIComponent, businessId, categoryId, productId } = props
 
@@ -30,13 +44,15 @@ export const StoreProductOptions = (props) => {
   const [, { showToast }] = useToast()
   const [, t] = useLanguage()
 
-  const [productState, setProductState] = useState({ product: null, extras: [], loading: true, error: null })
+  const [productState, setProductState] = useState({ product: null, extras: [], productExtraIds: [], loading: true, error: null })
   const [extraOptionsState, setExtraOptionsState] = useState({})
-  const [updatingState, setUpdatingState] = useState({ options: [], suboptions: [] })
+  const [extraSearch, setExtraSearch] = useState('')
+  const [updatingState, setUpdatingState] = useState({ extras: [], options: [], suboptions: [] })
   const requestRef = useRef(null)
   const productKeyRef = useRef(null)
   const extraRequestsRef = useRef({})
   const updatingRef = useRef(new Set())
+  const productExtraIdsRef = useRef([])
 
   const setExtraOptions = (extraId, changes) => {
     setExtraOptionsState(prev => ({
@@ -47,33 +63,57 @@ export const StoreProductOptions = (props) => {
 
   const getProduct = async () => {
     requestRef.current?.cancel?.()
+    productExtraIdsRef.current = []
     if (!businessId || !categoryId || !productId) {
       requestRef.current = null
-      setProductState({ product: null, extras: [], loading: false, error: [t('ERROR', 'Error')] })
+      setProductState({ product: null, extras: [], productExtraIds: [], loading: false, error: [t('ERROR', 'Error')] })
       return
     }
-    const source = {}
+    const productSource = {}
+    const extrasSource = {}
+    const source = {
+      cancel: () => {
+        productSource.cancel?.()
+        extrasSource.cancel?.()
+      }
+    }
     requestRef.current = source
     extraRequestsRef.current = {}
     setExtraOptionsState({})
-    setProductState({ product: null, extras: [], loading: true, error: null })
+    setExtraSearch('')
+    setProductState({ product: null, extras: [], productExtraIds: [], loading: true, error: null })
     try {
-      const { content: { error, result } } = await ordering
-        .businesses(businessId)
-        .categories(categoryId)
-        .products(productId)
-        .parameters({ version: 'v2' })
-        .get({ cancelToken: source, accessToken: token })
+      const [productResponse, extrasResponse] = await Promise.all([
+        ordering
+          .businesses(businessId)
+          .categories(categoryId)
+          .products(productId)
+          .parameters({ version: 'v2' })
+          .get({ cancelToken: productSource, accessToken: token }),
+        ordering.get(
+          `/business/${businessId}/extras`,
+          { json: true, mode: 'dashboard', attributes: extraAttributes, cancelToken: extrasSource, accessToken: token }
+        )
+      ])
       if (requestRef.current !== source) return
-      if (error) {
-        setProductState({ product: null, extras: [], loading: false, error: [getErrorMessage(result, t('ERROR', 'Error'))] })
+      const failed = [productResponse, extrasResponse].find(response => response?.content?.error)
+      if (failed) {
+        setProductState({ product: null, extras: [], productExtraIds: [], loading: false, error: [getErrorMessage(failed.content.result, t('ERROR', 'Error'))] })
         return
       }
-      const { extras, ...product } = result || {}
-      setProductState({ product, extras: toGroups(extras), loading: false, error: null })
+      const { extras: productExtras, ...product } = productResponse.content.result || {}
+      const productExtraIds = (productExtras || []).map(extra => extra.id)
+      productExtraIdsRef.current = productExtraIds
+      setProductState({
+        product,
+        extras: mergeGroups(extrasResponse.content.result, productExtras),
+        productExtraIds,
+        loading: false,
+        error: null
+      })
     } catch (err) {
       if (requestRef.current !== source) return
-      setProductState({ product: null, extras: [], loading: false, error: [err?.message || t('ERROR', 'Error')] })
+      setProductState({ product: null, extras: [], productExtraIds: [], loading: false, error: [err?.message || t('ERROR', 'Error')] })
     }
   }
 
@@ -135,6 +175,41 @@ export const StoreProductOptions = (props) => {
     }
   }
 
+  const handleChangeProductExtra = async (extraId, attached) => {
+    if (updatingRef.current.has('productExtras')) return
+    const currentIds = productExtraIdsRef.current
+    if (attached === currentIds.includes(extraId)) return
+    const productExtraIds = attached
+      ? [...currentIds, extraId]
+      : currentIds.filter(id => id !== extraId)
+    updatingRef.current.add('productExtras')
+    setUpdating('extras', extraId, true)
+    const productKey = productKeyRef.current
+    try {
+      const { content: { error, result } } = await ordering.post(
+        `/business/${businessId}/categories/${categoryId}/products/${productId}`,
+        { extras: JSON.stringify(productExtraIds) },
+        { json: true, accessToken: token }
+      )
+      if (productKeyRef.current !== productKey) return
+      if (error) {
+        showToast(ToastType.Error, getErrorMessage(result, t('ERROR', 'Error')))
+        return
+      }
+      productExtraIdsRef.current = productExtraIds
+      setProductState(prev => ({ ...prev, productExtraIds }))
+      showToast(ToastType.Success, attached
+        ? t('OPTION_GROUP_ADDED', 'Option group added to the product')
+        : t('OPTION_GROUP_REMOVED', 'Option group removed from the product'))
+    } catch (err) {
+      if (productKeyRef.current !== productKey) return
+      showToast(ToastType.Error, err?.message || t('ERROR', 'Error'))
+    } finally {
+      updatingRef.current.delete('productExtras')
+      setUpdating('extras', extraId, false)
+    }
+  }
+
   const handleUpdateOption = (extraId, optionId, enabled) => updateEntity({
     type: 'options',
     id: optionId,
@@ -168,6 +243,11 @@ export const StoreProductOptions = (props) => {
       : t('DISABLED_SUBOPTION', 'Disabled suboption')
   })
 
+  const searchValue = normalizeText(extraSearch)
+  const filteredExtras = searchValue
+    ? productState.extras.filter(extra => normalizeText(extra.name).includes(searchValue))
+    : productState.extras
+
   useEffect(() => {
     productKeyRef.current = `${businessId}:${categoryId}:${productId}`
     getProduct()
@@ -186,8 +266,12 @@ export const StoreProductOptions = (props) => {
           {...props}
           productState={productState}
           extraOptionsState={extraOptionsState}
+          extraSearch={extraSearch}
+          filteredExtras={filteredExtras}
+          handleChangeExtraSearch={setExtraSearch}
           updatingState={updatingState}
           handleLoadExtraOptions={handleLoadExtraOptions}
+          handleChangeProductExtra={handleChangeProductExtra}
           handleUpdateOption={handleUpdateOption}
           handleUpdateSuboption={handleUpdateSuboption}
           handleReload={getProduct}
