@@ -740,15 +740,6 @@ export const OrderDetails = (props) => {
     if (customerOrdersRoom) {
       socket.join(customerOrdersRoom)
     }
-    socket.socket.on('connect', () => {
-      if (!isDisabledOrdersRoom) socket.join(getRoom('orders'))
-      if (publicDriversRoom) {
-        socket.join(publicDriversRoom)
-      }
-      if (customerOrdersRoom) {
-        socket.join(customerOrdersRoom)
-      }
-    })
     socket.on('tracking_driver', handleTrackingDriver)
     socket.on('update_order', handleUpdateOrderDetails)
     return () => {
@@ -780,9 +771,6 @@ export const OrderDetails = (props) => {
     if (!socket?.socket) return
     const messagesOrdersRoom = user?.level === 0 ? 'messages_orders' : `messages_orders_${userCustomerId || user?.id}`
     socket.join(messagesOrdersRoom)
-    socket.socket.on('connect', () => {
-      socket.join(messagesOrdersRoom)
-    })
     return () => {
       // neccesary refactor
       if (!isDisabledOrdersRoom) socket.leave(messagesOrdersRoom)

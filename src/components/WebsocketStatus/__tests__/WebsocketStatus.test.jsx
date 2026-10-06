@@ -38,4 +38,12 @@ describe('WebsocketStatus', () => {
     expect(typeof lastControllerProps.getWebsocketStatus).toBe('function')
     expect(lastControllerProps.getWebsocketStatus(1)).toBe('Ok')
   })
+
+  it('removes every socket listener on unmount', () => {
+    const view = renderController(WebsocketStatus, {})
+    view.unmount()
+    mockSocket.socket.on.mock.calls.forEach(([event, handler]) => {
+      expect(mockSocket.socket.off).toHaveBeenCalledWith(event, handler)
+    })
+  })
 })
