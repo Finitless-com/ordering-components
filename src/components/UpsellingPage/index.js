@@ -78,13 +78,17 @@ export const UpsellingPage = (props) => {
    * getting suggestive products if useSuggestiveUpselling is true
    */
   const getSuggestiveProducts = async () => {
-    if (!currentCart?.uuid) return
+    if (!currentCart?.uuid) {
+      setUpsellingProducts(prevState => ({ ...prevState, loading: false }))
+      return
+    }
     try {
       const requestOptions = {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
+          'X-App-X': ordering.appId
         }
       }
       const response = await fetch(`${ordering.root}/carts/${currentCart?.uuid}/upselling`, requestOptions)

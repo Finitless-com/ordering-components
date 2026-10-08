@@ -62,6 +62,42 @@ describe('UpsellingPage', () => {
     )
   })
 
+  it('sends the app id header on suggestive upselling requests', async () => {
+    renderController(UpsellingPage, {
+      businessId: 5,
+      useSuggestiveUpselling: true,
+      cartProducts: [{ id: 1, name: 'Burger' }]
+    })
+    await waitFor(() => {
+      expect(lastControllerProps.upsellingProducts.loading).toBe(false)
+    })
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.test/carts/cart-uuid-5/upselling',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer session-tok',
+          'X-App-X': 'app'
+        })
+      })
+    )
+  })
+
+  it('stops loading suggestive upselling when the cart has no uuid', async () => {
+    renderController(UpsellingPage, {
+      businessId: 999,
+      useSuggestiveUpselling: true,
+      cartProducts: [{ id: 1, name: 'Burger' }]
+    })
+    await waitFor(() => {
+      expect(lastControllerProps.upsellingProducts.loading).toBe(false)
+    })
+    expect(lastControllerProps.upsellingProducts.products).toEqual([])
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/upselling'),
+      expect.anything()
+    )
+  })
+
   it('delegates product form and offer removal', () => {
     const onSave = vi.fn()
     renderController(UpsellingPage, {
