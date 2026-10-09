@@ -187,8 +187,8 @@ export class Ordering {
     return new ApiCart(this, cartId)
   }
 
-  paymentCards (bussinessId: number | string, userId: number | string, cardId: number | string) {
-    return new ApiPaymentCards(this, bussinessId, userId, cardId)
+  paymentCards (bussinessId: number | string, userId: number | string, cardId: number | string, gateway?: string) {
+    return new ApiPaymentCards(this, bussinessId, userId, cardId, gateway)
   }
 
   system () {

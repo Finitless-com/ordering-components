@@ -207,8 +207,8 @@ const Ordering = /** @class */ (function () {
   Ordering.prototype.carts = function (cartId) {
     return new ApiCart(this, cartId)
   }
-  Ordering.prototype.paymentCards = function (bussinessId, userId, cardId) {
-    return new ApiPaymentCards(this, bussinessId, userId, cardId)
+  Ordering.prototype.paymentCards = function (bussinessId, userId, cardId, gateway) {
+    return new ApiPaymentCards(this, bussinessId, userId, cardId, gateway)
   }
   Ordering.prototype.system = function () {
     return new ApiSystem(this)

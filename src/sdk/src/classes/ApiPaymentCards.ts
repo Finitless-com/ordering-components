@@ -7,18 +7,22 @@ export class ApiPaymentCards extends ApiBase implements ApiBaseInterface {
   public businessId: number | string;
   public userId: number | string;
   public card_id: number | string | null;
+  public gateway: string;
 
   constructor(
     ordering: Ordering,
     bussinessId: number | string,
     userId: number | string,
-    card_id: number | string | null = null
+    card_id: number | string | null = null,
+    gateway: string = "stripe"
   ) {
     super(ordering);
     this.ordering = ordering;
     this.businessId = bussinessId;
     this.userId = userId;
     this.card_id = card_id;
+    // Gateway segment of the url. Only the gateways with their own cards differ from `stripe`.
+    this.gateway = gateway || "stripe";
   }
 
   /**
@@ -35,7 +39,7 @@ export class ApiPaymentCards extends ApiBase implements ApiBaseInterface {
         "You must provide the `businessId` and `userId` param. Example ordering.paymentCards(businessId,userId).get()"
       );
     }
-    const url = `/payments/stripe/cards?business_id=${this.businessId}&user_id=${this.userId}`;
+    const url = `/payments/${this.gateway}/cards?business_id=${this.businessId}&user_id=${this.userId}`;
     const response: ApiResponse = await this.makeRequest(
       "GET",
       url,
@@ -57,7 +61,7 @@ export class ApiPaymentCards extends ApiBase implements ApiBaseInterface {
         "You must provide the `businessId` and `userId` param. Example ordering.paymentCards(businessId,userId).get()"
       );
     }
-    const url = `/payments/stripe/cards/${this.businessId}/${this.userId}`;
+    const url = `/payments/${this.gateway}/cards/${this.businessId}/${this.userId}`;
     const response: ApiResponse = await this.makeRequest(
       "POST",
       url,
@@ -74,7 +78,7 @@ export class ApiPaymentCards extends ApiBase implements ApiBaseInterface {
         "You must provide the `businessId`, `userId`, `cardId` param. Example ordering.paymentCards(businessId,userId,cardId).delete()"
       );
     }
-    const url = `/payments/stripe/cards?business_id=${this.businessId}&user_id=${this.userId}&card_id=${this.card_id}`;
+    const url = `/payments/${this.gateway}/cards?business_id=${this.businessId}&user_id=${this.userId}&card_id=${this.card_id}`;
 
     const response: ApiResponse = await this.makeRequest(
       "DELETE",
@@ -87,7 +91,7 @@ export class ApiPaymentCards extends ApiBase implements ApiBaseInterface {
   }
 
   async getCredentials(options: RequestOptionsProps = {}) {
-    const url = `/payments/stripe/credentials`;
+    const url = `/payments/${this.gateway}/credentials`;
     const response: ApiResponse = await this.makeRequest(
       "GET",
       url,

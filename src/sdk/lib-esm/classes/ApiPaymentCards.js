@@ -54,13 +54,16 @@ const __generator = (this && this.__generator) || function (thisArg, body) {
 }
 const ApiPaymentCards = /** @class */ (function (_super) {
   __extends(ApiPaymentCards, _super)
-  function ApiPaymentCards (ordering, bussinessId, userId, card_id) {
+  function ApiPaymentCards (ordering, bussinessId, userId, card_id, gateway) {
     if (card_id === void 0) { card_id = null }
+    if (gateway === void 0) { gateway = 'stripe' }
     const _this = _super.call(this, ordering) || this
     _this.ordering = ordering
     _this.businessId = bussinessId
     _this.userId = userId
     _this.card_id = card_id
+    // Gateway segment of the url. Only the gateways with their own cards differ from `stripe`.
+    _this.gateway = gateway || 'stripe'
     return _this
   }
   /**
@@ -80,7 +83,7 @@ const ApiPaymentCards = /** @class */ (function (_super) {
             if (!this.businessId || !this.userId) {
               throw new Error('You must provide the `businessId` and `userId` param. Example ordering.paymentCards(businessId,userId).get()')
             }
-            url = '/payments/stripe/cards?business_id=' + this.businessId + '&user_id=' + this.userId
+            url = '/payments/' + this.gateway + '/cards?business_id=' + this.businessId + '&user_id=' + this.userId
             return [4 /* yield */, this.makeRequest('GET', url, undefined, PaymentCards, options)]
           case 1:
             response = _a.sent()
@@ -103,7 +106,7 @@ const ApiPaymentCards = /** @class */ (function (_super) {
             if (!this.businessId || !this.userId) {
               throw new Error('You must provide the `businessId` and `userId` param. Example ordering.paymentCards(businessId,userId).get()')
             }
-            url = '/payments/stripe/cards/' + this.businessId + '/' + this.userId
+            url = '/payments/' + this.gateway + '/cards/' + this.businessId + '/' + this.userId
             return [4 /* yield */, this.makeRequest('POST', url, cards, PaymentCards, options)]
           case 1:
             response = _a.sent()
@@ -122,7 +125,7 @@ const ApiPaymentCards = /** @class */ (function (_super) {
             if (!this.card_id || !this.businessId || !this.userId) {
               throw new Error('You must provide the `businessId`, `userId`, `cardId` param. Example ordering.paymentCards(businessId,userId,cardId).delete()')
             }
-            url = '/payments/stripe/cards?business_id=' + this.businessId + '&user_id=' + this.userId + '&card_id=' + this.card_id
+            url = '/payments/' + this.gateway + '/cards?business_id=' + this.businessId + '&user_id=' + this.userId + '&card_id=' + this.card_id
             return [4 /* yield */, this.makeRequest('DELETE', url, undefined, PaymentCards, options)]
           case 1:
             response = _a.sent()
@@ -138,7 +141,7 @@ const ApiPaymentCards = /** @class */ (function (_super) {
       return __generator(this, function (_a) {
         switch (_a.label) {
           case 0:
-            url = '/payments/stripe/credentials'
+            url = '/payments/' + this.gateway + '/credentials'
             return [4 /* yield */, this.makeRequest('GET', url, undefined, PaymentCards, options)]
           case 1:
             response = _a.sent()
