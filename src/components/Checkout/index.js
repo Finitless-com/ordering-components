@@ -167,7 +167,7 @@ export const Checkout = (props) => {
     const _cart = businessId && typeof businessId === 'number' ? orderState.carts?.[`businessId:${businessId}`] : orderState.carts?.['businessId:null']
     const _paymethodSelected = paymethod ?? paymethodSelected
     let paymethodData = _paymethodSelected?.data
-    if (_paymethodSelected?.paymethod && ['stripe', 'stripe_connect', 'stripe_direct'].includes(_paymethodSelected?.paymethod?.gateway)) {
+    if (_paymethodSelected?.paymethod && ['stripe', 'stripe_connect', 'stripe_connect_v2', 'stripe_direct'].includes(_paymethodSelected?.paymethod?.gateway)) {
       paymethodData = {
         source_id: _paymethodSelected?.data?.id
       }

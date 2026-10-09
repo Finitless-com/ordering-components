@@ -5,6 +5,7 @@ import { useApi } from '../../contexts/ApiContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
 import { useOrder } from '../../contexts/OrderContext'
 import { useToast, ToastType } from '../../contexts/ToastContext'
+import { getCardsGateway, isBusinessCardsGateway } from '../../utils/stripeCardsGateway'
 
 /**
  * Component to manage payment option stripe behavior without UI component
@@ -47,6 +48,10 @@ export const PaymentOptionStripe = (props) => {
 
   const paymethodsWithoutSaveCards = ['credomatic']
   const paymethodsWithAutoSelectCard = ['braintree']
+  /**
+   * Gateway segment of the cards endpoints, `stripe` unless the gateway keeps its own cards
+   */
+  const cardsGateway = getCardsGateway(gateway)
 
   /**
    * method to get cards from API
@@ -62,7 +67,7 @@ export const PaymentOptionStripe = (props) => {
       const source = {}
       requestState.paymentCards = source
       // The order of paymentCards params is businessId, userId. This sdk needs to be improved in the future,
-      const { content: { result } } = await ordering.setAccessToken(token).paymentCards(businessId, user.id).get({ cancelToken: source })
+      const { content: { result } } = await ordering.setAccessToken(token).paymentCards(businessId, user.id, null, cardsGateway).get({ cancelToken: source })
       const defaultCard = result?.find(card => card.default || card?.id === newCardAdded?.paymentMethodId)
       if (defaultCard) {
         setCardDefault({
@@ -111,7 +116,9 @@ export const PaymentOptionStripe = (props) => {
         return
       }
       // The order of paymentCards params is businessId, userId, cardId. This sdk needs to be improved in the future,
-      const { content: { error } } = await ordering.paymentCards(-1, user.id, card.id).delete()
+      // Gateways with their own cards find the credential by business, so they need the real business id.
+      const cardsBusinessId = isBusinessCardsGateway(gateway) ? businessId : -1
+      const { content: { error } } = await ordering.paymentCards(cardsBusinessId, user.id, card.id, cardsGateway).delete()
       if (!error) {
         cardsList.cards = cardsList.cards.filter(_card => _card.id !== card.id)
         setCardsList({
@@ -149,7 +156,7 @@ export const PaymentOptionStripe = (props) => {
           card_id: card.id
         })
       }
-      const functionFetch = `${ordering.root}/payments/stripe/cards/default`
+      const functionFetch = `${ordering.root}/payments/${cardsGateway}/cards/default`
       const response = await fetch(functionFetch, requestOptions)
       const content = await response.json()
       if (!content.error) {
@@ -176,7 +183,7 @@ export const PaymentOptionStripe = (props) => {
   const getCredentials = async () => {
     if (paymethodsWithoutSaveCards.includes(gateway)) return
     try {
-      const { content: { result } } = await ordering.setAccessToken(token).paymentCards().getCredentials()
+      const { content: { result } } = await ordering.setAccessToken(token).paymentCards(undefined, undefined, null, cardsGateway).getCredentials()
       setPublicKey(result.publishable)
     } catch (error) {
       console.error(error.message)
@@ -433,7 +440,7 @@ export const PaymentOptionStripe = (props) => {
     return () => {
       requestState.paymentCards?.cancel?.()
     }
-  }, [token, props.publicKey, paymethodV2Featured, paymethodSelectedInfo?.featured, paymethodSelectedInfo?.paymethod?.featured])
+  }, [token, props.publicKey, paymethodV2Featured, paymethodSelectedInfo?.featured, paymethodSelectedInfo?.paymethod?.featured, cardsGateway])
 
   useEffect(() => {
     if (newCardAdded) {
@@ -575,6 +582,7 @@ export const PaymentOptionStripe = (props) => {
       {UIComponent && (
         <UIComponent
           {...props}
+          cardsGateway={cardsGateway}
           cardSelected={cardSelected}
           cardDefault={cardDefault}
           cardsList={cardsList}
@@ -605,6 +613,11 @@ PaymentOptionStripe.propTypes = {
    * Business id to get cards from API
    */
   businessId: PropTypes.number.isRequired,
+  /**
+   * Gateway of the paymethod. `stripe_connect_v2` keeps its cards under its own endpoints,
+   * any other value (or none) uses the `stripe` ones
+   */
+  gateway: PropTypes.string,
   /**
    * User id to pass in endpoint to get cards from API,
    */

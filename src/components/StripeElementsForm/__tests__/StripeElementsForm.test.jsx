@@ -35,6 +35,33 @@ describe('StripeElementsForm', () => {
     await waitFor(() => {
       expect(lastControllerProps.requirements).toEqual({ client_secret: 'sec_test' })
     })
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.test/payments/stripe/requirements?type=add_card',
+      expect.any(Object)
+    )
+  })
+
+  it('keeps the stripe requirements for gateways without their own cards', async () => {
+    renderController(StripeElementsForm, { toSave: true, businessId: 5, cardsGateway: 'stripe_connect' })
+    await waitFor(() => {
+      expect(lastControllerProps.requirements).toEqual({ client_secret: 'sec_test' })
+    })
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.test/payments/stripe/requirements?type=add_card',
+      expect.any(Object)
+    )
+  })
+
+  it('loads the stripe connect v2 requirements of the business', async () => {
+    renderController(StripeElementsForm, { toSave: true, businessId: 41, cardsGateway: 'stripe_connect_v2' })
+    await waitFor(() => {
+      expect(lastControllerProps.requirements).toEqual({ client_secret: 'sec_connect_v2' })
+    })
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.test/payments/stripe_connect_v2/requirements?type=add_card&business_id=41',
+      expect.any(Object)
+    )
+    expect(lastControllerProps.cardsGateway).toBe('stripe_connect_v2')
   })
 
   it('skips requirements fetch when not saving', () => {
