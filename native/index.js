@@ -58,6 +58,7 @@ import { PaymentOptionStripe } from '../src/components/PaymentOptionStripe'
 import { PaymentOptionStripeDirect } from '../src/components/PaymentOptionStripeDirect'
 import { PaymentOptionStripeRedirect } from '../src/components/PaymentOptionStripeRedirect'
 import { PaymentOptionWallet } from '../src/components/PaymentOptionWallet'
+import { PayoutList } from '../src/components/PayoutList'
 import { PlaceSpot } from '../src/components/PlaceSpot'
 import { PhoneAutocomplete } from '../src/components/PhoneAutocomplete'
 import { ProductForm } from '../src/components/ProductForm'
@@ -86,6 +87,7 @@ import { SingleProductCard } from '../src/components/SingleProductCard'
 import { SingleProfessionalCard } from '../src/components/SingleProfessionalCard'
 import { StoreProductList } from '../src/components/StoreProductList'
 import { StoreProductOptions } from '../src/components/StoreProductOptions'
+import { StripeConnectAccount } from '../src/components/StripeConnectAccount'
 import { StripeElementsForm } from '../src/components/StripeElementsForm'
 import { StripeRedirectForm } from '../src/components/PaymentOptionStripeRedirect/StripeRedirectForm'
 import { UserFormDetails } from '../src/components/UserFormDetails'
@@ -188,6 +190,7 @@ export {
   PaymentOptionStripeDirect,
   PaymentOptionStripeRedirect,
   PaymentOptionWallet,
+  PayoutList,
   PlaceSpot,
   PhoneAutocomplete,
   ProductForm,
@@ -216,6 +219,7 @@ export {
   SingleProfessionalCard,
   StoreProductList,
   StoreProductOptions,
+  StripeConnectAccount,
   StripeElementsForm,
   StripeRedirectForm,
   UserFormDetails,
