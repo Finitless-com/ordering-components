@@ -12,6 +12,7 @@ import { useApi } from '../../../contexts/ApiContext'
 import { useLanguage } from '../../../contexts/LanguageContext'
 import { useWebsocket } from '../../../contexts/WebsocketContext'
 import { useValidationFields } from '../../../contexts/ValidationsFieldsContext'
+import { getCardsGateway } from '../../../utils/stripeCardsGateway'
 /**
  * Component to manage card form for stripe elements form behavior without UI component
  */
@@ -36,6 +37,7 @@ export const CardForm = (props) => {
   const elements = useElements()
   const zipCodeRequired = validationFields?.fields?.card?.zipcode?.required
   const zipCodeEnabled = validationFields?.fields?.card?.zipcode?.required
+  const cardsGateway = getCardsGateway(props.cardsGateway)
 
   const [error, setError] = useState(null)
   const [errorExpiry, setErrorExpiry] = useState(null)
@@ -52,7 +54,7 @@ export const CardForm = (props) => {
    * @param {*string} businessId string to know your business
    */
   const stripeTokenHandler = async (tokenId, user, businessId, isNewCard = true) => {
-    const result = await fetch(`${ordering.root}/payments/stripe/cards`, {
+    const result = await fetch(`${ordering.root}/payments/${cardsGateway}/cards`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -63,7 +65,7 @@ export const CardForm = (props) => {
       },
       body: JSON.stringify({
         business_id: businessId,
-        gateway: 'stripe',
+        gateway: cardsGateway,
         token_id: tokenId,
         user_id: user?.id
       })
@@ -227,6 +229,11 @@ CardForm.propTypes = {
    * Business id to get cards from API
    */
   businessId: PropTypes.number,
+  /**
+   * Gateway that keeps the cards. Only `stripe_connect_v2` changes the endpoint (and needs `businessId`),
+   * any other value (or none) uses the `stripe` one
+   */
+  cardsGateway: PropTypes.string,
   /**
    * Save client secret id used in stripe for create a payment method
    */

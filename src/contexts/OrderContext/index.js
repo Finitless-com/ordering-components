@@ -1267,7 +1267,7 @@ export const OrderProvider = ({
           events.emit('cart_updated', cart)
         }
       }
-      return { error, result }
+      return { error, result, cart }
     } catch (err) {
       setState(prevState => ({ ...prevState, loading: false }))
       return {

@@ -89,6 +89,8 @@ export default defineConfig({
         'src/components/ResetPassword/**/*.{js,jsx}',
         'src/components/LoginGuest/**/*.{js,jsx}',
         'src/components/Sessions/**/*.{js,jsx}',
+        'src/components/StripeConnectAccount/**/*.{js,jsx}',
+        'src/components/PayoutList/**/*.{js,jsx}',
         'src/components/UserVerification/**/*.{js,jsx}',
         'src/components/QueryLoginSpoonity/**/*.{js,jsx}',
         'src/components/GoogleLoginButton/**/*.{js,jsx}',

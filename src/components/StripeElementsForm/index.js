@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
 import { useApi } from '../../contexts/ApiContext'
 import { useSession } from '../../contexts/SessionContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+import { getCardsGateway, isBusinessCardsGateway } from '../../utils/stripeCardsGateway'
 
 /**
  * Component to manage stripe elements form behavior without UI component
@@ -10,21 +11,26 @@ import { useWebsocket } from '../../contexts/WebsocketContext'
 export const StripeElementsForm = (props) => {
   const {
     UIComponent,
-    toSave
+    toSave,
+    businessId
   } = props
 
   const [ordering] = useApi()
   const socket = useWebsocket()
   const [{ token }] = useSession()
   const [requirements, setRequirements] = useState()
+  const cardsGateway = getCardsGateway(props.cardsGateway)
+  const requirementsRequest = useRef(0)
 
   /**
    * Method to get client id for create stripe payment method
    */
   const getRequirements = async () => {
+    const request = ++requirementsRequest.current
     // Replace for a sdk method
+    const businessParam = isBusinessCardsGateway(cardsGateway) && businessId ? `&business_id=${encodeURIComponent(businessId)}` : ''
     const response = await fetch(
-      `${ordering.root}/payments/stripe/requirements?type=add_card`,
+      `${ordering.root}/payments/${cardsGateway}/requirements?type=add_card${businessParam}`,
       {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -35,13 +41,19 @@ export const StripeElementsForm = (props) => {
       }
     )
     const { result } = await response.json()
+    if (request !== requirementsRequest.current) return
     setRequirements(result)
   }
 
   useEffect(() => {
-    if (!token) return
-    toSave && getRequirements()
-  }, [token])
+    if (!token || !toSave) return
+    // v2 credentials are per business; do not ask until that id exists, and drop a late answer for another one
+    if (isBusinessCardsGateway(cardsGateway) && !businessId) {
+      requirementsRequest.current += 1
+      return
+    }
+    getRequirements()
+  }, [token, toSave, cardsGateway, businessId])
 
   return (
     <UIComponent
@@ -60,6 +72,11 @@ StripeElementsForm.propTypes = {
    * Business id to get cards from API
    */
   businessId: PropTypes.number,
+  /**
+   * Gateway that keeps the cards. Only `stripe_connect_v2` changes the endpoints (and needs `businessId`),
+   * any other value (or none) uses the `stripe` ones
+   */
+  cardsGateway: PropTypes.string,
   /**
    * Create card to save or pay
    */

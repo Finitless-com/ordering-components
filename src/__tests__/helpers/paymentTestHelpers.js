@@ -57,6 +57,7 @@ export function createPaymentApiMocks (vi) {
       }
     }),
     mockPaymentCardsDelete: vi.fn().mockResolvedValue({ content: { error: false } }),
+    mockPaymentCards: vi.fn(),
     mockGetCredentials: vi.fn().mockResolvedValue({
       content: { result: { publishable: 'pk_test_123' } }
     }),
@@ -84,6 +85,11 @@ export function buildPaymentMockOrdering (vi, api) {
     delete: (...args) => api.mockPaymentCardsDelete(...args)
   }
 
+  const paymentCards = (...args) => {
+    api.mockPaymentCards(...args)
+    return paymentCardsApi
+  }
+
   const usersApiChain = {
     select: vi.fn(function () { return usersApiChain }),
     get: (...args) => api.mockUsersGet(...args)
@@ -96,9 +102,9 @@ export function buildPaymentMockOrdering (vi, api) {
     project: 'demo',
     businesses: vi.fn(() => businessApiChain),
     setAccessToken: vi.fn(() => ({
-      paymentCards: vi.fn(() => paymentCardsApi)
+      paymentCards: vi.fn(paymentCards)
     })),
-    paymentCards: vi.fn(() => paymentCardsApi),
+    paymentCards: vi.fn(paymentCards),
     users: vi.fn(() => usersApiChain)
   }
 }
@@ -111,6 +117,9 @@ export function createPaymentFetchMock (vi) {
     }
     if (url.includes('/payments/stripe/requirements')) {
       return { json: async () => ({ result: { client_secret: 'sec_test' } }) }
+    }
+    if (url.includes('/payments/stripe_connect_v2/requirements')) {
+      return { json: async () => ({ result: { client_secret: 'sec_connect_v2' } }) }
     }
     if (url.includes('/payments/stripe/cards/default') && method === 'POST') {
       return { json: async () => ({ error: false, result: { success: true } }) }
@@ -159,6 +168,14 @@ export function createPaymentFetchMock (vi) {
         json: async () => ({
           error: false,
           result: { id: 99, brand: 'visa', last4: '4242' }
+        })
+      }
+    }
+    if (url.includes('/payments/stripe_connect_v2/cards') && method === 'POST') {
+      return {
+        json: async () => ({
+          error: false,
+          result: { id: 'pm_connect_v2', brand: 'visa', last4: '4242' }
         })
       }
     }
