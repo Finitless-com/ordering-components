@@ -116,8 +116,10 @@ export const Checkout = (props) => {
   /**
    * Body to release the current cart when it is pending on a releasable gateway
    */
-  const releasePendingCartBody = cart?.status === 2
-    ? releasablePendingCartGateways[getPaymethodData(cart)?.gateway]
+  const paymethodData = getPaymethodData(cart)
+  const releasePendingCartBody = cart?.status === 2 &&
+    Object.prototype.hasOwnProperty.call(releasablePendingCartGateways, paymethodData?.gateway)
+    ? releasablePendingCartGateways[paymethodData.gateway]
     : undefined
   const isPendingCartReleasable = !!releasePendingCartBody
   const [releasingPendingCart, setReleasingPendingCart] = useState(false)

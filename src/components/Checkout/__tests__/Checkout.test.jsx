@@ -312,6 +312,15 @@ describe('Checkout pending cart release', () => {
     expect(lastControllerProps.isPendingCartReleasable).toBe(false)
   })
 
+  it('is not releasable when the gateway is an inherited object key', async () => {
+    await renderPendingCheckout({ paymethod_data: { gateway: '__proto__', status: 2 } })
+    expect(lastControllerProps.isPendingCartReleasable).toBe(false)
+    expect(await release()).toBeUndefined()
+    await renderPendingCheckout({ paymethod_data: { gateway: 'constructor', status: 2 } })
+    expect(lastControllerProps.isPendingCartReleasable).toBe(false)
+    expect(mockConfirmCart).not.toHaveBeenCalled()
+  })
+
   it('is not releasable when paymethod_data is missing or malformed', async () => {
     await renderPendingCheckout({ paymethod_data: '{not json' })
     expect(lastControllerProps.isPendingCartReleasable).toBe(false)
