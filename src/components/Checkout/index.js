@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import PropTypes from 'prop-types'
 import { useOrder } from '../../contexts/OrderContext'
 import { useConfig } from '../../contexts/ConfigContext'
@@ -11,6 +11,26 @@ import { isBlockingApplePayConfirmError } from '../../utils/applePayConfirm'
 import { getPlaceAmount } from '../../utils/placeAmount'
 
 const forterGateways = ['braintree', 'paypal_braintree', 'google_pay_braintree', 'apple_pay_braintree']
+
+/**
+ * Redirect gateways whose pending cart (status 2) can be released on demand,
+ * with the body to send to the confirm endpoint for each one
+ */
+const releasablePendingCartGateways = {
+  mercado_pago_checkout_pro: { mercado_pago_data: { status: 'cancelled' } }
+}
+
+const getPaymethodData = (cart) => {
+  const data = cart?.paymethod_data
+  if (typeof data === 'string') {
+    try {
+      return JSON.parse(data)
+    } catch {
+      return null
+    }
+  }
+  return data
+}
 
 /**
  * Component to manage Checkout page behavior without UI component
@@ -46,7 +66,7 @@ export const Checkout = (props) => {
   /**
    * Order context
    */
-  const [orderState, { placeCart, setStateValues, changePaymethod }] = useOrder()
+  const [orderState, { placeCart, confirmCart, setStateValues, changePaymethod }] = useOrder()
   /**
    * Session content
    */
@@ -93,6 +113,17 @@ export const Checkout = (props) => {
    * Place spot state from chackout
    */
   const [placeSpotNumber, setPlaceSpotNumber] = useState(cartState?.cart?.spot_number ?? cart?.spot_number)
+  /**
+   * Body to release the current cart when it is pending on a releasable gateway
+   */
+  const paymethodData = getPaymethodData(cart)
+  const releasePendingCartBody = cart?.status === 2 &&
+    Object.prototype.hasOwnProperty.call(releasablePendingCartGateways, paymethodData?.gateway)
+    ? releasablePendingCartGateways[paymethodData.gateway]
+    : undefined
+  const isPendingCartReleasable = !!releasePendingCartBody
+  const [releasingPendingCart, setReleasingPendingCart] = useState(false)
+  const releasingPendingCartRef = useRef(false)
   /**
    * Timeout for update cart comment
    */
@@ -254,17 +285,6 @@ export const Checkout = (props) => {
 
     const cartResult = result?.result
 
-    const getPaymethodData = (cart) => {
-      const data = cart?.paymethod_data
-      if (typeof data === 'string') {
-        try {
-          return JSON.parse(data)
-        } catch {
-          return null
-        }
-      }
-      return data
-    }
     const parsedPaymethodData = getPaymethodData(cartResult)
 
     if (parsedPaymethodData?.status === 2 && actionsBeforePlace) {
@@ -306,6 +326,31 @@ export const Checkout = (props) => {
 
   const handlePaymethodChange = (paymethod) => {
     setPaymethodSelected(paymethod)
+  }
+
+  /**
+   * Method to release a cart left pending by a redirect gateway
+   */
+  const handleReleasePendingCart = async () => {
+    if (!isPendingCartReleasable || releasingPendingCartRef.current) return
+    releasingPendingCartRef.current = true
+    setReleasingPendingCart(true)
+    try {
+      const { error, result, cart: errorCart } = (await confirmCart(cart.uuid, releasePendingCartBody)) ?? {}
+      const confirmedCart = error ? errorCart : result
+      let outcome = 'error'
+      if (!error && (result?.status === 1 || result?.order?.uuid)) {
+        outcome = 'order_created'
+      } else if (!error && result?.status === 2) {
+        outcome = 'still_pending'
+      } else if (confirmedCart?.status === 4) {
+        outcome = 'released'
+      }
+      return { outcome, order: confirmedCart?.order, cart: confirmedCart, result }
+    } finally {
+      releasingPendingCartRef.current = false
+      setReleasingPendingCart(false)
+    }
   }
 
   const onRemoveSpotNumber = (businessSlug) => {
@@ -721,6 +766,9 @@ export const Checkout = (props) => {
           deliveryOptionSelected={deliveryOptionSelected}
           handlePaymethodChange={handlePaymethodChange}
           handlerClickPlaceOrder={handlerClickPlaceOrder}
+          isPendingCartReleasable={isPendingCartReleasable}
+          releasingPendingCart={releasingPendingCart}
+          handleReleasePendingCart={handleReleasePendingCart}
           handleChangeComment={handleChangeComment}
           handleChangeSpot={handleChangeSpot}
           onChangeSpot={onChangeSpot}
