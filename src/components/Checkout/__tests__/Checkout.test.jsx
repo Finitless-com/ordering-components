@@ -81,6 +81,22 @@ describe('Checkout', () => {
     expect(cart.mockCartSet).not.toHaveBeenCalled()
   })
 
+  it('places a stripe connect v2 order with the card as source', async () => {
+    renderController(Checkout, { businessId: 5 })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    const paymethod = {
+      paymethodId: 85,
+      gateway: 'stripe_connect_v2',
+      paymethod: { id: 85, gateway: 'stripe_connect_v2' },
+      data: { id: 'pm_1', type: 'card', card: { brand: 'visa', last4: '4242' } }
+    }
+    await lastControllerProps.handlerClickPlaceOrder({}, {}, null, null, paymethod)
+    expect(cart.mockPlaceCart).toHaveBeenCalledWith('cart-uuid-5', expect.objectContaining({
+      paymethod_id: 85,
+      paymethod_data: { source_id: 'pm_1' }
+    }))
+  })
+
   it('waits for eat-in spot save before placing', async () => {
     cart.mockOrderState.options.type = 3
     let resolveSpot

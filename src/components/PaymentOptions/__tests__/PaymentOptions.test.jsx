@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { waitFor } from '@testing-library/react'
+import { waitFor, act } from '@testing-library/react'
 import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
 
 const pay = vi.hoisted(() => {
@@ -192,6 +192,75 @@ describe('PaymentOptions', () => {
     })
     await waitFor(() => {
       expect(lastControllerProps.paymethodsList.paymethods).toHaveLength(0)
+    })
+  })
+
+  describe('stripe connect v2', () => {
+    const connectPaymethod = (data) => ({
+      paymethod: { id: 85, name: 'Stripe Connect v2', gateway: 'stripe_connect_v2' },
+      data,
+      sandbox: true
+    })
+
+    it('lists the paymethod with its publishable key', async () => {
+      renderController(PaymentOptions, {
+        businessId: 5,
+        paymethods: [connectPaymethod({ publishable: 'pk_test_connect' })],
+        isLoading: false
+      })
+      await waitFor(() => {
+        expect(lastControllerProps.paymethodsList.paymethods).toHaveLength(1)
+      })
+      expect(lastControllerProps.paymethodsList.paymethods[0]).toEqual(expect.objectContaining({
+        id: 85,
+        gateway: 'stripe_connect_v2',
+        sandbox: true,
+        credentials: { publishable: 'pk_test_connect' }
+      }))
+    })
+
+    it('hides the paymethod without publishable key', async () => {
+      renderController(PaymentOptions, {
+        businessId: 5,
+        paymethods: [...pay.samplePaymethods, connectPaymethod({})],
+        isLoading: false
+      })
+      await waitFor(() => {
+        expect(lastControllerProps.paymethodsList.loading).toBe(false)
+      })
+      const gateways = lastControllerProps.paymethodsList.paymethods.map(paymethod => paymethod.gateway)
+      expect(gateways).toEqual(['cash', 'stripe'])
+    })
+
+    it('waits for a card before notifying the paymethod', async () => {
+      const onPaymentChange = vi.fn()
+      renderController(PaymentOptions, {
+        businessId: 5,
+        paymethods: [connectPaymethod({ publishable: 'pk_test_connect' })],
+        isLoading: false,
+        onPaymentChange
+      })
+      await waitFor(() => {
+        expect(lastControllerProps.paymethodsList.paymethods).toHaveLength(1)
+      })
+      const paymethod = lastControllerProps.paymethodsList.paymethods[0]
+      act(() => {
+        lastControllerProps.handlePaymethodClick(paymethod, false)
+      })
+      await waitFor(() => {
+        expect(lastControllerProps.paymethodSelected?.gateway).toBe('stripe_connect_v2')
+      })
+      expect(onPaymentChange).not.toHaveBeenCalledWith(expect.objectContaining({ gateway: 'stripe_connect_v2' }))
+
+      const card = { id: 'pm_1', type: 'card', card: { brand: 'visa', last4: '4242' } }
+      act(() => {
+        lastControllerProps.handlePaymethodDataChange(card)
+      })
+      expect(onPaymentChange).toHaveBeenCalledWith(expect.objectContaining({
+        paymethodId: 85,
+        gateway: 'stripe_connect_v2',
+        data: card
+      }))
     })
   })
 })

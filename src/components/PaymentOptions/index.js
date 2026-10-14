@@ -8,7 +8,7 @@ import { useSession } from '../../contexts/SessionContext'
 import { useUtils } from '../../contexts/UtilsContext'
 
 const stripeLink = 'stripe_link'
-const paymethodsExisting = ['stripe', 'stripe_direct', 'stripe_connect', 'paypal', 'square']
+const paymethodsExisting = ['stripe', 'stripe_direct', 'stripe_connect', 'stripe_connect_v2', 'paypal', 'square']
 const paymethodsNotAllowed = ['paypal_express', 'authorize']
 const paymethodsCallcenterMode = ['cash', 'card_delivery', 'ivrpay', '100_coupon', stripeLink]
 const paymethodsWithAutoUpdate = ['izipay', 'globalpay', 'cybersource', 'braintree', 'stripe_checkout']
@@ -101,6 +101,7 @@ export const PaymentOptions = (props) => {
       stripe: (data) => !data?.publishable,
       paypal: (data) => !Object.keys(data).length || !data?.client_id,
       stripe_connect: (data) => !data?.stripe?.publishable,
+      stripe_connect_v2: (data) => !data?.publishable,
       google_pay: (data) => !data?.publishable,
       apple_pay: (data) => !data?.publishable,
       global_google_pay: (data) => !data?.publishable,
