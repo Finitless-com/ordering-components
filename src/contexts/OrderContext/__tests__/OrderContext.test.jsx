@@ -6,7 +6,9 @@ const mocks = vi.hoisted(() => ({
   emit: vi.fn(),
   socketOn: vi.fn(),
   socketOff: vi.fn(),
-  showToast: vi.fn()
+  showToast: vi.fn(),
+  confirmWithData: vi.fn(),
+  confirm: vi.fn()
 }))
 
 vi.mock('../../SessionContext', () => ({
@@ -23,7 +25,13 @@ vi.mock('../../ApiContext', () => ({
     appId: 'app',
     appInternalName: 'web',
     project: 'demo',
-    root: 'https://api.test'
+    root: 'https://api.test',
+    setAccessToken: () => ({
+      carts: () => ({
+        confirmWithData: mocks.confirmWithData,
+        confirm: mocks.confirm
+      })
+    })
   }]
 }))
 
@@ -183,5 +191,81 @@ describe('OrderContext offers', () => {
       'offer_removed',
       expect.objectContaining({ offer_id: 50 })
     )
+  })
+})
+
+describe('OrderContext confirmCart', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+  const releaseBody = { mercado_pago_data: { status: 'cancelled' } }
+
+  const renderProvider = () => render(
+    <OrderProvider strategy={strategy}>
+      <OrderProbe />
+    </OrderProvider>
+  )
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    strategy.getItem.mockResolvedValue(null)
+  })
+
+  it('returns the cart sent next to an error response', async () => {
+    const releasedCart = { uuid: 'cart-uuid-5', business_id: 5, status: 4, paymethod_id: null }
+    mocks.confirmWithData.mockResolvedValue({
+      content: { error: true, result: ['Payment cancelled'], cart: releasedCart }
+    })
+    renderProvider()
+    await act(async () => {
+      orderActions.setStateValues({
+        carts: { 'businessId:5': { uuid: 'cart-uuid-5', business_id: 5, status: 2 } }
+      })
+    })
+
+    let response
+    await act(async () => {
+      response = await orderActions.confirmCart('cart-uuid-5', releaseBody)
+    })
+
+    expect(mocks.confirmWithData).toHaveBeenCalledWith(
+      { ...releaseBody, user_id: 8 },
+      expect.objectContaining({ headers: expect.any(Object) })
+    )
+    expect(mocks.confirm).not.toHaveBeenCalled()
+    expect(response).toEqual({ error: true, result: ['Payment cancelled'], cart: releasedCart })
+    await waitFor(() => {
+      expect(orderState.loading).toBe(false)
+      expect(orderState.carts['businessId:5']).toEqual(releasedCart)
+    })
+  })
+
+  it('returns an undefined cart when the response has none', async () => {
+    const pendingCart = { uuid: 'cart-uuid-5', business_id: 5, status: 2 }
+    mocks.confirmWithData.mockResolvedValue({ content: { error: false, result: pendingCart } })
+    renderProvider()
+
+    let response
+    await act(async () => {
+      response = await orderActions.confirmCart('cart-uuid-5', releaseBody)
+    })
+
+    expect(response).toEqual({ error: false, result: pendingCart, cart: undefined })
+  })
+
+  it('returns no cart when the request throws', async () => {
+    mocks.confirmWithData.mockRejectedValue(new Error('Network Error'))
+    renderProvider()
+
+    let response
+    await act(async () => {
+      response = await orderActions.confirmCart('cart-uuid-5', releaseBody)
+    })
+
+    expect(response).toEqual({ error: true, result: ['Network Error'] })
+    expect(response).not.toHaveProperty('cart')
+    await waitFor(() => expect(orderState.loading).toBe(false))
   })
 })
