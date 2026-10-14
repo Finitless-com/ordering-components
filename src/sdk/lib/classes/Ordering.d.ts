@@ -66,7 +66,7 @@ export declare class Ordering {
     countries(countryId: number): ApiCountry;
     orderOptions(orderOptionId: number): ApiOrderOption;
     carts(cartId: number | string): ApiCart;
-    paymentCards(bussinessId: number | string, userId: number | string, cardId: number | string): ApiPaymentCards;
+    paymentCards(bussinessId: number | string, userId: number | string, cardId: number | string, gateway?: string): ApiPaymentCards;
     system(): ApiSystem;
     getRequestProps(options: RequestOptionsProps): [string, any];
     makeRequest(method: string, url: string, data: any, options: any): Promise<unknown>;
