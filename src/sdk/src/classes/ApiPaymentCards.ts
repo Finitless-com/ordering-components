@@ -21,8 +21,8 @@ export class ApiPaymentCards extends ApiBase implements ApiBaseInterface {
     this.businessId = bussinessId;
     this.userId = userId;
     this.card_id = card_id;
-    // Gateway segment of the url. Only the gateways with their own cards differ from `stripe`.
-    this.gateway = gateway || "stripe";
+    // Gateway segment of the url. Only a single path segment is accepted; anything else stays on `stripe`.
+    this.gateway = typeof gateway === "string" && /^[a-z0-9_]+$/.test(gateway) ? gateway : "stripe";
   }
 
   /**

@@ -63,8 +63,8 @@ const ApiPaymentCards = /** @class */ (function (_super) {
     _this.businessId = bussinessId
     _this.userId = userId
     _this.card_id = card_id
-    // Gateway segment of the url. Only the gateways with their own cards differ from `stripe`.
-    _this.gateway = gateway || 'stripe'
+    // Gateway segment of the url. Only a single path segment is accepted; anything else stays on `stripe`.
+    _this.gateway = typeof gateway === 'string' && /^[a-z0-9_]+$/.test(gateway) ? gateway : 'stripe'
     return _this
   }
   /**

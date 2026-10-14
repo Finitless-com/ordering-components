@@ -28,11 +28,13 @@ describe('ApiPaymentCards', () => {
       expect(ordering.get).toHaveBeenCalledWith('/payments/stripe/credentials', expect.any(Object))
     })
 
-    it('falls back to stripe when the gateway is empty', async () => {
+    it('falls back to stripe when the gateway is empty or not a path segment', async () => {
       await ordering.paymentCards(5, 8, null, null).get()
       await ordering.paymentCards(5, 8, null, '').get()
+      await ordering.paymentCards(5, 8, null, 'stripe/../credentials').get()
       expect(ordering.get).toHaveBeenNthCalledWith(1, '/payments/stripe/cards?business_id=5&user_id=8', expect.any(Object))
       expect(ordering.get).toHaveBeenNthCalledWith(2, '/payments/stripe/cards?business_id=5&user_id=8', expect.any(Object))
+      expect(ordering.get).toHaveBeenNthCalledWith(3, '/payments/stripe/cards?business_id=5&user_id=8', expect.any(Object))
     })
   })
 

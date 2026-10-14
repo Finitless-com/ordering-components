@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
 import { useApi } from '../../contexts/ApiContext'
 import { useSession } from '../../contexts/SessionContext'
@@ -20,13 +20,15 @@ export const StripeElementsForm = (props) => {
   const [{ token }] = useSession()
   const [requirements, setRequirements] = useState()
   const cardsGateway = getCardsGateway(props.cardsGateway)
+  const requirementsRequest = useRef(0)
 
   /**
    * Method to get client id for create stripe payment method
    */
   const getRequirements = async () => {
+    const request = ++requirementsRequest.current
     // Replace for a sdk method
-    const businessParam = isBusinessCardsGateway(cardsGateway) && businessId ? `&business_id=${businessId}` : ''
+    const businessParam = isBusinessCardsGateway(cardsGateway) && businessId ? `&business_id=${encodeURIComponent(businessId)}` : ''
     const response = await fetch(
       `${ordering.root}/payments/${cardsGateway}/requirements?type=add_card${businessParam}`,
       {
@@ -39,13 +41,19 @@ export const StripeElementsForm = (props) => {
       }
     )
     const { result } = await response.json()
+    if (request !== requirementsRequest.current) return
     setRequirements(result)
   }
 
   useEffect(() => {
-    if (!token) return
-    toSave && getRequirements()
-  }, [token, cardsGateway])
+    if (!token || !toSave) return
+    // v2 credentials are per business; do not ask until that id exists, and drop a late answer for another one
+    if (isBusinessCardsGateway(cardsGateway) && !businessId) {
+      requirementsRequest.current += 1
+      return
+    }
+    getRequirements()
+  }, [token, toSave, cardsGateway, businessId])
 
   return (
     <UIComponent
