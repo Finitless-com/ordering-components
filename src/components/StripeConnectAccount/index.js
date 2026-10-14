@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
 import { useApi } from '../../contexts/ApiContext'
 import { useSession } from '../../contexts/SessionContext'
@@ -18,6 +18,9 @@ export const StripeConnectAccount = (props) => {
 
   const [accountState, setAccountState] = useState({ account: null, loading: true, error: null })
   const [onboardingState, setOnboardingState] = useState({ loading: false, error: null })
+  // Only the last request for the current user may update the account or the onboarding form
+  const accountRequest = useRef(0)
+  const onboardingRequest = useRef(0)
 
   const requestOptions = (method) => ({
     method,
@@ -35,16 +38,23 @@ export const StripeConnectAccount = (props) => {
    * The result is null while the user has not started the onboarding
    */
   const handleGetAccount = async () => {
+    if (!ownerId) {
+      setAccountState({ account: null, loading: false, error: null })
+      return
+    }
+    const request = ++accountRequest.current
     try {
-      setAccountState(prevState => ({ ...prevState, loading: true }))
-      const response = await fetch(`${ordering.root}/users/${ownerId}/stripe_connect_account`, requestOptions('GET'))
+      setAccountState(prevState => ({ ...prevState, loading: true, error: null }))
+      const response = await fetch(`${ordering.root}/users/${encodeURIComponent(ownerId)}/stripe_connect_account`, requestOptions('GET'))
       const { result, error } = await response.json()
+      if (request !== accountRequest.current) return
       if (!error) {
         setAccountState({ account: result, loading: false, error: null })
       } else {
         setAccountState(prevState => ({ ...prevState, loading: false, error: result }))
       }
     } catch (err) {
+      if (request !== accountRequest.current) return
       setAccountState(prevState => ({ ...prevState, loading: false, error: [err.message] }))
     }
   }
@@ -55,10 +65,13 @@ export const StripeConnectAccount = (props) => {
    * @returns {Promise<string|null>} url of the form, null when it could not be created
    */
   const handleGetOnboardingUrl = async () => {
+    if (!ownerId) return null
+    const request = ++onboardingRequest.current
     try {
       setOnboardingState({ loading: true, error: null })
-      const response = await fetch(`${ordering.root}/users/${ownerId}/stripe_connect_account/onboarding`, requestOptions('POST'))
+      const response = await fetch(`${ordering.root}/users/${encodeURIComponent(ownerId)}/stripe_connect_account/onboarding`, requestOptions('POST'))
       const { result, error } = await response.json()
+      if (request !== onboardingRequest.current) return null
       if (!error) {
         setOnboardingState({ loading: false, error: null })
         return result?.url ?? null
@@ -66,15 +79,21 @@ export const StripeConnectAccount = (props) => {
       setOnboardingState({ loading: false, error: result })
       return null
     } catch (err) {
+      if (request !== onboardingRequest.current) return null
       setOnboardingState({ loading: false, error: [err.message] })
       return null
     }
   }
 
   useEffect(() => {
+    onboardingRequest.current += 1
+    setOnboardingState({ loading: false, error: null })
     if (ownerId) {
+      // Drop the previous user's account before the next request resolves
+      setAccountState({ account: null, loading: true, error: null })
       handleGetAccount()
     } else {
+      accountRequest.current += 1
       setAccountState({ account: null, loading: false, error: null })
     }
   }, [ownerId])

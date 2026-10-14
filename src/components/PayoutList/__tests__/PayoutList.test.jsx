@@ -225,6 +225,30 @@ describe('PayoutList', () => {
     expect(lastControllerProps.pagination.currentPage).toBe(1)
   })
 
+  it('does not load another page after a status change fails', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(page([payout(3), payout(2)], 1, 4))
+      .mockResolvedValueOnce({
+        json: async () => ({ error: true, result: ['ERROR'] })
+      })
+    renderController(PayoutList, {})
+    await waitFor(() => {
+      expect(lastControllerProps.payoutList.payouts).toHaveLength(2)
+    })
+    await act(async () => {
+      lastControllerProps.handleChangeStatus('pending')
+    })
+    await waitFor(() => {
+      expect(lastControllerProps.payoutList.error).toEqual(['ERROR'])
+    })
+    expect(lastControllerProps.payoutList.payouts).toEqual([])
+    expect(lastControllerProps.pagination.totalPages).toBeNull()
+    await act(async () => {
+      lastControllerProps.loadMorePayouts()
+    })
+    expect(global.fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('ignores the answer of a previous status that arrives late', async () => {
     let answerAll
     global.fetch = vi.fn()

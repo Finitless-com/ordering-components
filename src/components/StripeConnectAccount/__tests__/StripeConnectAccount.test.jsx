@@ -1,6 +1,8 @@
+import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
-import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
+import { EventProvider } from '../../../contexts/EventContext'
+import { renderController, lastControllerProps, ControllerUI } from '../../../__tests__/helpers/renderController'
 
 const auth = vi.hoisted(() => {
   const mockOrdering = {
@@ -94,6 +96,64 @@ describe('StripeConnectAccount', () => {
       expect(lastControllerProps.accountState.loading).toBe(false)
     })
     expect(global.fetch).not.toHaveBeenCalled()
+    let url
+    await act(async () => {
+      url = await lastControllerProps.handleGetOnboardingUrl()
+    })
+    expect(url).toBeNull()
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it('clears the account as soon as the user changes', async () => {
+    let answerNext
+    const nextAccount = { ...account, id: 9, owner_id: 13 }
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(answer({ error: false, result: account }))
+      .mockReturnValueOnce(new Promise(resolve => { answerNext = resolve }))
+    const view = renderController(StripeConnectAccount, { userId: 6 })
+    await waitFor(() => {
+      expect(lastControllerProps.accountState.account).toEqual(account)
+    })
+    await act(async () => {
+      view.rerender(
+        <EventProvider>
+          <StripeConnectAccount UIComponent={ControllerUI} userId={13} />
+        </EventProvider>
+      )
+    })
+    expect(lastControllerProps.accountState.account).toBeNull()
+    expect(lastControllerProps.accountState.loading).toBe(true)
+    await act(async () => {
+      answerNext(answer({ error: false, result: nextAccount }))
+    })
+    expect(lastControllerProps.accountState.account).toEqual(nextAccount)
+    expect(global.fetch.mock.calls[1][0]).toBe('https://api.test/users/13/stripe_connect_account')
+  })
+
+  it('ignores the account of the previous user when that answer arrives late', async () => {
+    let answerLate
+    let answerNext
+    const nextAccount = { ...account, id: 9, owner_id: 13 }
+    global.fetch = vi.fn()
+      .mockReturnValueOnce(new Promise(resolve => { answerLate = resolve }))
+      .mockReturnValueOnce(new Promise(resolve => { answerNext = resolve }))
+    const view = renderController(StripeConnectAccount, { userId: 6 })
+    await act(async () => {
+      view.rerender(
+        <EventProvider>
+          <StripeConnectAccount UIComponent={ControllerUI} userId={13} />
+        </EventProvider>
+      )
+    })
+    await act(async () => {
+      answerNext(answer({ error: false, result: nextAccount }))
+    })
+    expect(lastControllerProps.accountState.account).toEqual(nextAccount)
+    await act(async () => {
+      answerLate(answer({ error: false, result: account }))
+    })
+    expect(lastControllerProps.accountState.account).toEqual(nextAccount)
+    expect(lastControllerProps.accountState.loading).toBe(false)
   })
 
   it('sets the error the API answers with', async () => {

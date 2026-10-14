@@ -85,6 +85,8 @@ export const PayoutList = (props) => {
     if (status === statusSelected) return
     setStatusSelected(status)
     setPayoutList({ payouts: [], loading: true, error: null })
+    // The list is empty until this filter answers, so the previous page counts must not stay usable
+    setPagination({ currentPage: 0, pageSize, totalPages: null, total: null })
     getPayouts(1, status)
   }
 
