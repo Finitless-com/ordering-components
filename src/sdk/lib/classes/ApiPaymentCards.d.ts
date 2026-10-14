@@ -7,7 +7,8 @@ export declare class ApiPaymentCards extends ApiBase implements ApiBaseInterface
     businessId: number | string;
     userId: number | string;
     card_id: number | string;
-    constructor(ordering: Ordering, bussinessId: number | string, userId: number | string, card_id?: number | string);
+    gateway: string;
+    constructor(ordering: Ordering, bussinessId: number | string, userId: number | string, card_id?: number | string, gateway?: string);
     /**
      * Replace current modelId
      * @param id ID to replace current api modelId

@@ -76,6 +76,58 @@ describe('CardForm', () => {
     await waitFor(() => {
       expect(onNewCard).toHaveBeenCalled()
     })
+    const [, options] = global.fetch.mock.calls.find(([url]) => url.includes('/cards'))
+    expect(JSON.parse(options.body)).toEqual({
+      business_id: 5,
+      gateway: 'stripe',
+      token_id: 'pm_setup_1',
+      user_id: 8
+    })
+  })
+
+  it('saves the card on stripe connect v2 with the business id', async () => {
+    const onNewCard = vi.fn()
+    renderController(CardForm, {
+      businessId: 41,
+      cardsGateway: 'stripe_connect_v2',
+      toSave: true,
+      requirements: 'seti_secret',
+      onNewCard
+    })
+    const event = { preventDefault: vi.fn() }
+    await act(async () => {
+      await lastControllerProps.handleSubmit(event)
+    })
+    await waitFor(() => {
+      expect(onNewCard).toHaveBeenCalledWith(expect.objectContaining({ id: 'pm_connect_v2' }))
+    })
+    const [url, options] = global.fetch.mock.calls.find(([url]) => url.includes('/cards'))
+    expect(url).toBe('https://api.test/payments/stripe_connect_v2/cards')
+    expect(options.method).toBe('POST')
+    expect(JSON.parse(options.body)).toEqual({
+      business_id: 41,
+      gateway: 'stripe_connect_v2',
+      token_id: 'pm_setup_1',
+      user_id: 8
+    })
+  })
+
+  it('keeps the stripe endpoint for gateways without their own cards', async () => {
+    const onNewCard = vi.fn()
+    renderController(CardForm, {
+      businessId: 5,
+      cardsGateway: 'stripe_direct',
+      toSave: true,
+      requirements: 'seti_secret',
+      onNewCard
+    })
+    await act(async () => {
+      await lastControllerProps.handleSubmit({ preventDefault: vi.fn() })
+    })
+    await waitFor(() => expect(onNewCard).toHaveBeenCalled())
+    const [url, options] = global.fetch.mock.calls.find(([url]) => url.includes('/cards'))
+    expect(url).toBe('https://api.test/payments/stripe/cards')
+    expect(JSON.parse(options.body).gateway).toBe('stripe')
   })
 
   it('tracks card element validation errors', async () => {

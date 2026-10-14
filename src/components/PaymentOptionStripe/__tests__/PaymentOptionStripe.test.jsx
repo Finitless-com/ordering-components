@@ -123,6 +123,80 @@ describe('PaymentOptionStripe', () => {
     expect(lastControllerProps.cardsList.cards[0].id).toBe(15)
   })
 
+  it('keeps the stripe cards endpoints for stripe', async () => {
+    renderController(PaymentOptionStripe, { ...baseProps(), publicKey: undefined })
+    await waitFor(() => expect(lastControllerProps.cardsList.cards).toHaveLength(1))
+    expect(lastControllerProps.cardsGateway).toBe('stripe')
+    expect(pay.mockPaymentCards).toHaveBeenCalledWith(5, 8, null, 'stripe')
+    expect(pay.mockPaymentCards).toHaveBeenCalledWith(undefined, undefined, null, 'stripe')
+    await lastControllerProps.deleteCard(lastControllerProps.cardsList.cards[0])
+    expect(pay.mockPaymentCards).toHaveBeenCalledWith(-1, 8, 10, 'stripe')
+  })
+
+  it('keeps the stripe cards endpoints for the gateways that reuse them', async () => {
+    renderController(PaymentOptionStripe, {
+      ...baseProps(),
+      gateway: 'stripe_connect',
+      paymethodSelectedInfo: { id: 4, gateway: 'stripe_connect' }
+    })
+    await waitFor(() => expect(lastControllerProps.cardsList.cards).toHaveLength(1))
+    expect(lastControllerProps.cardsGateway).toBe('stripe')
+    expect(pay.mockPaymentCards).toHaveBeenCalledWith(5, 8, null, 'stripe')
+    await lastControllerProps.setDefaultCard(lastControllerProps.cardsList.cards[0])
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.test/payments/stripe/cards/default',
+      expect.objectContaining({ method: 'POST' })
+    )
+  })
+
+  describe('stripe connect v2', () => {
+    const connectProps = () => ({
+      ...baseProps(),
+      gateway: 'stripe_connect_v2',
+      paymethodSelectedInfo: { id: 85, gateway: 'stripe_connect_v2' }
+    })
+
+    it('loads the cards of the gateway and the business', async () => {
+      renderController(PaymentOptionStripe, connectProps())
+      await waitFor(() => expect(lastControllerProps.cardsList.cards).toHaveLength(1))
+      expect(lastControllerProps.cardsGateway).toBe('stripe_connect_v2')
+      expect(pay.mockPaymentCards).toHaveBeenCalledWith(5, 8, null, 'stripe_connect_v2')
+      expect(pay.mockGetCredentials).not.toHaveBeenCalled()
+    })
+
+    it('gets the credentials of the gateway when there is no public key', async () => {
+      renderController(PaymentOptionStripe, { ...connectProps(), publicKey: undefined })
+      await waitFor(() => expect(lastControllerProps.publicKey).toBe('pk_test_123'))
+      expect(pay.mockPaymentCards).toHaveBeenCalledWith(undefined, undefined, null, 'stripe_connect_v2')
+    })
+
+    it('sets the default card on the gateway', async () => {
+      renderController(PaymentOptionStripe, connectProps())
+      await waitFor(() => expect(lastControllerProps.cardsList.cards).toHaveLength(1))
+      await lastControllerProps.setDefaultCard(lastControllerProps.cardsList.cards[0])
+      await waitFor(() => {
+        expect(lastControllerProps.defaultCardSetActionStatus.loading).toBe(false)
+      })
+      const [url, options] = global.fetch.mock.calls.find(([url]) => url.includes('/cards/default'))
+      expect(url).toBe('https://api.test/payments/stripe_connect_v2/cards/default')
+      expect(JSON.parse(options.body)).toEqual({ business_id: 5, user_id: 8, card_id: 10 })
+    })
+
+    it('deletes the card with the business id', async () => {
+      const onPaymentChange = vi.fn()
+      renderController(PaymentOptionStripe, {
+        ...connectProps(),
+        paySelected: { data: { id: 10 } },
+        onPaymentChange
+      })
+      await waitFor(() => expect(lastControllerProps.cardsList.cards).toHaveLength(1))
+      await lastControllerProps.deleteCard(lastControllerProps.cardsList.cards[0])
+      expect(pay.mockPaymentCards).toHaveBeenCalledWith(5, 8, 10, 'stripe_connect_v2')
+      expect(pay.mockPaymentCardsDelete).toHaveBeenCalled()
+      expect(onPaymentChange).toHaveBeenCalledWith(null)
+    })
+  })
+
   it('loads izipay user cards when get_cards feature is enabled', async () => {
     renderController(PaymentOptionStripe, {
       ...baseProps(),
