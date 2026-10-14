@@ -60,6 +60,7 @@ import { OrdersControlFilters } from './components/OrdersControlFilters'
 import { PageBanner } from './components/PageBanner'
 import { PaymentOptions } from './components/PaymentOptions'
 import { PaymentOptionWallet } from './components/PaymentOptionWallet'
+import { PayoutList } from './components/PayoutList'
 import { Popup } from './components/Popup'
 import { ProductComponent } from './components/ProductComponent'
 import { ProductForm } from './components/ProductForm'
@@ -124,6 +125,7 @@ import { PaymentOptionStripeDirect } from './components/PaymentOptionStripeDirec
 import { PaymentOptionStripeLink } from './components/PaymentOptionStripeLink'
 import { PaymentOptionStripeRedirect } from './components/PaymentOptionStripeRedirect'
 import { PaymentOptionSquare } from './components/PaymentOptionSquare'
+import { StripeConnectAccount } from './components/StripeConnectAccount'
 import { StripeElementsForm } from './components/StripeElementsForm'
 import { CardForm } from './components/StripeElementsForm/CardForm'
 import { StripeRedirectForm } from './components/PaymentOptionStripeRedirect/StripeRedirectForm'
@@ -264,6 +266,7 @@ export {
   PageBanner,
   PaymentOptions,
   PaymentOptionWallet,
+  PayoutList,
   PaymethodList,
   PlaceSpot,
   Popup,
@@ -306,6 +309,7 @@ export {
   PaymentOptionSquare,
   PhoneAutocomplete,
   BusinessesMap,
+  StripeConnectAccount,
   StripeElementsForm,
   CardForm,
   StripeRedirectForm,
