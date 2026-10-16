@@ -70,6 +70,63 @@ describe('mergeCartResult', () => {
   })
 })
 
+describe('mergeCartResult platform (gift) carts', () => {
+  const giftCart = {
+    business_id: null,
+    uuid: 'gift-cart-uuid',
+    products: [{ id: 90, type: 'gift_card' }],
+    updated_at: '2026-08-25 12:01:00'
+  }
+
+  it('merges a new null-business gift cart under businessId:null', () => {
+    const other = { business_id: 6, updated_at: '2026-08-25 12:02:00' }
+    const next = mergeCartResult({ 'businessId:6': other }, giftCart)
+
+    expect(next['businessId:null']).toBe(giftCart)
+    expect(next['businessId:6']).toBe(other)
+  })
+
+  it('keeps a newer local gift cart when an older result arrives', () => {
+    const localGift = { ...giftCart, updated_at: '2026-08-25 12:05:00' }
+    const next = mergeCartResult({ 'businessId:null': localGift }, giftCart)
+
+    expect(next['businessId:null']).toBe(localGift)
+  })
+
+  it('applies a newer gift cart over a stale local snapshot', () => {
+    const staleGift = { ...giftCart, uuid: 'stale-uuid', updated_at: '2026-08-25 12:00:00' }
+    const next = mergeCartResult({ 'businessId:null': staleGift }, giftCart)
+
+    expect(next['businessId:null']).toBe(giftCart)
+  })
+
+  it('rejects invalid payloads without creating gift entries', () => {
+    const prev = { 'businessId:5': newerCart }
+    const invalid = [
+      undefined,
+      null,
+      5,
+      'cart',
+      true,
+      [giftCart],
+      {},
+      { uuid: 'no-business-field' },
+      { business_id: undefined },
+      { business_id: 0 },
+      { business_id: false },
+      { business_id: '' }
+    ]
+
+    invalid.forEach((cart) => {
+      const next = mergeCartResult(prev, cart)
+      expect(next).toEqual(prev)
+      expect(next).not.toHaveProperty('businessId:null')
+      expect(next).not.toHaveProperty('businessId:undefined')
+    })
+    expect(prev).toEqual({ 'businessId:5': newerCart })
+  })
+})
+
 describe('mergeCartsFromList', () => {
   it('keeps a newer local cart when a stale options list arrives', () => {
     const other = { business_id: 6, updated_at: '2026-08-25 12:02:00' }
@@ -96,6 +153,90 @@ describe('mergeCartsFromList', () => {
     expect(next['businessId:7']).toBe(added)
     expect(next['businessId:5']).toBe(newerCart)
   })
+
+  it('hydrates a null-business gift cart from the list', () => {
+    const giftCart = {
+      business_id: null,
+      uuid: 'gift-cart-uuid',
+      products: [{ id: 90, type: 'gift_card' }],
+      updated_at: '2026-08-25 12:01:00'
+    }
+    const next = mergeCartsFromList({}, [giftCart])
+
+    expect(next['businessId:null']).toBe(giftCart)
+  })
+
+  it('retains mixed business and gift carts together', () => {
+    const giftCart = {
+      business_id: null,
+      uuid: 'gift-cart-uuid',
+      updated_at: '2026-08-25 12:01:00'
+    }
+    const next = mergeCartsFromList({}, [olderCart, giftCart, newerCart])
+
+    expect(next['businessId:5']).toBe(newerCart)
+    expect(next['businessId:null']).toBe(giftCart)
+  })
+
+  it('keeps a newer local gift cart when the list sends a stale one', () => {
+    const localGift = {
+      business_id: null,
+      uuid: 'gift-cart-uuid',
+      updated_at: '2026-08-25 12:05:00'
+    }
+    const staleGift = { business_id: null, uuid: 'stale-uuid', updated_at: '2026-08-25 12:01:00' }
+    const next = mergeCartsFromList({ 'businessId:null': localGift }, [staleGift])
+
+    expect(next['businessId:null']).toBe(localGift)
+  })
+
+  it('applies a newer gift cart from the list over a stale local snapshot', () => {
+    const localGift = { business_id: null, uuid: 'stale-uuid', updated_at: '2026-08-25 12:00:00' }
+    const newerGift = {
+      business_id: null,
+      uuid: 'gift-cart-uuid',
+      updated_at: '2026-08-25 12:01:00'
+    }
+    const next = mergeCartsFromList({ 'businessId:null': localGift }, [newerGift])
+
+    expect(next['businessId:null']).toBe(newerGift)
+  })
+
+  it('does not mutate the previous carts map', () => {
+    const giftCart = {
+      business_id: null,
+      uuid: 'gift-cart-uuid',
+      updated_at: '2026-08-25 12:01:00'
+    }
+    const prev = { 'businessId:5': newerCart }
+    const snapshot = { ...prev }
+    const next = mergeCartsFromList(prev, [giftCart])
+
+    expect(prev).toEqual(snapshot)
+    expect(next).not.toBe(prev)
+    expect(next['businessId:null']).toBe(giftCart)
+  })
+
+  it('skips invalid payloads without creating gift entries', () => {
+    const prev = { 'businessId:5': newerCart }
+    const next = mergeCartsFromList(prev, [
+      null,
+      undefined,
+      'cart',
+      5,
+      [newerCart],
+      {},
+      { uuid: 'no-business-field' },
+      { business_id: undefined },
+      { business_id: 0 },
+      { business_id: false },
+      { business_id: '' }
+    ])
+
+    expect(next).toEqual(prev)
+    expect(next).not.toHaveProperty('businessId:null')
+    expect(next).not.toHaveProperty('businessId:undefined')
+  })
 })
 
 describe('resolveOrderOptionsCarts', () => {
@@ -114,6 +255,22 @@ describe('resolveOrderOptionsCarts', () => {
     )
 
     expect(resolved.apply).toBe(true)
+    expect(resolved.carts['businessId:5']).toBe(newerCart)
+  })
+
+  it('includes a gift cart from the order options list', () => {
+    const giftCart = {
+      business_id: null,
+      uuid: 'gift-cart-uuid',
+      updated_at: '2026-08-25 12:01:00'
+    }
+    const resolved = resolveOrderOptionsCarts(
+      { 'businessId:5': newerCart },
+      [olderCart, giftCart]
+    )
+
+    expect(resolved.apply).toBe(true)
+    expect(resolved.carts['businessId:null']).toBe(giftCart)
     expect(resolved.carts['businessId:5']).toBe(newerCart)
   })
 })

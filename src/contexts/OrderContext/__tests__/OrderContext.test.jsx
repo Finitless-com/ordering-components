@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   socketOff: vi.fn(),
   showToast: vi.fn(),
   confirmWithData: vi.fn(),
-  confirm: vi.fn()
+  confirm: vi.fn(),
+  addProduct: vi.fn(),
+  orderOptionsGet: vi.fn(),
+  orderOptionsSave: vi.fn()
 }))
 
 vi.mock('../../SessionContext', () => ({
@@ -29,7 +32,12 @@ vi.mock('../../ApiContext', () => ({
     setAccessToken: () => ({
       carts: () => ({
         confirmWithData: mocks.confirmWithData,
-        confirm: mocks.confirm
+        confirm: mocks.confirm,
+        addProduct: mocks.addProduct
+      }),
+      orderOptions: () => ({
+        get: mocks.orderOptionsGet,
+        save: mocks.orderOptionsSave
       })
     })
   }]
@@ -76,6 +84,8 @@ vi.mock('../../ToastContext', () => ({
 
 // eslint-disable-next-line import/first
 import { OrderProvider, useOrder } from '../index'
+// eslint-disable-next-line import/first
+import { PurchaseGiftCard } from '../../../components/GiftCard/PurchaseGiftCard'
 
 let orderState
 let orderActions
@@ -267,5 +277,195 @@ describe('OrderContext confirmCart', () => {
     expect(response).toEqual({ error: true, result: ['Network Error'] })
     expect(response).not.toHaveProperty('cart')
     await waitFor(() => expect(orderState.loading).toBe(false))
+  })
+})
+
+describe('OrderContext platform gift carts', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+  const giftCart = {
+    business_id: null,
+    uuid: 'gift-cart-uuid',
+    products: [{ id: 90, type: 'gift_card' }],
+    updated_at: '2026-08-25 12:01:00'
+  }
+  const businessCart = {
+    business_id: 5,
+    uuid: 'cart-uuid-5',
+    products: [{ id: 1 }],
+    updated_at: '2026-08-25 12:02:00'
+  }
+
+  const renderProvider = () => render(
+    <OrderProvider strategy={strategy}>
+      <OrderProbe />
+    </OrderProvider>
+  )
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    strategy.getItem.mockResolvedValue(null)
+    mocks.orderOptionsSave.mockResolvedValue({
+      content: { error: false, result: {} },
+      status: 200
+    })
+  })
+
+  it('stores a platform product cart under businessId:null without dropping business carts', async () => {
+    mocks.addProduct.mockResolvedValue({
+      content: { error: false, result: giftCart },
+      status: 200
+    })
+    renderProvider()
+
+    await act(async () => {
+      orderActions.setStateValues({ carts: { 'businessId:5': businessCart } })
+    })
+
+    let response
+    await act(async () => {
+      response = await orderActions.addProduct({ id: 90, quantity: 1 }, null, null, true)
+    })
+
+    expect(mocks.addProduct).toHaveBeenCalledWith(
+      { platform_product: { id: 90, quantity: 1 } },
+      expect.objectContaining({ headers: expect.any(Object) })
+    )
+    expect(response).toEqual({ error: false, result: giftCart })
+    await waitFor(() => {
+      expect(orderState.carts['businessId:null']).toEqual(expect.objectContaining({
+        uuid: 'gift-cart-uuid',
+        products: [{ id: 90, type: 'gift_card' }]
+      }))
+      expect(orderState.carts['businessId:5']).toEqual(expect.objectContaining({
+        uuid: 'cart-uuid-5'
+      }))
+    })
+  })
+
+  it('hydrates a gift cart from order options and keeps it when later lists omit it', async () => {
+    mocks.orderOptionsGet.mockResolvedValue({
+      content: { error: false, result: { carts: [giftCart, businessCart] } },
+      status: 200
+    })
+    renderProvider()
+
+    await act(async () => {
+      await orderActions.refreshOrderOptions()
+    })
+
+    await waitFor(() => {
+      expect(orderState.carts['businessId:null']).toEqual(expect.objectContaining({
+        uuid: 'gift-cart-uuid'
+      }))
+      expect(orderState.carts['businessId:5']).toEqual(expect.objectContaining({
+        uuid: 'cart-uuid-5'
+      }))
+    })
+
+    mocks.orderOptionsGet.mockResolvedValue({
+      content: { error: false, result: { carts: [businessCart] } },
+      status: 200
+    })
+    await act(async () => {
+      await orderActions.refreshOrderOptions()
+    })
+
+    await waitFor(() => {
+      expect(orderState.carts['businessId:null']).toEqual(expect.objectContaining({
+        uuid: 'gift-cart-uuid'
+      }))
+    })
+  })
+
+  it('does not overwrite a newer local gift cart with a stale list response', async () => {
+    const newerGift = { ...giftCart, uuid: 'newer-gift-uuid', updated_at: '2026-08-25 12:05:00' }
+    mocks.orderOptionsGet.mockResolvedValue({
+      content: { error: false, result: { carts: [giftCart] } },
+      status: 200
+    })
+    renderProvider()
+
+    await act(async () => {
+      orderActions.setStateValues({ carts: { 'businessId:null': newerGift } })
+    })
+    await act(async () => {
+      await orderActions.refreshOrderOptions()
+    })
+
+    await waitFor(() => {
+      expect(orderState.carts['businessId:null']).toEqual(expect.objectContaining({
+        uuid: 'newer-gift-uuid'
+      }))
+    })
+  })
+})
+
+describe('PurchaseGiftCard with real OrderProvider', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+  const giftProduct = { id: 90, name: 'Gift Card 90', type: 'gift_card' }
+  const giftCart = {
+    business_id: null,
+    uuid: 'gift-cart-uuid',
+    products: [{ id: 90, type: 'gift_card' }],
+    updated_at: '2026-08-25 12:01:00'
+  }
+
+  let lastUIProps
+  const GiftUI = (props) => {
+    lastUIProps = props
+    return null
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    strategy.getItem.mockResolvedValue(null)
+    global.fetch = vi.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({ error: false, result: [giftProduct] })
+    })
+  })
+
+  it('checks out the new gift cart stored under businessId:null', async () => {
+    mocks.addProduct.mockResolvedValue({
+      content: { error: false, result: giftCart },
+      status: 200
+    })
+    const goToCheckout = vi.fn()
+
+    render(
+      <OrderProvider strategy={strategy}>
+        <OrderProbe />
+        <PurchaseGiftCard UIComponent={GiftUI} handleCustomGoToCheckout={goToCheckout} />
+      </OrderProvider>
+    )
+
+    await waitFor(() => {
+      expect(lastUIProps.productsListState.loading).toBe(false)
+      expect(lastUIProps.productsListState.products).toHaveLength(1)
+    })
+
+    await act(async () => {
+      await lastUIProps.handleAccept(giftProduct)
+    })
+
+    expect(mocks.addProduct).toHaveBeenCalledWith(
+      { platform_product: { id: 90, quantity: 1 } },
+      expect.anything()
+    )
+    expect(goToCheckout).toHaveBeenCalledWith('gift-cart-uuid')
+    await waitFor(() => {
+      expect(orderState.carts['businessId:null']).toEqual(expect.objectContaining({
+        uuid: 'gift-cart-uuid',
+        products: [{ id: 90, type: 'gift_card' }]
+      }))
+    })
   })
 })
