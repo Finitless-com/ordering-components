@@ -240,7 +240,6 @@ describe('useFreeDeliveryProgress', () => {
     ['API root', () => { context.ordering.root = 'https://other-api.ordering.test' }, {}],
     ['app identity', () => { context.ordering.appId = 'another-app' }, {}],
     ['delivery location', () => { context.order.options.address.location = { lat: 20, lng: -99 } }, {}],
-    ['business', () => {}, { business: { id: 7, slug: 'another-business' } }],
     ['franchise', () => {}, { franchiseId: 91 }]
   ])('keeps the public-offer cache separate by %s', async (_identity, changeContext, secondProps) => {
     const first = renderProgress()
@@ -250,6 +249,18 @@ describe('useFreeDeliveryProgress', () => {
     changeContext()
     renderProgress(secondProps)
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2))
+  })
+
+  it('shares the public-offer request across businesses and still scopes each offer to its business', async () => {
+    const first = renderProgress()
+    const second = renderProgress({ business: { id: 7, slug: 'another-business' } })
+
+    await waitFor(() => expect(first.result.current.status).toBe('awareness'))
+    await waitFor(() => expect(second.result.current.diagnosticReason).not.toBe('loading'))
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(first.result.current.offer?.id).toBe(freeDeliveryOffer.id)
+    expect(second.result.current.status).not.toBe('awareness')
+    expect(second.result.current.offer).toBeNull()
   })
 
   it('does not cache a failed public-offer request for another hook', async () => {
@@ -279,6 +290,7 @@ describe('useFreeDeliveryProgress', () => {
     const hook = renderProgress()
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1))
 
+    context.order.options.address.location = { lat: 20, lng: -99 }
     hook.rerender({ business: newBusiness, cart: null })
 
     expect(hook.result.current.status).toBe('hidden')
@@ -396,14 +408,14 @@ describe('useFreeDeliveryProgress', () => {
   })
 
   it.each([
-    ['business', (hook) => hook.rerender({ business: { id: 7, slug: 'other' }, cart: null })],
-    ['session', (hook) => { context.session.token = 'new-session'; hook.rerender({ business, cart: null }) }],
-    ['location', (hook) => { context.order.options.address.location = { lat: 20, lng: -99 }; hook.rerender({ business, cart: null }) }],
-    ['app', (hook) => { context.ordering.appId = 'other-app'; hook.rerender({ business, cart: null }) }],
-    ['franchise', (hook) => hook.rerender({ business, cart: null, franchiseId: 91 })],
-    ['refresh', (hook) => { hook.rerender({ business, cart: null }); act(() => hook.result.current.refresh()) }],
-    ['disable', (hook) => { hook.rerender({ business, cart: null, enabled: false }); hook.rerender({ business, cart: null }) }]
-  ])('does not retain applied fallback across a new %s eligibility generation', async (description, changeContext) => {
+    ['business', (hook) => hook.rerender({ business: { id: 7, slug: 'other' }, cart: null }), 1],
+    ['session', (hook) => { context.session.token = 'new-session'; hook.rerender({ business, cart: null }) }, 2],
+    ['location', (hook) => { context.order.options.address.location = { lat: 20, lng: -99 }; hook.rerender({ business, cart: null }) }, 2],
+    ['app', (hook) => { context.ordering.appId = 'other-app'; hook.rerender({ business, cart: null }) }, 2],
+    ['franchise', (hook) => hook.rerender({ business, cart: null, franchiseId: 91 }), 2],
+    ['refresh', (hook) => { hook.rerender({ business, cart: null }); act(() => hook.result.current.refresh()) }, 2],
+    ['disable', (hook) => { hook.rerender({ business, cart: null, enabled: false }); hook.rerender({ business, cart: null }) }, 2]
+  ])('does not retain applied fallback across a new %s eligibility generation', async (description, changeContext, expectedRequests) => {
     globalThis.fetch.mockResolvedValue(successfulResponse([]))
     const hook = renderProgress({
       cart: { products: [{ id: 1 }], subtotal: 35, offers: [freeDeliveryOffer] }
@@ -413,7 +425,7 @@ describe('useFreeDeliveryProgress', () => {
     expect(hook.result.current.status).toBe('awareness')
 
     changeContext(hook)
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(expectedRequests))
     await waitFor(() => expect(hook.result.current.diagnosticReason).toBe('unsupported-offer'))
     expect(hook.result.current.offer).toBeNull()
   })
