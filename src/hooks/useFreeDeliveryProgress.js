@@ -194,8 +194,6 @@ export const useFreeDeliveryProgress = ({
         appId,
         appInternalName,
         normalizedFranchiseId,
-        businessId,
-        businessSlug,
         orderType,
         latitude,
         longitude
