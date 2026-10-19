@@ -23,8 +23,15 @@ export const mergeCartsByUpdatedAt = (prevCarts = {}, incomingCarts = {}) => {
   return next
 }
 
+const isMergeableCart = (cart) => (
+  cart !== null &&
+  typeof cart === 'object' &&
+  !Array.isArray(cart) &&
+  (cart.business_id === null || Boolean(cart.business_id))
+)
+
 export const mergeCartResult = (prevCarts, cart) => {
-  if (!cart?.business_id) return { ...(prevCarts || {}) }
+  if (!isMergeableCart(cart)) return { ...(prevCarts || {}) }
   return mergeCartsByUpdatedAt(prevCarts, {
     [`businessId:${cart.business_id}`]: cart
   })
@@ -34,7 +41,7 @@ export const mergeCartsFromList = (prevCarts = {}, carts = []) => {
   const incoming = {}
   if (Array.isArray(carts)) {
     carts.forEach((cart) => {
-      if (!cart || typeof cart !== 'object' || !cart.business_id) return
+      if (!isMergeableCart(cart)) return
       incoming[`businessId:${cart.business_id}`] = cart
     })
   }
