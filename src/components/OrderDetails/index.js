@@ -310,7 +310,7 @@ export const OrderDetails = (props) => {
 
       const isFormData = bodyToSend && bodyToSend instanceof FormData
 
-      let result, error, errorCodes
+      let result, error, errorCodes, retryAfter
 
       if (isFormData) {
         const response = await fetch(`${ordering.root}/orders/${orderState?.order?.id ?? orderId}`, {
@@ -328,12 +328,14 @@ export const OrderDetails = (props) => {
         result = responseData.result
         error = responseData.error
         errorCodes = responseData.error_codes
+        retryAfter = responseData.retry_after
       } else {
         const requestOptions = {}
         const { content } = await ordering.setAccessToken(token).orders(orderState.order?.id ?? orderId).save(bodyToSend, requestOptions)
         result = content.result
         error = content.error
         errorCodes = content.error_codes
+        retryAfter = content.retry_after
       }
 
       if (!error) {
@@ -366,12 +368,12 @@ export const OrderDetails = (props) => {
           const message = Array.isArray(result) ? result[0] : typeof result === 'string' ? result : 'INTERNAL_ERROR'
           const defaultMessage = message !== 'INTERNAL_ERROR' ? message : t('INTERNAL_ERROR', 'Internal Error')
 
-          setOrderState({ ...orderState, error: [defaultMessage], loading: false })
+          setOrderState({ ...orderState, error: [defaultMessage], errorCodes: errorCodes ?? null, retryAfter: retryAfter ?? null, loading: false })
         }
         return null
       }
     } catch (err) {
-      setOrderState({ ...orderState, loading: false, error: [err?.message || t('NETWORK_ERROR', 'Network Error')] })
+      setOrderState({ ...orderState, loading: false, error: [err?.message || t('NETWORK_ERROR', 'Network Error')], errorCodes: null, retryAfter: null })
       return null
     }
   }
