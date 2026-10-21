@@ -913,15 +913,15 @@ export const OrderListGroups = (props) => {
     }
   }
 
-  const handleChangeOrderStatus = async (status, orderIds, body = {}) => {
+  const handleChangeOrderStatus = async (status, orderIds, body = {}, options = {}) => {
     try {
       setLoadingChangeOrder(true)
       delete body.id
       const bodyToSend = Object.keys(body || {}).length > 0 ? body : { status }
       const setOrderStatus = async (id) => {
         try {
-          const { content: { result, error, error_codes: errorCodes } } = await ordering.setAccessToken(session?.token).orders(id).save({ ...bodyToSend, id })
-          return { id, result, error, errorCodes }
+          const { content: { result, error, error_codes: errorCodes, retry_after: retryAfter } } = await ordering.setAccessToken(session?.token).orders(id).save({ ...bodyToSend, id })
+          return { id, result, error, errorCodes, retryAfter }
         } catch (err) {
           return { id, result: [err?.message], error: true }
         }
@@ -942,6 +942,7 @@ export const OrderListGroups = (props) => {
           setRegressionRequest({ status, body: { ...bodyToSend, status }, ids: regressionFailed.map(response => response.id) })
         }
       }
+      if (options?.withDetails) return responses
       return responses.map(response => (response.error ? null : response.result))
     } catch (err) {
       return err?.message ?? err
