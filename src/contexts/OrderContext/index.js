@@ -1086,8 +1086,8 @@ export const OrderProvider = ({
   }
 
   /**
-   * Remember the channel of a visit to a store (ORD-1992). Web only: the
-   * channel arrives as `utm_source` on the store URL.
+   * Remember the UTM parameters of a visit to a store (ORD-1992). Web only.
+   * A visit without `utm_source` keeps the previous one (last non-direct click).
    */
   const captureReferral = async (businessId) => {
     try {
