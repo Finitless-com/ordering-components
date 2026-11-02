@@ -17,6 +17,7 @@ import {
   mergeCartsByUpdatedAt,
   resolveOrderOptionsCarts
 } from './mergeCartsByUpdatedAt'
+import { REFERRAL_STORAGE_KEY, buildReferral, referralForPlace } from '../../utils/referral'
 
 dayjs.extend(utc)
 
@@ -1130,6 +1131,29 @@ export const OrderProvider = ({
   }
 
   /**
+   * Remember the channel of a visit to a store (ORD-1992). Web only: the
+   * channel arrives as `utm_source` on the store URL.
+   */
+  const captureReferral = async (businessId) => {
+    try {
+      if (typeof window === 'undefined' || !window.location) return
+      const referral = buildReferral(window.location.search, businessId)
+      if (referral) await strategy.setItem(REFERRAL_STORAGE_KEY, referral, true)
+    } catch (e) {}
+  }
+
+  /** Adds the remembered `referral` to a place body; never blocks the place. */
+  const withReferral = async (body) => {
+    if (body.referral) return body
+    try {
+      const referral = referralForPlace(await strategy.getItem(REFERRAL_STORAGE_KEY, true))
+      return referral ? { ...body, referral } : body
+    } catch (e) {
+      return body
+    }
+  }
+
+  /**
    * Place cart
    */
   const placeCart = async (cardId, data) => {
@@ -1138,10 +1162,10 @@ export const OrderProvider = ({
       const countryCode = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
       const userCustomerId = customerFromLocalStorage?.id
-      const body = {
+      const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
-      }
+      })
       let headers = {
         'X-Socket-Id-X': socket?.getId(),
         'X-Country-Code-X': countryCode,
@@ -1205,10 +1229,10 @@ export const OrderProvider = ({
       const countryCode = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
       const userCustomerId = customerFromLocalStorage?.id
-      const body = {
+      const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
-      }
+      })
       const requestOptions = {
         method: 'POST',
         headers: {
@@ -1739,6 +1763,7 @@ export const OrderProvider = ({
     setUserCustomerOptions,
     setStateValues,
     placeMultiCarts,
+    captureReferral,
     getLastOrderHasNoReview,
     changeCityFilter,
     clearOrderAddress,
@@ -1836,7 +1861,8 @@ export const useOrder = () => {
     changePaymethod: warningMessage,
     setStateValues: warningMessage,
     getLastOrderHasNoReview: warningMessage,
-    clearOrderAddress: warningMessage
+    clearOrderAddress: warningMessage,
+    captureReferral: () => {}
   }
   return orderManager || [{}, functionsPlaceholders]
 }
