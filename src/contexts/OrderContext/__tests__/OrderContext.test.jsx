@@ -84,7 +84,7 @@ vi.mock('../../ToastContext', () => ({
 }))
 
 // eslint-disable-next-line import/first
-import { OrderProvider, useOrder } from '../index'
+import { OrderProvider, useOrder, useOrderState, useOrderActions } from '../index'
 // eslint-disable-next-line import/first
 import { PurchaseGiftCard } from '../../../components/GiftCard/PurchaseGiftCard'
 
@@ -468,5 +468,51 @@ describe('PurchaseGiftCard with real OrderProvider', () => {
         products: [{ id: 90, type: 'gift_card' }]
       }))
     })
+  })
+})
+
+describe('OrderContext state and actions without the copy', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+
+  it('gives the state without a copy and the same actions across renders', async () => {
+    const states = []
+    const actionSets = []
+    const Probe = () => {
+      states.push(useOrderState())
+      actionSets.push(useOrderActions())
+      useOrder()
+      return null
+    }
+    const { rerender } = render(
+      <OrderProvider strategy={strategy}>
+        <Probe />
+      </OrderProvider>
+    )
+    await waitFor(() => expect(states.length).toBeGreaterThan(0))
+    rerender(
+      <OrderProvider strategy={strategy}>
+        <Probe />
+      </OrderProvider>
+    )
+    const last = states[states.length - 1]
+    expect(last).toHaveProperty('carts')
+    expect(last).toHaveProperty('options')
+    expect(actionSets.every((actions) => actions === actionSets[0])).toBe(true)
+    expect(typeof actionSets[0].changeMoment).toBe('function')
+  })
+
+  it('warns and returns empty values outside the provider', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let state
+    let actions
+    const Probe = () => { state = useOrderState(); actions = useOrderActions(); return null }
+    render(<Probe />)
+    expect(state).toEqual({})
+    expect(actions).toEqual({})
+    warn.mockRestore()
   })
 })

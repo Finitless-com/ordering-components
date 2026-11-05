@@ -105,7 +105,7 @@ import { SiteContext, SiteProvider, useSite } from '../src/contexts/SiteContext'
 import { CustomerContext, CustomerProvider, useCustomer } from '../src/contexts/CustomerContext'
 import { EventContext, EventProvider, useEvent } from '../src/contexts/EventContext'
 import { LanguageContext, LanguageProvider, useLanguage } from '../src/contexts/LanguageContext'
-import { OrderContext, OrderProvider, useOrder } from '../src/contexts/OrderContext'
+import { OrderContext, OrderProvider, useOrder, useOrderState, useOrderActions } from '../src/contexts/OrderContext'
 import { SessionContext, SessionProvider, useSession } from '../src/contexts/SessionContext'
 import { UtilsContext, UtilsProviders, useUtils } from '../src/contexts/UtilsContext'
 import { ValidationFieldsContext, useValidationFields, ValidationFieldsProvider } from '../src/contexts/ValidationsFieldsContext'
@@ -253,6 +253,8 @@ export {
   OrderContext,
   OrderProvider,
   useOrder,
+  useOrderState,
+  useOrderActions,
   OrderingContext,
   OrderingProvider,
   SessionContext,

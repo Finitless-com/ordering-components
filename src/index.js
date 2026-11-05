@@ -101,7 +101,7 @@ import { MapView } from './components/MapView'
 import { ConfigContext, ConfigProvider, useConfig } from './contexts/ConfigContext'
 import { SiteContext, SiteProvider, useSite } from './contexts/SiteContext'
 import { LanguageContext, LanguageProvider, useLanguage } from './contexts/LanguageContext'
-import { OrderContext, OrderProvider, useOrder } from './contexts/OrderContext'
+import { OrderContext, OrderProvider, useOrder, useOrderState, useOrderActions } from './contexts/OrderContext'
 import { BusinessContext, BusinessProvider, useBusiness } from './contexts/BusinessContext'
 import { SessionContext, SessionProvider, useSession } from './contexts/SessionContext'
 import { WebsocketContext, WebsocketProvider, useWebsocket } from './contexts/WebsocketContext'
@@ -367,6 +367,8 @@ export {
   OrderContext,
   OrderProvider,
   useOrder,
+  useOrderState,
+  useOrderActions,
   BusinessContext,
   BusinessProvider,
   useBusiness,
