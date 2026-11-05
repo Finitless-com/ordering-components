@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react'
+import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react'
 import { useSession } from '../SessionContext'
 import { useApi } from '../ApiContext'
 import { useWebsocket } from '../WebsocketContext'
@@ -6,7 +6,7 @@ import { useLanguage } from '../LanguageContext'
 import { useEvent } from '../EventContext'
 import { useConfig } from '../ConfigContext'
 import { useCustomer } from '../CustomerContext'
-import { ToastType, useToast } from '../ToastContext'
+import { ToastType, useToastActions } from '../ToastContext'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { parseUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
@@ -24,7 +24,30 @@ dayjs.extend(utc)
  * Create OrderContext
  * This context will manage the current order with options internally and provide an easy interface
  */
+/**
+ * The carts without one of them, as a new object: the order's carts are never
+ * changed in place, so who reads the order without the copy (useOrderState)
+ * sees every change.
+ */
+const withoutCart = (carts, key) => {
+  const next = { ...carts }
+  delete next[key]
+  return next
+}
+
 export const OrderContext = createContext()
+
+/**
+ * The order's state as it is (no copy), with a new identity only when it
+ * changes. `useOrder()` hands a deep copy on every render of the provider, so
+ * every consumer renders again on any of its renders (a toast, a socket event,
+ * a session update); `useOrderState()` renders again only when the order does.
+ * Read only: never modify what it returns.
+ */
+export const OrderStateContext = createContext()
+
+/** The order's actions, stable for the provider's life; each runs its latest version. */
+export const OrderActionsContext = createContext()
 
 /**
  * Custom provider to order manager
@@ -51,7 +74,7 @@ export const OrderProvider = ({
   const [configState] = useConfig()
   const [session, { logout }] = useSession()
   const [customerState, { setUserCustomer }] = useCustomer()
-  const [, { showToast }] = useToast()
+  const { showToast } = useToastActions()
 
   const configTypes = configState?.configs?.order_types_allowed?.value.split('|').map(value => Number(value)) || []
 
@@ -757,7 +780,7 @@ export const OrderProvider = ({
       })
       const { error, result } = await response.json()
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
       } else {
         setAlert({ show: true, content: result, status: response?.status })
       }
@@ -826,7 +849,7 @@ export const OrderProvider = ({
       })
       const { result, error } = await response.json()
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
         events.emit('cart_added', result)
         setState({ ...state, loading: false })
       } else {
@@ -874,7 +897,7 @@ export const OrderProvider = ({
         })
       const result = content
       if (!result.error) {
-        state.carts[`businessId:${result.result.business_id}`] = result.result
+        state.carts = { ...state.carts, [`businessId:${result.result.business_id}`]: result.result }
         events.emit('cart_updated', result.result)
       } else {
         setAlert({ show: true, content: result.result, status })
@@ -1022,7 +1045,7 @@ export const OrderProvider = ({
         }
       })
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
         events.emit('cart_updated', result)
       } else {
         setAlert({ show: true, content: result, status })
@@ -1130,10 +1153,10 @@ export const OrderProvider = ({
       const { content: { error, result }, status } = await ordering.setAccessToken(session.token).carts(cardId).place(body, { headers })
       if (!error) {
         if (result.status !== 1) {
-          state.carts[`businessId:${result.business_id}`] = result
+          state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
           events.emit('cart_updated', result)
         } else {
-          delete state.carts[`businessId:${result.business_id}`]
+          state.carts = withoutCart(state.carts, `businessId:${result.business_id}`)
           const orderObject = {
             id: result.order.uuid,
             business: { name: result.business.name },
@@ -1203,7 +1226,7 @@ export const OrderProvider = ({
       const { error, result } = await response.json()
       if (!error) {
         result.carts.forEach(cart => {
-          delete state.carts[`businessId:${cart.business_id}`]
+          state.carts = withoutCart(state.carts, `businessId:${cart.business_id}`)
           const orderObject = {
             id: cart.uuid,
             business: { name: cart.business.name },
@@ -1331,10 +1354,10 @@ export const OrderProvider = ({
       if (!error && result?.carts) {
         result.carts.forEach(cart => {
           if (result.status !== 'completed') {
-            state.carts[`businessId:${cart.business_id}`] = result.carts.find(_cart => _cart?.business_id === cart?.business_id)
+            state.carts = { ...state.carts, [`businessId:${cart.business_id}`]: result.carts.find(_cart => _cart?.business_id === cart?.business_id) }
             events.emit('cart_updated', result)
           } else {
-            delete state.carts[`businessId:${cart.business_id}`]
+            state.carts = withoutCart(state.carts, `businessId:${cart.business_id}`)
           }
         })
       }
@@ -1372,7 +1395,7 @@ export const OrderProvider = ({
       }
       const { content: { error, result }, status } = await ordering.setAccessToken(session.token).orders(orderId).reorder(options)
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
         events.emit('cart_added', result)
       } else if (!offAlert) {
         setAlert({ show: true, content: result, status })
@@ -1677,7 +1700,9 @@ export const OrderProvider = ({
       socket.off('carts_update', handleCartUpdate)
       socket.off('order_options_update', handleOrderOptionUpdate)
     }
-  }, [state.carts, state.options, state.loading, socket])
+    // The handlers read the state through setState(prev => …): subscribing again on every
+    // cart or option change was not needed.
+  }, [socket, isDisableToast, t, showToast])
 
   /**
    * Join to carts room
@@ -1728,23 +1753,57 @@ export const OrderProvider = ({
 
   const copyState = JSON.parse(JSON.stringify(state))
 
+  const latestFunctions = useRef(functions)
+  latestFunctions.current = functions
+  const stableActions = useMemo(() => {
+    const actions = {}
+    Object.keys(latestFunctions.current).forEach((name) => {
+      actions[name] = (...args) => latestFunctions.current[name](...args)
+    })
+    return actions
+  }, [])
+
   return (
-    <OrderContext.Provider value={[copyState, functions]}>
-      {
-        Alert && (
-          <Alert
-            open={alert.show}
-            title={alert.title || t('ERROR', 'Error')}
-            onAccept={() => setAlert({ show: false })}
-            onClose={() => setAlert({ show: false })}
-            content={alert.content}
-            status={alert.status}
-          />
-        )
-      }
-      {children}
-    </OrderContext.Provider>
+    <OrderActionsContext.Provider value={stableActions}>
+      <OrderStateContext.Provider value={state}>
+        <OrderContext.Provider value={[copyState, functions]}>
+          {
+            Alert && (
+              <Alert
+                open={alert.show}
+                title={alert.title || t('ERROR', 'Error')}
+                onAccept={() => setAlert({ show: false })}
+                onClose={() => setAlert({ show: false })}
+                content={alert.content}
+                status={alert.status}
+              />
+            )
+          }
+          {children}
+        </OrderContext.Provider>
+      </OrderStateContext.Provider>
+    </OrderActionsContext.Provider>
   )
+}
+
+/** The order's state without the copy, rendering again only when it changes (read only). */
+export const useOrderState = () => {
+  const state = useContext(OrderStateContext)
+  if (!state) {
+    console.warn('Must use OrderProvider to wrappe the app.')
+    return {}
+  }
+  return state
+}
+
+/** The order's actions, stable for the provider's life. */
+export const useOrderActions = () => {
+  const actions = useContext(OrderActionsContext)
+  if (!actions) {
+    console.warn('Must use OrderProvider to wrappe the app.')
+    return {}
+  }
+  return actions
 }
 
 /**

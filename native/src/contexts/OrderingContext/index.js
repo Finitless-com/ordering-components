@@ -1,4 +1,4 @@
-import React, { createContext } from 'react'
+import React, { createContext, useMemo } from 'react'
 import { ConfigProvider } from '../../../../src/contexts/ConfigContext'
 import { SessionProvider } from '../../../../src/contexts/SessionContext'
 import { WebsocketProvider } from '../../../../src/contexts/WebsocketContext'
@@ -30,7 +30,8 @@ export const OrderingContext = createContext()
  * This prop doesn't need permission from sdk.
  */
 export const OrderingProvider = ({ Alert, isValidColor, noValidateColors, settings, children, isDisableToast, isDisabledDefaultOpts, enableCouponsRetries = false, sessionCheckInterval }) => {
-  const nativeStrategy = new NativeStrategy()
+  // Stateless, one for the provider's life: a new one each render reached every provider that receives it.
+  const nativeStrategy = useMemo(() => new NativeStrategy(), [])
   const restOfSettings = {
     project: settings.project,
     appId: settings.app_id,
