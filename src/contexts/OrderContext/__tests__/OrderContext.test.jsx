@@ -516,3 +516,52 @@ describe('OrderContext state and actions without the copy', () => {
     warn.mockRestore()
   })
 })
+
+describe('OrderContext carts never changed in place', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+
+  it('hands a new carts object when placing a group removes its carts', async () => {
+    let actions
+    let cartKeys
+    const MemoProbe = () => {
+      const state = useOrderState()
+      actions = useOrderActions()
+      // A memo on the carts: it sees a change only if carts is a new object.
+      cartKeys = React.useMemo(() => Object.keys(state.carts ?? {}), [state.carts])
+      return null
+    }
+    render(
+      <OrderProvider strategy={strategy}>
+        <MemoProbe />
+      </OrderProvider>
+    )
+    await act(async () => {
+      actions.setStateValues({
+        carts: {
+          'businessId:5': { business_id: 5, uuid: 'cart-5', products: [{ id: 1 }] },
+          'businessId:6': { business_id: 6, uuid: 'cart-6', products: [{ id: 2 }] }
+        }
+      })
+    })
+    await waitFor(() => expect(cartKeys).toEqual(expect.arrayContaining(['businessId:5', 'businessId:6'])))
+
+    global.fetch = vi.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({
+        error: false,
+        result: { carts: [{ business_id: 5, uuid: 'cart-5', business: { name: 'Five' } }] }
+      })
+    })
+    await act(async () => {
+      await actions.placeMultiCarts({ paymethod_id: 1 }, 'group-uuid')
+    })
+
+    await waitFor(() => expect(cartKeys).not.toContain('businessId:5'))
+    expect(cartKeys).toContain('businessId:6')
+  })
+})
+

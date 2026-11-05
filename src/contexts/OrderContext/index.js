@@ -24,6 +24,17 @@ dayjs.extend(utc)
  * Create OrderContext
  * This context will manage the current order with options internally and provide an easy interface
  */
+/**
+ * The carts without one of them, as a new object: the order's carts are never
+ * changed in place, so who reads the order without the copy (useOrderState)
+ * sees every change.
+ */
+const withoutCart = (carts, key) => {
+  const next = { ...carts }
+  delete next[key]
+  return next
+}
+
 export const OrderContext = createContext()
 
 /**
@@ -769,7 +780,7 @@ export const OrderProvider = ({
       })
       const { error, result } = await response.json()
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
       } else {
         setAlert({ show: true, content: result, status: response?.status })
       }
@@ -838,7 +849,7 @@ export const OrderProvider = ({
       })
       const { result, error } = await response.json()
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
         events.emit('cart_added', result)
         setState({ ...state, loading: false })
       } else {
@@ -886,7 +897,7 @@ export const OrderProvider = ({
         })
       const result = content
       if (!result.error) {
-        state.carts[`businessId:${result.result.business_id}`] = result.result
+        state.carts = { ...state.carts, [`businessId:${result.result.business_id}`]: result.result }
         events.emit('cart_updated', result.result)
       } else {
         setAlert({ show: true, content: result.result, status })
@@ -1034,7 +1045,7 @@ export const OrderProvider = ({
         }
       })
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
         events.emit('cart_updated', result)
       } else {
         setAlert({ show: true, content: result, status })
@@ -1142,10 +1153,10 @@ export const OrderProvider = ({
       const { content: { error, result }, status } = await ordering.setAccessToken(session.token).carts(cardId).place(body, { headers })
       if (!error) {
         if (result.status !== 1) {
-          state.carts[`businessId:${result.business_id}`] = result
+          state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
           events.emit('cart_updated', result)
         } else {
-          delete state.carts[`businessId:${result.business_id}`]
+          state.carts = withoutCart(state.carts, `businessId:${result.business_id}`)
           const orderObject = {
             id: result.order.uuid,
             business: { name: result.business.name },
@@ -1215,7 +1226,7 @@ export const OrderProvider = ({
       const { error, result } = await response.json()
       if (!error) {
         result.carts.forEach(cart => {
-          delete state.carts[`businessId:${cart.business_id}`]
+          state.carts = withoutCart(state.carts, `businessId:${cart.business_id}`)
           const orderObject = {
             id: cart.uuid,
             business: { name: cart.business.name },
@@ -1343,10 +1354,10 @@ export const OrderProvider = ({
       if (!error && result?.carts) {
         result.carts.forEach(cart => {
           if (result.status !== 'completed') {
-            state.carts[`businessId:${cart.business_id}`] = result.carts.find(_cart => _cart?.business_id === cart?.business_id)
+            state.carts = { ...state.carts, [`businessId:${cart.business_id}`]: result.carts.find(_cart => _cart?.business_id === cart?.business_id) }
             events.emit('cart_updated', result)
           } else {
-            delete state.carts[`businessId:${cart.business_id}`]
+            state.carts = withoutCart(state.carts, `businessId:${cart.business_id}`)
           }
         })
       }
@@ -1384,7 +1395,7 @@ export const OrderProvider = ({
       }
       const { content: { error, result }, status } = await ordering.setAccessToken(session.token).orders(orderId).reorder(options)
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
         events.emit('cart_added', result)
       } else if (!offAlert) {
         setAlert({ show: true, content: result, status })
