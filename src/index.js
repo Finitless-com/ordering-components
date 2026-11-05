@@ -112,7 +112,7 @@ import { OrderingContext, OrderingProvider } from './contexts/OrderingContext'
 import { BillingContext, BillingProvider } from './contexts/BillingContext'
 import { CustomerContext, CustomerProvider, useCustomer } from './contexts/CustomerContext'
 import { ValidationFieldsContext, ValidationFieldsProvider, useValidationFields } from './contexts/ValidationsFieldsContext'
-import { ToastContext, ToastProvider, useToast, ToastType } from './contexts/ToastContext'
+import { ToastContext, ToastProvider, useToast, useToastActions, ToastType } from './contexts/ToastContext'
 import { OrderingThemeContext, OrderingThemeProvider, useOrderingTheme } from './contexts/OrderingThemeContext'
 import { OptimizationLoadContext, OptimizationLoadProvider, useOptimizationLoad } from './contexts/OptimizationLoadContext'
 import { WebStrategy } from './webStrategy'
@@ -398,6 +398,7 @@ export {
   ToastContext,
   ToastProvider,
   useToast,
+  useToastActions,
   ToastType,
   OrderingThemeContext,
   OrderingThemeProvider,

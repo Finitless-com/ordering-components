@@ -111,7 +111,7 @@ import { UtilsContext, UtilsProviders, useUtils } from '../src/contexts/UtilsCon
 import { ValidationFieldsContext, useValidationFields, ValidationFieldsProvider } from '../src/contexts/ValidationsFieldsContext'
 import { WebsocketContext, WebsocketProvider, useWebsocket } from '../src/contexts/WebsocketContext'
 import { OrderingContext, OrderingProvider } from './src/contexts/OrderingContext'
-import { ToastType, ToastContext, ToastProvider, useToast } from '../src/contexts/ToastContext'
+import { ToastType, ToastContext, ToastProvider, useToast, useToastActions } from '../src/contexts/ToastContext'
 import { OrderingThemeContext, OrderingThemeProvider, useOrderingTheme } from '../src/contexts/OrderingThemeContext'
 import { createMergedTheme } from '../src/utils/themeUtils'
 import {
@@ -271,6 +271,7 @@ export {
   ToastContext,
   ToastProvider,
   useToast,
+  useToastActions,
   OrderingThemeContext,
   OrderingThemeProvider,
   useOrderingTheme,

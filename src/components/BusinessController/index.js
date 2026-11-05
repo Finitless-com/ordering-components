@@ -265,6 +265,8 @@ export const BusinessController = (props) => {
 
   useEffect(() => {
     if (business) {
+      // Already this business (the first render): no update, no second render.
+      if (businessState?.business === business) return
       setBusinessState({ ...businessState, business })
     } else if (!business) {
       getBusiness()
@@ -288,8 +290,11 @@ export const BusinessController = (props) => {
 
   useEffect(() => {
     if (!favoriteIds) return
+    // Already marked as the favorites say: no update, no extra render.
+    const isFavorite = favoriteIds?.includes(businessState?.business?.id)
+    if (!!businessState?.business?.favorite === isFavorite) return
 
-    if (favoriteIds?.includes(businessState?.business?.id)) {
+    if (isFavorite) {
       setBusinessState({
         ...businessState,
         business: { ...businessState?.business, favorite: true }

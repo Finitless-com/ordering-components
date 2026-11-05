@@ -6,7 +6,7 @@ import { useLanguage } from '../LanguageContext'
 import { useEvent } from '../EventContext'
 import { useConfig } from '../ConfigContext'
 import { useCustomer } from '../CustomerContext'
-import { ToastType, useToast } from '../ToastContext'
+import { ToastType, useToastActions } from '../ToastContext'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { parseUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
@@ -51,7 +51,7 @@ export const OrderProvider = ({
   const [configState] = useConfig()
   const [session, { logout }] = useSession()
   const [customerState, { setUserCustomer }] = useCustomer()
-  const [, { showToast }] = useToast()
+  const { showToast } = useToastActions()
 
   const configTypes = configState?.configs?.order_types_allowed?.value.split('|').map(value => Number(value)) || []
 
@@ -1677,7 +1677,9 @@ export const OrderProvider = ({
       socket.off('carts_update', handleCartUpdate)
       socket.off('order_options_update', handleOrderOptionUpdate)
     }
-  }, [state.carts, state.options, state.loading, socket])
+    // The handlers read the state through setState(prev => …): subscribing again on every
+    // cart or option change was not needed.
+  }, [socket, isDisableToast, t, showToast])
 
   /**
    * Join to carts room

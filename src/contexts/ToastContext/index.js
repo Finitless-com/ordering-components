@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react'
+import React, { createContext, useCallback, useContext, useMemo, useState } from 'react'
 
 // Defines the three kinds of message that are displayed
 export const ToastType = {
@@ -10,6 +10,13 @@ export const ToastType = {
 // Creates the toast context
 export const ToastContext = createContext()
 
+/**
+ * The toast's actions alone (`showToast`, `hideToast`), stable for the
+ * provider's life: a provider that only shows toasts (session, order) reads
+ * them here and is not rendered again each time a toast shows or hides.
+ */
+export const ToastActionsContext = createContext()
+
 export const ToastProvider = ({ children }) => {
   // Calls setToastConfig in order to control the toast
   // toastConfig is null by default so the toast is hidden
@@ -18,19 +25,24 @@ export const ToastProvider = ({ children }) => {
     setToastConfig
   ] = useState(null)
 
-  const showToast = (type, message, duration = 3000) => {
+  const showToast = useCallback((type, message, duration = 3000) => {
     setToastConfig({ type, message, duration })
-  }
+  }, [])
 
-  const hideToast = () => {
+  const hideToast = useCallback(() => {
     // Sets toast config to null in order to hide the toast
     setToastConfig(null)
-  }
+  }, [])
+
+  const actions = useMemo(() => ({ showToast, hideToast }), [showToast, hideToast])
+  const value = useMemo(() => [toastConfig, actions], [toastConfig, actions])
 
   return (
-    <ToastContext.Provider value={[toastConfig, { showToast, hideToast }]}>
-      {children}
-    </ToastContext.Provider>
+    <ToastActionsContext.Provider value={actions}>
+      <ToastContext.Provider value={value}>
+        {children}
+      </ToastContext.Provider>
+    </ToastActionsContext.Provider>
   )
 }
 
@@ -39,4 +51,9 @@ export const ToastProvider = ({ children }) => {
 export function useToast () {
   const toastManager = useContext(ToastContext)
   return toastManager || [{}, () => {}]
+}
+
+/** The toast's actions without its state: does not re-render when a toast shows or hides. */
+export function useToastActions () {
+  return useContext(ToastActionsContext) || { showToast: () => {}, hideToast: () => {} }
 }

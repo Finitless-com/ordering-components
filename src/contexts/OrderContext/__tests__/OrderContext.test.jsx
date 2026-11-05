@@ -79,7 +79,8 @@ vi.mock('../../ToastContext', () => ({
     Error: 'error',
     Info: 'info'
   },
-  useToast: () => [{}, { showToast: mocks.showToast }]
+  useToast: () => [{}, { showToast: mocks.showToast }],
+  useToastActions: () => ({ showToast: mocks.showToast })
 }))
 
 // eslint-disable-next-line import/first
