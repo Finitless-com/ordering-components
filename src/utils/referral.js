@@ -70,3 +70,60 @@ export const referralForPlace = (stored, now = Date.now()) => {
   if (campaign) referral.campaign = campaign
   return referral
 }
+
+/**
+ * Google Actions Center click id (ORD-2402).
+ *
+ * Google adds `rwg_token` to the store link it opens. Unlike the UTM, the
+ * site keeps ONE token, the last one, with the store the user landed on and
+ * when: a new token replaces it and restarts the 30 days, a visit without one
+ * keeps it, and it is sent on a place of ANY store of the site (the API
+ * reports `merchant_changed` 1 when it is another store). It is not removed
+ * after an order: a return visit within 30 days counts again.
+ */
+export const CLICK_ID_STORAGE_KEY = 'referral_click_id'
+export const CLICK_ID_TYPE = 'rwg_token'
+export const CLICK_ID_MAX_LENGTH = 2048
+
+/**
+ * The decoded `rwg_token` of a query string, or null. Decoded by hand:
+ * URLSearchParams would turn a `+` of the token into a space.
+ */
+export const rwgTokenFromSearch = (search) => {
+  if (typeof search !== 'string' || !search) return null
+  const pair = search.replace(/^\?/, '').split('&').find(part => part.split('=')[0] === CLICK_ID_TYPE)
+  if (!pair) return null
+  try {
+    const value = decodeURIComponent(pair.slice(CLICK_ID_TYPE.length + 1)).trim()
+    return value && value.length <= CLICK_ID_MAX_LENGTH ? value : null
+  } catch (e) {
+    return null
+  }
+}
+
+/** The click id to keep for a visit, or null when the URL has none. */
+export const buildClickId = (search, businessId, now = Date.now()) => {
+  const value = rwgTokenFromSearch(search)
+  const id = Number(businessId)
+  if (!value || !Number.isInteger(id) || id <= 0) return null
+  return { type: CLICK_ID_TYPE, value, landing_business_id: id, clicked_at: now }
+}
+
+/**
+ * The click id fields to add to `referral` on place, or null when the stored
+ * one is missing, malformed or older than 30 days.
+ */
+export const clickIdForPlace = (stored, now = Date.now()) => {
+  if (!stored || typeof stored !== 'object') return null
+  const value = typeof stored.value === 'string' ? stored.value : ''
+  const landingBusinessId = Number(stored.landing_business_id)
+  const clickedAt = Number(stored.clicked_at)
+  if (stored.type !== CLICK_ID_TYPE || !value || value.length > CLICK_ID_MAX_LENGTH) return null
+  if (!Number.isInteger(landingBusinessId) || landingBusinessId <= 0) return null
+  if (!Number.isFinite(clickedAt) || clickedAt > now || now - clickedAt > REFERRAL_TTL_MS) return null
+  return {
+    click_id: { type: CLICK_ID_TYPE, value },
+    landing_business_id: landingBusinessId,
+    clicked_at: new Date(clickedAt).toISOString()
+  }
+}

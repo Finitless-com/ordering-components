@@ -17,7 +17,14 @@ import {
   mergeCartsByUpdatedAt,
   resolveOrderOptionsCarts
 } from './mergeCartsByUpdatedAt'
-import { REFERRAL_STORAGE_KEY, buildReferral, referralForPlace } from '../../utils/referral'
+import {
+  CLICK_ID_STORAGE_KEY,
+  REFERRAL_STORAGE_KEY,
+  buildClickId,
+  buildReferral,
+  clickIdForPlace,
+  referralForPlace
+} from '../../utils/referral'
 
 dayjs.extend(utc)
 
@@ -1094,15 +1101,22 @@ export const OrderProvider = ({
       if (typeof window === 'undefined' || !window.location) return
       const referral = buildReferral(window.location.search, businessId)
       if (referral) await strategy.setItem(REFERRAL_STORAGE_KEY, referral, true)
+      // Google's rwg_token (ORD-2402): one per site, a new one replaces it.
+      const clickId = buildClickId(window.location.search, businessId)
+      if (clickId) await strategy.setItem(CLICK_ID_STORAGE_KEY, clickId, true)
     } catch (e) {}
   }
 
-  /** Adds the remembered `referral` to a place body; never blocks the place. */
+  /**
+   * Adds the remembered `referral` (UTM of the store, ORD-1992) and the
+   * site's click id (ORD-2402) to a place body; never blocks the place.
+   */
   const withReferral = async (body) => {
     if (body.referral) return body
     try {
       const referral = referralForPlace(await strategy.getItem(REFERRAL_STORAGE_KEY, true))
-      return referral ? { ...body, referral } : body
+      const clickId = clickIdForPlace(await strategy.getItem(CLICK_ID_STORAGE_KEY, true))
+      return referral || clickId ? { ...body, referral: { ...referral, ...clickId } } : body
     } catch (e) {
       return body
     }
