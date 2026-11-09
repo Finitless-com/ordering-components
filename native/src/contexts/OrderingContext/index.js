@@ -1,4 +1,5 @@
 import React, { createContext, useMemo } from 'react'
+import { Linking } from 'react-native'
 import { ConfigProvider } from '../../../../src/contexts/ConfigContext'
 import { SessionProvider } from '../../../../src/contexts/SessionContext'
 import { WebsocketProvider } from '../../../../src/contexts/WebsocketContext'
@@ -15,6 +16,14 @@ import { OptimizationLoadProvider } from '../../../../src/contexts/OptimizationL
 import { OrderingThemeProvider } from '../../../../src/contexts/OrderingThemeContext'
 import { NativeStrategy } from '../../NativeStrategy'
 import { SiteProvider } from '../../../../src/contexts/SiteContext'
+import { ReferralProvider } from '../../../../src/contexts/ReferralContext'
+
+const getInitialReferralUrl = () => Linking.getInitialURL()
+
+const subscribeToReferralUrls = (handler) => {
+  const subscription = Linking.addEventListener('url', ({ url }) => handler(url))
+  return () => subscription.remove()
+}
 
 /**
  * Create OrderingContext
@@ -54,26 +63,32 @@ export const OrderingProvider = ({ Alert, isValidColor, noValidateColors, settin
                       <ToastProvider>
                         <ValidationFieldsProvider appId={settings.app_id}>
                           <SessionProvider strategy={nativeStrategy} checkInterval={sessionCheckInterval}>
-                            <WebsocketProvider strategy={nativeStrategy} settings={Object.assign(settings.socket, restOfSettings)}>
-                              <CustomerProvider strategy={nativeStrategy}>
-                                <OrderProvider
-                                  isDisabledDefaultOpts={isDisabledDefaultOpts}
-                                  strategy={nativeStrategy}
-                                  Alert={Alert}
-                                  isDisableToast={isDisableToast}
-                                  franchiseId={settings?.franchiseSlug ?? settings?.franchiseId}
-                                  businessSlug={settings?.businessSlug}
-                                  userAgent={settings?.userAgent}
-                                  enableCouponsRetries={enableCouponsRetries}
-                                >
-                                  <BusinessProvider
-                                    businessId={settings?.businessSlug ?? settings?.businessId}
+                            <ReferralProvider
+                              strategy={nativeStrategy}
+                              getInitialUrl={getInitialReferralUrl}
+                              subscribeToUrls={subscribeToReferralUrls}
+                            >
+                              <WebsocketProvider strategy={nativeStrategy} settings={Object.assign(settings.socket, restOfSettings)}>
+                                <CustomerProvider strategy={nativeStrategy}>
+                                  <OrderProvider
+                                    isDisabledDefaultOpts={isDisabledDefaultOpts}
+                                    strategy={nativeStrategy}
+                                    Alert={Alert}
+                                    isDisableToast={isDisableToast}
+                                    franchiseId={settings?.franchiseSlug ?? settings?.franchiseId}
+                                    businessSlug={settings?.businessSlug}
+                                    userAgent={settings?.userAgent}
+                                    enableCouponsRetries={enableCouponsRetries}
                                   >
-                                    {children}
-                                  </BusinessProvider>
-                                </OrderProvider>
-                              </CustomerProvider>
-                            </WebsocketProvider>
+                                    <BusinessProvider
+                                      businessId={settings?.businessSlug ?? settings?.businessId}
+                                    >
+                                      {children}
+                                    </BusinessProvider>
+                                  </OrderProvider>
+                                </CustomerProvider>
+                              </WebsocketProvider>
+                            </ReferralProvider>
                           </SessionProvider>
                         </ValidationFieldsProvider>
                       </ToastProvider>

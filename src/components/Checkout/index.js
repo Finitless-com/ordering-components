@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import PropTypes from 'prop-types'
 import { useOrder } from '../../contexts/OrderContext'
 import { useConfig } from '../../contexts/ConfigContext'
@@ -7,6 +7,7 @@ import { useSession } from '../../contexts/SessionContext'
 import { useToast, ToastType } from '../../contexts/ToastContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+import { useReferral } from '../../contexts/ReferralContext'
 import { isBlockingApplePayConfirmError } from '../../utils/applePayConfirm'
 import { getPlaceAmount } from '../../utils/placeAmount'
 
@@ -56,6 +57,9 @@ export const Checkout = (props) => {
   const [{ configs }, { refreshConfigs }] = useConfig()
 
   const [placing, setPlacing] = useState(false)
+  const [updatingReferralDiscount, setUpdatingReferralDiscount] = useState(false)
+  const [referralAttribution, setReferralAttribution] = useState(null)
+  const referralApplyRef = useRef(null)
   const [errors, setErrors] = useState(null)
   /**
    * Language context
@@ -69,6 +73,7 @@ export const Checkout = (props) => {
    * Session content
    */
   const [{ token, user }] = useSession()
+  const [, { getReferralCode, consumeReferralCode }] = useReferral()
   /**
    * Toast state
    */
@@ -107,6 +112,65 @@ export const Checkout = (props) => {
    * Current cart
    */
   const cart = businessId && typeof businessId === 'number' ? orderState.carts?.[`businessId:${businessId}`] : orderState.carts?.['businessId:null']
+
+  const attributionSettled = (attribution) => (
+    attribution?.accepted === true ||
+    (attribution?.accepted === false && attribution.error_code && attribution.error_code !== 'referral_attribution.unavailable')
+  )
+
+  // The place request prices the cart again after it stores a code. Sending the
+  // code there changes the total the customer already confirmed. Store it on
+  // the cart first and pay the total that comes back.
+  const applyStoredReferralCode = useCallback(async (currentCart) => {
+    if (!currentCart?.uuid || !token) return currentCart
+    const pending = referralApplyRef.current
+    if (pending?.uuid === currentCart.uuid) return pending.promise
+
+    let referralCode = null
+    try {
+      referralCode = await getReferralCode()
+    } catch {
+      return currentCart
+    }
+    if (!referralCode) return currentCart
+
+    const task = { uuid: currentCart.uuid, promise: null }
+    referralApplyRef.current = task
+    task.promise = (async () => {
+      try {
+        const response = await ordering
+          .setAccessToken(token)
+          .carts(currentCart.uuid)
+          .set({ referral_code: referralCode })
+        const content = response?.content
+        const result = content?.result
+        if (!content || content.error || !result?.uuid) {
+          if (referralApplyRef.current === task) referralApplyRef.current = null
+          return currentCart
+        }
+        const key = result.business_id ? `businessId:${result.business_id}` : 'businessId:null'
+        setStateValues({
+          carts: {
+            ...orderState.carts,
+            [key]: result
+          }
+        })
+        if (content.referral_attribution) setReferralAttribution(content.referral_attribution)
+        if (attributionSettled(content.referral_attribution)) await consumeReferralCode()
+        return result
+      } catch {
+        if (referralApplyRef.current === task) referralApplyRef.current = null
+        return currentCart
+      }
+    })()
+
+    return task.promise
+  }, [consumeReferralCode, getReferralCode, orderState.carts, ordering, setStateValues, token])
+
+  useEffect(() => {
+    if (!cart?.uuid || !token) return
+    applyStoredReferralCode(cart)
+  }, [applyStoredReferralCode, cart?.uuid, token])
   /**
    * Place spot state from chackout
    */
@@ -193,7 +257,8 @@ export const Checkout = (props) => {
       showToast(ToastType.Info, t('CART_IN_PROGRESS', 'Cart in progress'))
       return
     }
-    const _cart = businessId && typeof businessId === 'number' ? orderState.carts?.[`businessId:${businessId}`] : orderState.carts?.['businessId:null']
+    let _cart = businessId && typeof businessId === 'number' ? orderState.carts?.[`businessId:${businessId}`] : orderState.carts?.['businessId:null']
+    _cart = await applyStoredReferralCode(_cart)
     const _paymethodSelected = paymethod ?? paymethodSelected
     let paymethodData = _paymethodSelected?.data
     if (_paymethodSelected?.paymethod && ['stripe', 'stripe_connect', 'stripe_connect_v2', 'stripe_direct'].includes(_paymethodSelected?.paymethod?.gateway)) {
@@ -221,6 +286,8 @@ export const Checkout = (props) => {
         delivery_zone_id: _cart?.business_id ? _cart.delivery_zone_id : 0
       }
     }
+
+    payload.use_referral_discount = Boolean(_cart?.use_referral_discount)
 
     if (handleCustomClick) {
       handleCustomClick(payload, _paymethodSelected, _cart)
@@ -307,6 +374,31 @@ export const Checkout = (props) => {
 
   const handlePaymethodChange = (paymethod) => {
     setPaymethodSelected(paymethod)
+  }
+
+  const handleUseReferralDiscountChange = async (enabled) => {
+    if (!cart?.uuid) return { error: true, result: null }
+    setUpdatingReferralDiscount(true)
+    try {
+      const response = await ordering
+        .setAccessToken(token)
+        .carts(cart.uuid)
+        .set({ use_referral_discount: Boolean(enabled) })
+      const { error, result } = response.content
+      if (!error && result?.business_id) {
+        setStateValues({
+          carts: {
+            ...orderState.carts,
+            [`businessId:${result.business_id}`]: result
+          }
+        })
+      }
+      return response.content
+    } catch (error) {
+      return { error: true, result: [error.message] }
+    } finally {
+      setUpdatingReferralDiscount(false)
+    }
   }
 
   /**
@@ -733,6 +825,11 @@ export const Checkout = (props) => {
         <UIComponent
           {...props}
           cart={cart}
+          referralLine={cart?.referral ?? null}
+          referralNotice={cart?.referral?.notice ?? null}
+          referralAttribution={referralAttribution}
+          useReferralDiscount={Boolean(cart?.use_referral_discount)}
+          updatingReferralDiscount={updatingReferralDiscount}
           businessId={businessId}
           placing={placing}
           errors={errors}
@@ -746,6 +843,7 @@ export const Checkout = (props) => {
           instructionsOptions={instructionsOptions}
           deliveryOptionSelected={deliveryOptionSelected}
           handlePaymethodChange={handlePaymethodChange}
+          handleUseReferralDiscountChange={handleUseReferralDiscountChange}
           handlerClickPlaceOrder={handlerClickPlaceOrder}
           isPendingCartReleasable={isPendingCartReleasable}
           releasingPendingCart={releasingPendingCart}

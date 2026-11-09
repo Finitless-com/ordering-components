@@ -7,6 +7,7 @@ import { useConfig } from '../../contexts/ConfigContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useEvent } from '../../contexts/EventContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+import { useReferral } from '../../contexts/ReferralContext'
 import parsePhoneNumber from 'libphonenumber-js'
 
 /**
@@ -34,6 +35,7 @@ export const SignupForm = (props) => {
   const socket = useWebsocket()
   const [, t] = useLanguage()
   const [{ user }, { login }] = useSession()
+  const [, { getReferralCode, consumeReferralCode }] = useReferral()
   const [validationFields] = useValidationFields()
 
   const [formState, setFormState] = useState({ loading: false, result: { error: false } })
@@ -48,6 +50,17 @@ export const SignupForm = (props) => {
   const [promotionsEnabled, setPromotionsEnabled] = useState(false)
   const [cellphoneStartZero, setCellphoneStartZero] = useState(null)
 
+  const withStoredReferralCode = async (data) => {
+    try {
+      const referralCode = await getReferralCode()
+      return referralCode
+        ? { ...data, referral_code: referralCode }
+        : data
+    } catch {
+      return data
+    }
+  }
+
   const useSignUpOtpEmail = configs?.email_otp_signup_enabled?.value === '1' && !isCustomerMode
   const useSignUpOtpCellphone = configs?.phone_otp_signup_enabled?.value === '1' && !isCustomerMode
   const useSignUpOtpWhatsapp = configs?.whatsapp_otp_login_enabled?.value === '1' && !isCustomerMode
@@ -60,10 +73,10 @@ export const SignupForm = (props) => {
    */
   const handleSignupClick = async (values) => {
     if (handleCustomSignup) {
-      handleCustomSignup(values || signupData)
+      handleCustomSignup(await withStoredReferralCode(values || signupData))
       return
     }
-    const data = values || signupData
+    let data = { ...(values || signupData) }
 
     if (isGuest && user?.guest_id) data.guest_token = user?.guest_id
 
@@ -95,6 +108,7 @@ export const SignupForm = (props) => {
     if (isCustomerMode) {
       data.phone = data.cellphone
     }
+    data = await withStoredReferralCode(data)
     const newData = Object.fromEntries(Object.entries(data).filter(([_, v]) => v !== ''))
 
     if (!newData?.country_code && newData?.country_phone_code && newData?.cellphone) {
@@ -123,6 +137,7 @@ export const SignupForm = (props) => {
         loading: false
       })
       if (!response.content.error) {
+        if (newData.referral_code) await consumeReferralCode()
         events.emit('singup_user', response.content.result)
         if (handleSuccessSignup) {
           await handleSuccessSignup(response.content.result)
@@ -319,7 +334,7 @@ export const SignupForm = (props) => {
    * @param {Object} values object with cellphone and country code values
    */
   const checkVerifyPhoneCode = async (values) => {
-    const body = {
+    let body = {
       ...values
     }
     if (isGuest && user?.guest_id) body.guest_token = user?.guest_id
@@ -329,6 +344,7 @@ export const SignupForm = (props) => {
         body.notification_token = notificationState.notification_token
         body.notification_app = notificationState.notification_app
       }
+      body = await withStoredReferralCode(body)
       const response = await fetch(`${ordering.root}/auth/sms/twilio`, {
         method: 'POST',
         headers: {
@@ -341,6 +357,7 @@ export const SignupForm = (props) => {
       })
       const res = await response.json()
       if (!res?.error && res?.result?.id) {
+        if (body.referral_code) await consumeReferralCode()
         login({
           user: res?.result,
           token: res?.result?.session?.access_token
@@ -366,7 +383,7 @@ export const SignupForm = (props) => {
   }
 
   const checkVerifyByOtpCode = async () => {
-    const _credentials = signUpTab === 'otpEmail'
+    let _credentials = signUpTab === 'otpEmail'
       ? {
           email: signupData?.email,
           one_time_password: otpState
@@ -386,11 +403,13 @@ export const SignupForm = (props) => {
       }
     }
     if (isGuest && user?.guest_id) _credentials.guest_token = user?.guest_id
+    _credentials = await withStoredReferralCode(_credentials)
 
     try {
       setCheckPhoneCodeState({ ...checkPhoneCodeState, loading: true, result: { error: false } })
       const { content: { error, result } } = await ordering.users().auth(_credentials)
       if (!error && result?.id) {
+        if (_credentials.referral_code) await consumeReferralCode()
         login({
           user: result,
           token: result?.session?.access_token
