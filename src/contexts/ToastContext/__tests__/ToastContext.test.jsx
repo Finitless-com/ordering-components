@@ -1,7 +1,7 @@
 import React from 'react'
 import { describe, it, expect } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
-import { ToastProvider, useToast, ToastType } from '../index'
+import { ToastProvider, useToast, useToastActions, ToastType } from '../index'
 
 const ToastConsumer = () => {
   const [toast, { showToast, hideToast }] = useToast()
@@ -39,5 +39,36 @@ describe('ToastContext', () => {
   it('returns safe defaults outside provider', () => {
     render(<ToastConsumer />)
     expect(screen.getByTestId('toast-type').textContent).toBe('none')
+  })
+
+  it('gives stable actions that do not re-render on a toast', async () => {
+    let renders = 0
+    const seen = []
+    const ActionsOnly = () => {
+      renders += 1
+      const actions = useToastActions()
+      seen.push(actions)
+      return <button type='button' onClick={() => actions.showToast(ToastType.Info, 'Hi')}>only-actions</button>
+    }
+    const Memo = React.memo(ActionsOnly)
+    render(
+      <ToastProvider>
+        <Memo />
+        <ToastConsumer />
+      </ToastProvider>
+    )
+    await act(async () => {
+      screen.getByText('only-actions').click()
+    })
+    expect(screen.getByTestId('toast-message').textContent).toBe('Hi')
+    expect(renders).toBe(1)
+    expect(seen[0].showToast).toBeTypeOf('function')
+  })
+
+  it('returns no-op actions outside provider', () => {
+    let actions
+    const Probe = () => { actions = useToastActions(); return null }
+    render(<Probe />)
+    expect(() => actions.showToast(ToastType.Info, 'x')).not.toThrow()
   })
 })
