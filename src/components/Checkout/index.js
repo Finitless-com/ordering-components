@@ -10,6 +10,7 @@ import { useWebsocket } from '../../contexts/WebsocketContext'
 import { useReferral } from '../../contexts/ReferralContext'
 import { isBlockingApplePayConfirmError } from '../../utils/applePayConfirm'
 import { getPlaceAmount } from '../../utils/placeAmount'
+import { referralAttributionSettled } from '../../utils/referral'
 
 /**
  * Redirect gateways whose pending cart (status 2) can be released on demand,
@@ -113,11 +114,6 @@ export const Checkout = (props) => {
    */
   const cart = businessId && typeof businessId === 'number' ? orderState.carts?.[`businessId:${businessId}`] : orderState.carts?.['businessId:null']
 
-  const attributionSettled = (attribution) => (
-    attribution?.accepted === true ||
-    (attribution?.accepted === false && attribution.error_code && attribution.error_code !== 'referral_attribution.unavailable')
-  )
-
   // The place request prices the cart again after it stores a code. Sending the
   // code there changes the total the customer already confirmed. Store it on
   // the cart first and pay the total that comes back.
@@ -156,7 +152,7 @@ export const Checkout = (props) => {
           }
         })
         if (content.referral_attribution) setReferralAttribution(content.referral_attribution)
-        if (attributionSettled(content.referral_attribution)) await consumeReferralCode()
+        if (referralAttributionSettled(content.referral_attribution)) await consumeReferralCode()
         return result
       } catch {
         if (referralApplyRef.current === task) referralApplyRef.current = null

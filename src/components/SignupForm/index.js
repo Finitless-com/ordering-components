@@ -9,6 +9,7 @@ import { useEvent } from '../../contexts/EventContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
 import { useReferral } from '../../contexts/ReferralContext'
 import parsePhoneNumber from 'libphonenumber-js'
+import { referralAttributionSettled } from '../../utils/referral'
 
 /**
  * Component to manage signup behavior without UI component
@@ -137,7 +138,7 @@ export const SignupForm = (props) => {
         loading: false
       })
       if (!response.content.error) {
-        if (newData.referral_code) await consumeReferralCode()
+        if (referralAttributionSettled(response.content.referral_attribution)) await consumeReferralCode()
         events.emit('singup_user', response.content.result)
         if (handleSuccessSignup) {
           await handleSuccessSignup(response.content.result)
@@ -357,7 +358,7 @@ export const SignupForm = (props) => {
       })
       const res = await response.json()
       if (!res?.error && res?.result?.id) {
-        if (body.referral_code) await consumeReferralCode()
+        if (referralAttributionSettled(res.referral_attribution)) await consumeReferralCode()
         login({
           user: res?.result,
           token: res?.result?.session?.access_token
@@ -407,9 +408,10 @@ export const SignupForm = (props) => {
 
     try {
       setCheckPhoneCodeState({ ...checkPhoneCodeState, loading: true, result: { error: false } })
-      const { content: { error, result } } = await ordering.users().auth(_credentials)
+      const { content } = await ordering.users().auth(_credentials)
+      const { error, result } = content
       if (!error && result?.id) {
-        if (_credentials.referral_code) await consumeReferralCode()
+        if (referralAttributionSettled(content.referral_attribution)) await consumeReferralCode()
         login({
           user: result,
           token: result?.session?.access_token

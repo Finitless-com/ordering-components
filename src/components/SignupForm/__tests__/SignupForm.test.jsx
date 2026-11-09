@@ -19,7 +19,11 @@ const auth = vi.hoisted(() => {
     vi.clearAllMocks()
     mockGetReferralCode.mockResolvedValue('REF123')
     mockSave.mockResolvedValue({
-      content: { error: false, result: { id: 99, session: { access_token: 'signup-tok' } } }
+      content: {
+        error: false,
+        result: { id: 99, session: { access_token: 'signup-tok' } },
+        referral_attribution: { accepted: true, error_code: null }
+      }
     })
   }
   return {
@@ -102,6 +106,23 @@ describe('SignupForm', () => {
     )
     expect(auth.mockConsumeReferralCode).toHaveBeenCalled()
     expect(handleSuccessSignup).toHaveBeenCalled()
+  })
+
+  it('keeps the referral code when signup does not settle attribution', async () => {
+    auth.mockSave.mockResolvedValue({
+      content: { error: false, result: { id: 99, session: { access_token: 'signup-tok' } } }
+    })
+    renderController(SignupForm, { handleSuccessSignup: vi.fn() })
+    await lastControllerProps.handleButtonSignupClick({
+      email: 'new@test.com',
+      password: 'secret',
+      cellphone: '5551234'
+    })
+    expect(auth.mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ referral_code: 'REF123' }),
+      expect.any(Object)
+    )
+    expect(auth.mockConsumeReferralCode).not.toHaveBeenCalled()
   })
 
   it('updates signup data through handleChangeInput', async () => {

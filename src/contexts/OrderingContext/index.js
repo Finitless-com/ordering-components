@@ -16,15 +16,9 @@ import { WebStrategy } from '../../webStrategy'
 import { OrderingThemeProvider } from '../OrderingThemeContext'
 import { OptimizationLoadProvider } from '../OptimizationLoadContext'
 import { ReferralProvider } from '../ReferralContext'
+import { subscribeToBrowserReferralUrls } from '../../utils/referral'
 
 const getInitialReferralUrl = () => typeof window === 'undefined' ? null : window.location?.href
-
-const subscribeToReferralUrls = (handler) => {
-  if (typeof window === 'undefined') return undefined
-  const handleLocationChange = () => handler(window.location?.href)
-  window.addEventListener('popstate', handleLocationChange)
-  return () => window.removeEventListener('popstate', handleLocationChange)
-}
 
 /**
  * Create OrderingContext
@@ -65,7 +59,7 @@ export const OrderingProvider = ({ Alert, settings, children, enableCouponsRetri
                             <ReferralProvider
                               strategy={webStrategy}
                               getInitialUrl={getInitialReferralUrl}
-                              subscribeToUrls={subscribeToReferralUrls}
+                              subscribeToUrls={subscribeToBrowserReferralUrls}
                             >
                               <WebsocketProvider
                                 strategy={webStrategy}
