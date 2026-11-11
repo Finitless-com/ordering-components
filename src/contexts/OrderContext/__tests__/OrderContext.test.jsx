@@ -1,6 +1,6 @@
 import React from 'react'
 import { act, render, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   emit: vi.fn(),
@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   confirmWithData: vi.fn(),
   confirm: vi.fn(),
   addProduct: vi.fn(),
+  place: vi.fn(),
   orderOptionsGet: vi.fn(),
   orderOptionsSave: vi.fn()
 }))
@@ -33,7 +34,8 @@ vi.mock('../../ApiContext', () => ({
       carts: () => ({
         confirmWithData: mocks.confirmWithData,
         confirm: mocks.confirm,
-        addProduct: mocks.addProduct
+        addProduct: mocks.addProduct,
+        place: mocks.place
       }),
       orderOptions: () => ({
         get: mocks.orderOptionsGet,
@@ -565,3 +567,166 @@ describe('OrderContext carts never changed in place', () => {
   })
 })
 
+
+describe('OrderContext referral', () => {
+  const NOW = 1793500000000
+  const GOOGLE = '?utm_source=google&utm_medium=organic&utm_campaign=gbp-order'
+  const CAMPAIGN = '?utm_source=ordering_marketing&utm_medium=email&utm_campaign=mkt-7'
+  const google = { source: 'google', medium: 'organic', campaign: 'gbp-order' }
+  const campaign = { source: 'ordering_marketing', medium: 'email', campaign: 'mkt-7' }
+
+  let storage
+  const strategy = {
+    getItem: vi.fn(async (key) => storage[key] ?? null),
+    setItem: vi.fn(async (key, value) => { storage[key] = value }),
+    removeItem: vi.fn()
+  }
+  const carts = {
+    'businessId:5': { business_id: 5, uuid: 'cart-5', products: [{ id: 1 }] },
+    'businessId:12': { business_id: 12, uuid: 'cart-12', products: [{ id: 2 }] }
+  }
+
+  const open = (url) => window.history.replaceState({}, '', url)
+  const navigationType = (type) => vi.spyOn(window.performance, 'getEntriesByType').mockReturnValue([{ type }])
+
+  const renderProvider = async () => {
+    render(
+      <OrderProvider strategy={strategy}>
+        <OrderProbe />
+      </OrderProvider>
+    )
+    // Lets the capture of the site's load end.
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    await act(async () => { orderActions.setStateValues({ carts }) })
+    await waitFor(() => expect(orderState.carts['businessId:12']).toBeDefined())
+  }
+
+  const place = async (uuid, data = { paymethod_id: 1 }) => {
+    await act(async () => { await orderActions.placeCart(uuid, data) })
+    return mocks.place.mock.calls[mocks.place.mock.calls.length - 1][0]
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    storage = {}
+    strategy.getItem.mockImplementation(async (key) => storage[key] ?? null)
+    strategy.setItem.mockImplementation(async (key, value) => { storage[key] = value })
+    vi.spyOn(Date, 'now').mockReturnValue(NOW)
+    navigationType('navigate')
+    mocks.place.mockResolvedValue({ content: { error: true, result: ['stop'] }, status: 400 })
+    open('/')
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    open('/')
+  })
+
+  it('remembers a visit that lands outside a store and sends it for any store', async () => {
+    open('/promotions' + CAMPAIGN)
+    await renderProvider()
+
+    expect(storage.referral).toEqual({ visits: [{ ...campaign, captured_at: NOW, business_ids: [] }] })
+    expect((await place('cart-5')).referral).toEqual(campaign)
+    expect((await place('cart-12')).referral).toEqual(campaign)
+  })
+
+  it('binds the visit to the store it opened and sends it only for that store', async () => {
+    open('/taco-shop' + GOOGLE)
+    await renderProvider()
+    await act(async () => { await orderActions.captureReferral(12) })
+
+    expect(storage.referral).toEqual({ visits: [{ ...google, captured_at: NOW, business_ids: [12] }] })
+    expect((await place('cart-12')).referral).toEqual({ ...google, business_id: 12 })
+    expect(await place('cart-5')).not.toHaveProperty('referral')
+  })
+
+  it('keeps the date of the visit when the store is fetched again', async () => {
+    open('/taco-shop' + GOOGLE)
+    await renderProvider()
+    Date.now.mockReturnValue(NOW + 60000)
+    await act(async () => {
+      await Promise.all([orderActions.captureReferral(12), orderActions.captureReferral(12)])
+    })
+
+    expect(storage.referral).toEqual({ visits: [{ ...google, captured_at: NOW, business_ids: [12] }] })
+  })
+
+  it('does not lose a capture when two run at the same time', async () => {
+    await renderProvider()
+    open('/taco-shop' + GOOGLE)
+    await act(async () => {
+      await Promise.all([orderActions.captureReferral(12), orderActions.captureReferral(5)])
+    })
+
+    expect(storage.referral).toEqual({ visits: [{ ...google, captured_at: NOW, business_ids: [12, 5] }] })
+  })
+
+  it('keeps the date of the visit when the page is reloaded', async () => {
+    storage.referral = { visits: [{ ...google, captured_at: NOW - 86400000, business_ids: [12] }] }
+    navigationType('reload')
+    open('/taco-shop' + GOOGLE)
+    await renderProvider()
+    await act(async () => { await orderActions.captureReferral(12) })
+
+    expect(storage.referral).toEqual({ visits: [{ ...google, captured_at: NOW - 86400000, business_ids: [12] }] })
+  })
+
+  it('keeps the visit of a store when another store gets one', async () => {
+    storage.referral = { visits: [{ ...google, captured_at: NOW - 1000, business_ids: [12] }] }
+    open('/burgers' + CAMPAIGN)
+    await renderProvider()
+    await act(async () => { await orderActions.captureReferral(5) })
+
+    expect((await place('cart-12')).referral).toEqual({ ...google, business_id: 12 })
+    expect((await place('cart-5')).referral).toEqual({ ...campaign, business_id: 5 })
+  })
+
+  it('keeps what was remembered on a visit without utm_source', async () => {
+    storage.referral = { visits: [{ ...google, captured_at: NOW - 1000, business_ids: [12] }] }
+    open('/taco-shop?table=4')
+    await renderProvider()
+    await act(async () => { await orderActions.captureReferral(12) })
+
+    expect(storage.referral).toEqual({ visits: [{ ...google, captured_at: NOW - 1000, business_ids: [12] }] })
+    expect(strategy.setItem).not.toHaveBeenCalledWith('referral', expect.anything(), true)
+  })
+
+  it('lets a referral passed by the caller win', async () => {
+    open('/' + CAMPAIGN)
+    await renderProvider()
+
+    expect((await place('cart-5', { referral: { source: 'kiosk' } })).referral).toEqual({ source: 'kiosk' })
+  })
+
+  it('sends none on an order placed for a customer', async () => {
+    open('/' + CAMPAIGN)
+    storage['user-customer'] = { id: 99 }
+    await renderProvider()
+
+    const body = await place('cart-5')
+    expect(body.user_id).toBe(99)
+    expect(body).not.toHaveProperty('referral')
+  })
+
+  it('places without a referral when the storage fails', async () => {
+    open('/' + CAMPAIGN)
+    await renderProvider()
+    strategy.getItem.mockImplementation(async (key) => {
+      if (key === 'referral') throw new Error('storage is blocked')
+      return storage[key] ?? null
+    })
+
+    expect(await place('cart-5')).toEqual({ paymethod_id: 1, user_id: 8 })
+  })
+
+  it('sends it on a place of a group of carts', async () => {
+    open('/' + CAMPAIGN)
+    await renderProvider()
+    global.fetch = vi.fn().mockResolvedValue({ status: 200, json: async () => ({ error: true, result: ['stop'] }) })
+    await act(async () => { await orderActions.placeMultiCarts({ paymethod_id: 1 }, 'group-uuid') })
+
+    expect(global.fetch).toHaveBeenCalledWith('https://api.test/cart_groups/group-uuid/place', expect.any(Object))
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).referral).toEqual(campaign)
+  })
+})

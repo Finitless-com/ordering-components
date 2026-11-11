@@ -17,6 +17,7 @@ import {
   mergeCartsByUpdatedAt,
   resolveOrderOptionsCarts
 } from './mergeCartsByUpdatedAt'
+import { REFERRAL_STORAGE_KEY, captureVisit, isRepeatedNavigation, referralForPlace } from '../../utils/referral'
 
 dayjs.extend(utc)
 
@@ -122,6 +123,8 @@ export const OrderProvider = ({
   })
 
   const intervalRetriesRef = useRef(null)
+  // The URL's UTM visit this page load already captured, and the queue of captures.
+  const referralCapture = useRef({ landing: null, queue: Promise.resolve() })
   const timeIntervalProduct = 4000
   const retriesProduct = 4
 
@@ -1130,6 +1133,51 @@ export const OrderProvider = ({
   }
 
   /**
+   * Remember the UTM parameters the current URL carries (ORD-1992). Web only.
+   * Called when the site loads, and with `businessId` when the store that URL
+   * opened finishes loading: that makes it a visit to that store. A URL
+   * without `utm_source` keeps what was remembered (last non-direct click).
+   *
+   * Calls run one after another: each one reads the stored visits, changes
+   * them and writes them back.
+   */
+  const captureReferral = (businessId) => {
+    referralCapture.current.queue = referralCapture.current.queue.then(async () => {
+      try {
+        if (typeof window === 'undefined' || !window.location) return
+        const search = window.location.search
+        if (!search) return
+        const captured = captureVisit(await strategy.getItem(REFERRAL_STORAGE_KEY, true), {
+          search,
+          businessId,
+          landing: referralCapture.current.landing,
+          repeated: isRepeatedNavigation(window.performance)
+        })
+        if (!captured) return
+        referralCapture.current.landing = captured.landing
+        await strategy.setItem(REFERRAL_STORAGE_KEY, captured.stored, true)
+      } catch (e) {}
+    })
+    return referralCapture.current.queue
+  }
+
+  /**
+   * Adds the remembered `referral` to a place body; never blocks the place.
+   * `businessIds` are the stores being placed. An order placed for a customer
+   * (`onBehalf`, the call center) is not a result of the agent's own visit
+   * and gets none.
+   */
+  const withReferral = async (body, { businessIds = [], onBehalf = false } = {}) => {
+    if (body.referral || onBehalf) return body
+    try {
+      const referral = referralForPlace(await strategy.getItem(REFERRAL_STORAGE_KEY, true), businessIds)
+      return referral ? { ...body, referral } : body
+    } catch (e) {
+      return body
+    }
+  }
+
+  /**
    * Place cart
    */
   const placeCart = async (cardId, data) => {
@@ -1138,10 +1186,13 @@ export const OrderProvider = ({
       const countryCode = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
       const userCustomerId = customerFromLocalStorage?.id
-      const body = {
+      const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
-      }
+      }, {
+        businessIds: Object.values(state.carts ?? {}).filter(cart => cart?.uuid === cardId).map(cart => cart.business_id),
+        onBehalf: !!userCustomerId
+      })
       let headers = {
         'X-Socket-Id-X': socket?.getId(),
         'X-Country-Code-X': countryCode,
@@ -1205,10 +1256,13 @@ export const OrderProvider = ({
       const countryCode = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
       const userCustomerId = customerFromLocalStorage?.id
-      const body = {
+      const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
-      }
+      }, {
+        businessIds: Object.values(state.carts ?? {}).filter(cart => cart?.cart_group_id).map(cart => cart.business_id),
+        onBehalf: !!userCustomerId
+      })
       const requestOptions = {
         method: 'POST',
         headers: {
@@ -1597,6 +1651,10 @@ export const OrderProvider = ({
   }
 
   useEffect(() => {
+    captureReferral()
+  }, [])
+
+  useEffect(() => {
     if (session.loading || languageState.loading || !ordering?.project) return
     if (session.auth) {
       setState(prevState => (prevState.loading ? prevState : { ...prevState, loading: true }))
@@ -1739,6 +1797,7 @@ export const OrderProvider = ({
     setUserCustomerOptions,
     setStateValues,
     placeMultiCarts,
+    captureReferral,
     getLastOrderHasNoReview,
     changeCityFilter,
     clearOrderAddress,
@@ -1836,7 +1895,8 @@ export const useOrder = () => {
     changePaymethod: warningMessage,
     setStateValues: warningMessage,
     getLastOrderHasNoReview: warningMessage,
-    clearOrderAddress: warningMessage
+    clearOrderAddress: warningMessage,
+    captureReferral: () => {}
   }
   return orderManager || [{}, functionsPlaceholders]
 }
