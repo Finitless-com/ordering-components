@@ -21,8 +21,9 @@ import {
   CLICK_ID_STORAGE_KEY,
   REFERRAL_STORAGE_KEY,
   buildClickId,
-  buildReferral,
+  captureVisit,
   clickIdForPlace,
+  isRepeatedNavigation,
   referralForPlace
 } from '../../utils/referral'
 
@@ -130,6 +131,8 @@ export const OrderProvider = ({
   })
 
   const intervalRetriesRef = useRef(null)
+  // The URL's UTM visit this page load already captured, and the queue of captures.
+  const referralCapture = useRef({ landing: null, queue: Promise.resolve() })
   const timeIntervalProduct = 4000
   const retriesProduct = 4
 
@@ -1138,28 +1141,51 @@ export const OrderProvider = ({
   }
 
   /**
-   * Remember the UTM parameters of a visit to a store (ORD-1992). Web only.
-   * A visit without `utm_source` keeps the previous one (last non-direct click).
+   * Remember the UTM parameters the current URL carries (ORD-1992). Web only.
+   * Called when the site loads, and with `businessId` when the store that URL
+   * opened finishes loading: that makes it a visit to that store. A URL
+   * without `utm_source` keeps what was remembered (last non-direct click).
+   *
+   * Calls run one after another: each one reads the stored visits, changes
+   * them and writes them back.
    */
-  const captureReferral = async (businessId) => {
-    try {
+  const captureReferral = (businessId) => {
+    referralCapture.current.queue = referralCapture.current.queue.then(async () => {
       if (typeof window === 'undefined' || !window.location) return
-      const referral = buildReferral(window.location.search, businessId)
-      if (referral) await strategy.setItem(REFERRAL_STORAGE_KEY, referral, true)
-      // Google's rwg_token (ORD-2402): one per site, a new one replaces it.
-      const clickId = buildClickId(window.location.search, businessId)
-      if (clickId) await strategy.setItem(CLICK_ID_STORAGE_KEY, clickId, true)
-    } catch (e) {}
+      const search = window.location.search
+      if (!search) return
+      try {
+        const captured = captureVisit(await strategy.getItem(REFERRAL_STORAGE_KEY, true), {
+          search,
+          businessId,
+          landing: referralCapture.current.landing,
+          repeated: isRepeatedNavigation(window.performance)
+        })
+        if (captured) {
+          referralCapture.current.landing = captured.landing
+          await strategy.setItem(REFERRAL_STORAGE_KEY, captured.stored, true)
+        }
+      } catch (e) {}
+      try {
+        // Google's rwg_token (ORD-2402): one per site, a new one replaces it.
+        const clickId = buildClickId(search, businessId)
+        if (clickId) await strategy.setItem(CLICK_ID_STORAGE_KEY, clickId, true)
+      } catch (e) {}
+    })
+    return referralCapture.current.queue
   }
 
   /**
-   * Adds the remembered `referral` (UTM of the store, ORD-1992) and the
-   * site's click id (ORD-2402) to a place body; never blocks the place.
+   * Adds the remembered `referral` (the UTM visit, ORD-1992) and the site's
+   * click id (ORD-2402) to a place body; never blocks the place.
+   * `businessIds` are the stores being placed. An order placed for a customer
+   * (`onBehalf`, the call center) is not a result of the agent's own visit
+   * and gets neither.
    */
-  const withReferral = async (body) => {
-    if (body.referral) return body
+  const withReferral = async (body, { businessIds = [], onBehalf = false } = {}) => {
+    if (body.referral || onBehalf) return body
     try {
-      const referral = referralForPlace(await strategy.getItem(REFERRAL_STORAGE_KEY, true))
+      const referral = referralForPlace(await strategy.getItem(REFERRAL_STORAGE_KEY, true), businessIds)
       const clickId = clickIdForPlace(await strategy.getItem(CLICK_ID_STORAGE_KEY, true))
       return referral || clickId ? { ...body, referral: { ...referral, ...clickId } } : body
     } catch (e) {
@@ -1179,6 +1205,9 @@ export const OrderProvider = ({
       const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
+      }, {
+        businessIds: Object.values(state.carts ?? {}).filter(cart => cart?.uuid === cardId).map(cart => cart.business_id),
+        onBehalf: !!userCustomerId
       })
       let headers = {
         'X-Socket-Id-X': socket?.getId(),
@@ -1246,6 +1275,9 @@ export const OrderProvider = ({
       const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
+      }, {
+        businessIds: Object.values(state.carts ?? {}).filter(cart => cart?.cart_group_id).map(cart => cart.business_id),
+        onBehalf: !!userCustomerId
       })
       const requestOptions = {
         method: 'POST',
@@ -1633,6 +1665,10 @@ export const OrderProvider = ({
       })
     } catch (err) { }
   }
+
+  useEffect(() => {
+    captureReferral()
+  }, [])
 
   useEffect(() => {
     if (session.loading || languageState.loading || !ordering?.project) return

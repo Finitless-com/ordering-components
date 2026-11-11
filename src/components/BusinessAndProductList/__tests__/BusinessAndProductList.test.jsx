@@ -6,6 +6,7 @@ const menu = vi.hoisted(() => {
   const h = require('../../../__tests__/helpers/menuListingTestHelpers')
   const api = h.createMenuListingApiMocks(vi)
   const mockShowToast = vi.fn()
+  const mockCaptureReferral = vi.fn()
   const reset = () => {
     vi.clearAllMocks()
     h.applyDefaultMenuListingMockImplementations(vi, api)
@@ -15,6 +16,7 @@ const menu = vi.hoisted(() => {
     ...api,
     mockOrdering: h.buildMenuListingMockOrdering(vi, api),
     mockShowToast,
+    mockCaptureReferral,
     reset,
     defaultOrderState: h.defaultOrderState,
     sampleBusinessWithSubs: h.sampleBusinessWithSubs,
@@ -57,7 +59,7 @@ vi.mock('../../../contexts/ConfigContext', () => ({
 }))
 
 vi.mock('../../../contexts/OrderContext', () => ({
-  useOrder: () => [menu.defaultOrderState, { removeProduct: vi.fn() }]
+  useOrder: () => [menu.defaultOrderState, { removeProduct: vi.fn(), captureReferral: menu.mockCaptureReferral }]
 }))
 
 vi.mock('../../../contexts/ApiContext', () => ({
@@ -88,6 +90,12 @@ describe('BusinessAndProductList', () => {
     expect(lastControllerProps.businessState.business.name).toBe('Taco Shop')
     expect(typeof lastControllerProps.handleChangeSearch).toBe('function')
     expect(typeof lastControllerProps.handleChangeCategory).toBe('function')
+  })
+
+  it('reports the loaded store as the one the visit opened', async () => {
+    renderController(BusinessAndProductList, baseProps)
+    await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+    expect(menu.mockCaptureReferral).toHaveBeenCalledWith(lastControllerProps.businessState.business.id)
   })
 
   it('filters products when search changes', async () => {
