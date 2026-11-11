@@ -627,8 +627,10 @@ export const OrderDetails = (props) => {
     return user?.level === 0 ? 'orders' : `orders_${userCustomerId || user?.id}`
   }
 
+  // Only once the order is there: without its id (still loading, or it could not load) the
+  // request went to `orders/undefined/messages`.
   useEffect(() => {
-    !orderState.loading && loadMessages()
+    !orderState.loading && orderState?.order?.id && loadMessages()
   }, [orderState?.order?.id, orderState?.order?.status, orderState.loading])
 
   useEffect(() => {

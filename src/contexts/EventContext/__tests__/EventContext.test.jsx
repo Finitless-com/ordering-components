@@ -24,6 +24,31 @@ describe('EventContext', () => {
     expect(handler).toHaveBeenCalledWith({ ok: true })
   })
 
+  it('keeps the same emitter when the provider renders again', () => {
+    const seen = []
+    const EventConsumer = () => {
+      const [events] = useEvent()
+      seen.push(events)
+      return null
+    }
+    const tree = () => (
+      <EventProvider>
+        <EventConsumer />
+      </EventProvider>
+    )
+
+    const { rerender } = render(tree())
+    const handler = vi.fn()
+    seen[0].on('logout', handler)
+
+    rerender(tree())
+    const latest = seen[seen.length - 1]
+    expect(seen.length).toBeGreaterThan(1)
+    expect(latest).toBe(seen[0])
+    act(() => latest.emit('logout'))
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
   it('falls back to standalone emitter outside provider', () => {
     const TestHook = () => {
       const [events] = useEvent()

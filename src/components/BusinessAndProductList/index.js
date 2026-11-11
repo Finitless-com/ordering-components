@@ -11,6 +11,7 @@ import { useCustomer } from '../../contexts/CustomerContext'
 import { useSession } from '../../contexts/SessionContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
 import { sortProductsBySubcategoryRank } from '../../utils/subcategoryProductSort'
+import { buildLazyProductParameters, resolveProductsPageSize } from './lazyProductParameters'
 
 dayjs.extend(utc)
 
@@ -32,6 +33,7 @@ export const BusinessAndProductList = (props) => {
     isApp,
     ignoreSlugToCompare,
     isFetchAllProducts,
+    productsPageSize,
     isCustomerMode,
     notLoadProducts,
     isSlugRequired,
@@ -57,6 +59,7 @@ export const BusinessAndProductList = (props) => {
   const [categoriesState, setCategoriesState] = useState({})
   const [orderOptions, setOrderOptions] = useState({})
   const pendingBusinessFetchRef = useRef(false)
+  const loadingMoreProductsRef = useRef(false)
   const [productModal, setProductModal] = useState({ product: null, loading: false, error: null })
   const [notFound, setNotFound] = useState(false)
   const [featuredProducts, setFeaturedProducts] = useState(false)
@@ -66,7 +69,7 @@ export const BusinessAndProductList = (props) => {
 
   const categoryStateDefault = {
     loading: true,
-    pagination: { currentPage: 0, pageSize: isApp ? 5 : 20, totalItems: null, totalPages: 0, nextPageItems: 10 },
+    pagination: { currentPage: 0, pageSize: resolveProductsPageSize(productsPageSize, isApp), totalItems: null, totalPages: 0, nextPageItems: 10 },
     products: []
   }
   let [categoryState, setCategoryState] = useState(categoryStateDefault)
@@ -378,21 +381,17 @@ export const BusinessAndProductList = (props) => {
   }
 
   const getLazyProducts = async ({ page, pageSize = categoryStateDefault.pagination.pageSize }) => {
-    const parameters = {
-      version: 'v2',
-      type: orderState.options?.type ?? 1,
-      ...(!isFetchAllProducts && { page }),
-      ...(!isFetchAllProducts && { page_size: pageSize }),
-      ...(!isFetchAllProducts && { orderBy: 'rank' })
-    }
+    const parameters = buildLazyProductParameters({
+      isFetchAllProducts,
+      page,
+      pageSize,
+      type: orderState.options?.type,
+      sortByValue
+    })
 
     if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
       const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
       parameters.timestamp = moment
-    }
-
-    if (sortByValue) {
-      parameters.orderBy = sortByValue === 'a-z' ? 'name' : sortByValue
     }
 
     let where = null
@@ -657,6 +656,8 @@ export const BusinessAndProductList = (props) => {
   }
 
   const loadMoreProducts = async () => {
+    if (loadingMoreProductsRef.current) return
+    loadingMoreProductsRef.current = true
     setErrors(null)
     const curCategoryState = categoriesState[categoryKey] ?? categoryStateDefault
     setCategoryState({ ...curCategoryState, loading: true })
@@ -764,6 +765,8 @@ export const BusinessAndProductList = (props) => {
         setErrors([err?.message ?? 'ERROR'])
         setCategoryState({ ...curCategoryState, loading: false })
       }
+    } finally {
+      loadingMoreProductsRef.current = false
     }
   }
 
@@ -1167,5 +1170,6 @@ BusinessAndProductList.propTypes = {
   /**
    * UI Component, this must be containt all graphic elements and use parent props
    */
-  UIComponent: PropTypes.elementType
+  UIComponent: PropTypes.elementType,
+  productsPageSize: PropTypes.number
 }
