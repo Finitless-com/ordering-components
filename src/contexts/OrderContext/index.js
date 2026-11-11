@@ -17,7 +17,7 @@ import {
   mergeCartsByUpdatedAt,
   resolveOrderOptionsCarts
 } from './mergeCartsByUpdatedAt'
-import { REFERRAL_STORAGE_KEY, buildReferral, referralForPlace } from '../../utils/referral'
+import { REFERRAL_STORAGE_KEY, captureVisit, isRepeatedNavigation, referralForPlace } from '../../utils/referral'
 
 dayjs.extend(utc)
 
@@ -123,6 +123,8 @@ export const OrderProvider = ({
   })
 
   const intervalRetriesRef = useRef(null)
+  // The URL's UTM visit this page load already captured, and the queue of captures.
+  const referralCapture = useRef({ landing: null, queue: Promise.resolve() })
   const timeIntervalProduct = 4000
   const retriesProduct = 4
 
@@ -1131,22 +1133,44 @@ export const OrderProvider = ({
   }
 
   /**
-   * Remember the UTM parameters of a visit to a store (ORD-1992). Web only.
-   * A visit without `utm_source` keeps the previous one (last non-direct click).
+   * Remember the UTM parameters the current URL carries (ORD-1992). Web only.
+   * Called when the site loads, and with `businessId` when the store that URL
+   * opened finishes loading: that makes it a visit to that store. A URL
+   * without `utm_source` keeps what was remembered (last non-direct click).
+   *
+   * Calls run one after another: each one reads the stored visits, changes
+   * them and writes them back.
    */
-  const captureReferral = async (businessId) => {
-    try {
-      if (typeof window === 'undefined' || !window.location) return
-      const referral = buildReferral(window.location.search, businessId)
-      if (referral) await strategy.setItem(REFERRAL_STORAGE_KEY, referral, true)
-    } catch (e) {}
+  const captureReferral = (businessId) => {
+    referralCapture.current.queue = referralCapture.current.queue.then(async () => {
+      try {
+        if (typeof window === 'undefined' || !window.location) return
+        const search = window.location.search
+        if (!search) return
+        const captured = captureVisit(await strategy.getItem(REFERRAL_STORAGE_KEY, true), {
+          search,
+          businessId,
+          landing: referralCapture.current.landing,
+          repeated: isRepeatedNavigation(window.performance)
+        })
+        if (!captured) return
+        referralCapture.current.landing = captured.landing
+        await strategy.setItem(REFERRAL_STORAGE_KEY, captured.stored, true)
+      } catch (e) {}
+    })
+    return referralCapture.current.queue
   }
 
-  /** Adds the remembered `referral` to a place body; never blocks the place. */
-  const withReferral = async (body) => {
-    if (body.referral) return body
+  /**
+   * Adds the remembered `referral` to a place body; never blocks the place.
+   * `businessIds` are the stores being placed. An order placed for a customer
+   * (`onBehalf`, the call center) is not a result of the agent's own visit
+   * and gets none.
+   */
+  const withReferral = async (body, { businessIds = [], onBehalf = false } = {}) => {
+    if (body.referral || onBehalf) return body
     try {
-      const referral = referralForPlace(await strategy.getItem(REFERRAL_STORAGE_KEY, true))
+      const referral = referralForPlace(await strategy.getItem(REFERRAL_STORAGE_KEY, true), businessIds)
       return referral ? { ...body, referral } : body
     } catch (e) {
       return body
@@ -1165,6 +1189,9 @@ export const OrderProvider = ({
       const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
+      }, {
+        businessIds: Object.values(state.carts ?? {}).filter(cart => cart?.uuid === cardId).map(cart => cart.business_id),
+        onBehalf: !!userCustomerId
       })
       let headers = {
         'X-Socket-Id-X': socket?.getId(),
@@ -1232,6 +1259,9 @@ export const OrderProvider = ({
       const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
+      }, {
+        businessIds: Object.values(state.carts ?? {}).filter(cart => cart?.cart_group_id).map(cart => cart.business_id),
+        onBehalf: !!userCustomerId
       })
       const requestOptions = {
         method: 'POST',
@@ -1619,6 +1649,10 @@ export const OrderProvider = ({
       })
     } catch (err) { }
   }
+
+  useEffect(() => {
+    captureReferral()
+  }, [])
 
   useEffect(() => {
     if (session.loading || languageState.loading || !ordering?.project) return
