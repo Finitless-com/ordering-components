@@ -100,6 +100,30 @@ describe('Checkout', () => {
     }))
   })
 
+  it('places a braintree order without Forter fields or a client IP lookup', async () => {
+    const getForterToken = vi.fn(() => 'forter-tok')
+    const getForterMobileUid = vi.fn(() => 'forter-uid')
+    const fetchSpy = vi.spyOn(global, 'fetch')
+    renderController(Checkout, { businessId: 5, getForterToken, getForterMobileUid })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    const paymethod = {
+      paymethodId: 31,
+      gateway: 'braintree',
+      paymethod: { id: 31, gateway: 'braintree' },
+      data: { nonce: 'bt-nonce' }
+    }
+    await lastControllerProps.handlerClickPlaceOrder({}, {}, null, null, paymethod)
+    expect(cart.mockPlaceCart).toHaveBeenCalledWith('cart-uuid-5', expect.objectContaining({ paymethod_id: 31 }))
+    const payload = cart.mockPlaceCart.mock.calls[0][1]
+    expect(payload).not.toHaveProperty('forter_token')
+    expect(payload).not.toHaveProperty('forter_mobile_uid')
+    expect(payload).not.toHaveProperty('customer_ip')
+    expect(getForterToken).not.toHaveBeenCalled()
+    expect(getForterMobileUid).not.toHaveBeenCalled()
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('ipify'))).toBe(false)
+    fetchSpy.mockRestore()
+  })
+
   it('waits for eat-in spot save before placing', async () => {
     cart.mockOrderState.options.type = 3
     let resolveSpot
