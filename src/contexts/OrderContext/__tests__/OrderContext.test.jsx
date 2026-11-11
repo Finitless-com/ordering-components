@@ -709,6 +709,136 @@ describe('OrderContext referral', () => {
     expect(body).not.toHaveProperty('referral')
   })
 
+  describe('while attribution is off', () => {
+    const TOKEN = 'AFd1xnHr+JWKcjtriCyB5j3QL0bz=='
+    const LANDING = '/taco-shop' + GOOGLE + '&rwg_token=' + encodeURIComponent(TOKEN)
+    const REFERRAL_KEYS = ['referral', 'referral_click_id']
+    const touched = (spy) => spy.mock.calls.filter(([key]) => REFERRAL_KEYS.includes(key))
+
+    let rerenderProvider
+    const renderSwitchable = async (referralEnabled) => {
+      const ui = (enabled) => (
+        <OrderProvider strategy={strategy} referralEnabled={enabled}>
+          <OrderProbe />
+        </OrderProvider>
+      )
+      const view = render(ui(referralEnabled))
+      rerenderProvider = (enabled) => view.rerender(ui(enabled))
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      await act(async () => { orderActions.setStateValues({ carts }) })
+      await waitFor(() => expect(orderState.carts['businessId:12']).toBeDefined())
+    }
+    const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+
+    it('stores nothing and sends no referral', async () => {
+      open(LANDING)
+      await renderSwitchable(false)
+      await act(async () => { await orderActions.captureReferral(12) })
+
+      expect(storage).toEqual({})
+      expect(touched(strategy.setItem)).toEqual([])
+      expect(await place('cart-12')).not.toHaveProperty('referral')
+    })
+
+    it('does not send or read what is already stored', async () => {
+      storage.referral = { visits: [{ ...google, captured_at: NOW - 1000, business_ids: [] }] }
+      storage.referral_click_id = { type: 'rwg_token', value: TOKEN, landing_business_id: 12, clicked_at: NOW - 1000 }
+      await renderSwitchable(false)
+      strategy.getItem.mockClear()
+
+      expect(await place('cart-12')).not.toHaveProperty('referral')
+      expect(touched(strategy.getItem)).toEqual([])
+    })
+
+    it('captures the pending visit with its own time when it is turned on', async () => {
+      open(LANDING)
+      await renderSwitchable(false)
+      await act(async () => { await orderActions.captureReferral(12) })
+      open('/')
+      Date.now.mockReturnValue(NOW + 3600000)
+      rerenderProvider(true)
+      await settle()
+
+      expect(storage.referral).toEqual({ visits: [{ ...google, captured_at: NOW, business_ids: [12] }] })
+      expect(storage.referral_click_id).toEqual({ type: 'rwg_token', value: TOKEN, landing_business_id: 12, clicked_at: NOW })
+      const sent = (await place('cart-12')).referral
+      expect(sent).toEqual({
+        ...google,
+        business_id: 12,
+        click_id: { type: 'rwg_token', value: TOKEN },
+        landing_business_id: 12,
+        clicked_at: new Date(NOW).toISOString()
+      })
+    })
+
+    it('captures the pending entries once and keeps at most 20', async () => {
+      await renderSwitchable(false)
+      for (let i = 1; i <= 22; i++) {
+        open('/s' + i + '?utm_source=src' + i)
+        Date.now.mockReturnValue(NOW + i)
+        await act(async () => { await orderActions.captureReferral(i) })
+      }
+      open('/')
+      rerenderProvider(true)
+      await settle()
+
+      const visits = storage.referral.visits
+      expect(visits.map(v => v.source)).toEqual(Array.from({ length: 20 }, (_, i) => 'src' + (i + 3)))
+      expect(visits[0].captured_at).toBe(NOW + 3)
+      // One write per pending entry: the cap is on the entries, not only on the stored visits.
+      expect(strategy.setItem.mock.calls.filter(([key]) => key === 'referral')).toHaveLength(20)
+
+      strategy.setItem.mockClear()
+      rerenderProvider(false)
+      rerenderProvider(true)
+      await settle()
+      expect(strategy.setItem).not.toHaveBeenCalled()
+    })
+
+    it('keeps the landing when the same store reports itself many times', async () => {
+      open(LANDING)
+      await renderSwitchable(false)
+      for (let i = 1; i <= 25; i++) {
+        Date.now.mockReturnValue(NOW + i)
+        await act(async () => { await orderActions.captureReferral(12) })
+      }
+      rerenderProvider(true)
+      await settle()
+
+      expect(storage.referral).toEqual({ visits: [{ ...google, captured_at: NOW, business_ids: [12] }] })
+      expect(strategy.setItem.mock.calls.filter(([key]) => key === 'referral')).toHaveLength(2)
+    })
+
+    it('drops a capture that was queued when it is turned off before it runs', async () => {
+      await renderSwitchable(true)
+      open('/' + GOOGLE)
+      let release
+      strategy.getItem.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve(null) }))
+      let first
+      let second
+      await act(async () => { first = orderActions.captureReferral() })
+      open('/' + CAMPAIGN)
+      await act(async () => { second = orderActions.captureReferral() })
+      rerenderProvider(false)
+      await act(async () => { release(); await Promise.all([first, second]) })
+
+      expect(storage.referral.visits.map(visit => visit.source)).toEqual(['google'])
+    })
+
+    it('stops capturing and sending when it is turned off, and leaves what was stored', async () => {
+      open('/' + CAMPAIGN)
+      await renderSwitchable(true)
+      const stored = storage.referral
+      expect(stored).toBeDefined()
+      rerenderProvider(false)
+      open('/taco-shop' + GOOGLE)
+      await act(async () => { await orderActions.captureReferral(12) })
+
+      expect(storage.referral).toEqual(stored)
+      expect(await place('cart-5')).not.toHaveProperty('referral')
+    })
+  })
+
   describe('click id', () => {
     const TOKEN = 'AFd1xnHr+JWKcjtriCyB5j3QL0bz=='
     const TOKEN_URL = '?rwg_token=' + encodeURIComponent(TOKEN)

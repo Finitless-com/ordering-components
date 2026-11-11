@@ -29,6 +29,8 @@ import {
 
 dayjs.extend(utc)
 
+const REFERRAL_MAX_PENDING = 20
+
 /**
  * Create OrderContext
  * This context will manage the current order with options internally and provide an easy interface
@@ -72,7 +74,8 @@ export const OrderProvider = ({
   isDisabledDefaultOpts,
   businessSlug,
   userAgent,
-  enableCouponsRetries = false
+  enableCouponsRetries = false,
+  referralEnabled = true
 }) => {
   const [confirmAlert, setConfirm] = useState({ show: false })
   const [alert, setAlert] = useState({ show: false })
@@ -133,6 +136,13 @@ export const OrderProvider = ({
   const intervalRetriesRef = useRef(null)
   // The URL's UTM visit this page load already captured, and the queue of captures.
   const referralCapture = useRef({ landing: null, queue: Promise.resolve() })
+  // Read at execution time (queued closures and the stable actions outlive a render),
+  // so it is kept in a ref instead of captured by the functions below.
+  const referralEnabledRef = useRef(referralEnabled)
+  referralEnabledRef.current = referralEnabled
+  // What the URL carried while attribution was off. Memory only, never storage:
+  // it is captured with its own time once the site allows it.
+  const pendingReferrals = useRef([])
   const timeIntervalProduct = 4000
   const retriesProduct = 4
 
@@ -1150,16 +1160,43 @@ export const OrderProvider = ({
    * them and writes them back.
    */
   const captureReferral = (businessId) => {
-    referralCapture.current.queue = referralCapture.current.queue.then(async () => {
-      if (typeof window === 'undefined' || !window.location) return
+    if (typeof window === 'undefined' || !window.location) return referralCapture.current.queue
+    if (!referralEnabledRef.current) {
       const search = window.location.search
+      // A store that reloads reports itself again: the first report keeps its time.
+      const known = pendingReferrals.current.some(pending => pending.search === search && pending.businessId === businessId)
+      if (search && !known) {
+        pendingReferrals.current = [
+          ...pendingReferrals.current,
+          { search, businessId, at: Date.now(), repeated: isRepeatedNavigation(window.performance) }
+        ].slice(-REFERRAL_MAX_PENDING)
+      }
+      return referralCapture.current.queue
+    }
+    return enqueueReferral(() => ({
+      search: window.location.search,
+      businessId,
+      repeated: isRepeatedNavigation(window.performance)
+    }))
+  }
+
+  /**
+   * Queues one capture. `read` runs when its turn comes (the URL can change
+   * while earlier captures finish) and may carry the time of the visit.
+   */
+  const enqueueReferral = (read) => {
+    referralCapture.current.queue = referralCapture.current.queue.then(async () => {
+      // Checked again here: the site may have turned attribution off while this waited.
+      if (!referralEnabledRef.current) return
+      const { search, businessId, repeated, now } = read()
       if (!search) return
       try {
         const captured = captureVisit(await strategy.getItem(REFERRAL_STORAGE_KEY, true), {
           search,
           businessId,
           landing: referralCapture.current.landing,
-          repeated: isRepeatedNavigation(window.performance)
+          repeated,
+          now
         })
         if (captured) {
           referralCapture.current.landing = captured.landing
@@ -1168,7 +1205,7 @@ export const OrderProvider = ({
       } catch (e) {}
       try {
         // Google's rwg_token (ORD-2402): one per site, a new one replaces it.
-        const clickId = clickIdToKeep(await strategy.getItem(CLICK_ID_STORAGE_KEY, true), search, businessId)
+        const clickId = clickIdToKeep(await strategy.getItem(CLICK_ID_STORAGE_KEY, true), search, businessId, now)
         if (clickId) await strategy.setItem(CLICK_ID_STORAGE_KEY, clickId, true)
       } catch (e) {}
     })
@@ -1183,7 +1220,7 @@ export const OrderProvider = ({
    * and gets neither.
    */
   const withReferral = async (body, { businessIds = [], onBehalf = false } = {}) => {
-    if (body.referral || onBehalf) return body
+    if (body.referral || onBehalf || !referralEnabledRef.current) return body
     try {
       const referral = referralForPlace(await strategy.getItem(REFERRAL_STORAGE_KEY, true), businessIds)
       const clickId = clickIdForPlace(await strategy.getItem(CLICK_ID_STORAGE_KEY, true))
@@ -1669,6 +1706,14 @@ export const OrderProvider = ({
   useEffect(() => {
     captureReferral()
   }, [])
+
+  useEffect(() => {
+    if (!referralEnabled || !pendingReferrals.current.length) return
+    const pending = pendingReferrals.current
+    pendingReferrals.current = []
+    // Dated with the visit, not with the consent.
+    pending.forEach(({ at, ...visit }) => enqueueReferral(() => ({ ...visit, now: at })))
+  }, [referralEnabled])
 
   useEffect(() => {
     if (session.loading || languageState.loading || !ordering?.project) return
