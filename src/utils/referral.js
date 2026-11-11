@@ -178,6 +178,9 @@ export const referralForPlace = (stored, businessIds = [], now = Date.now()) => 
  * keeps it, and it is sent on a place of ANY store of the site (the API
  * reports `merchant_changed` 1 when it is another store). It is not removed
  * after an order: a return visit within 30 days counts again.
+ *
+ * The same token again is the same click, whatever brought the URL back (a
+ * reload, a bookmark, the store fetched again): its date and its store stay.
  */
 export const CLICK_ID_STORAGE_KEY = 'referral_click_id'
 export const CLICK_ID_TYPE = 'rwg_token'
@@ -205,6 +208,23 @@ export const buildClickId = (search, businessId, now = Date.now()) => {
   const id = Number(businessId)
   if (!value || !Number.isInteger(id) || id <= 0) return null
   return { type: CLICK_ID_TYPE, value, landing_business_id: id, clicked_at: now }
+}
+
+/**
+ * The click id to write for a visit, or null when there is nothing to write:
+ * the URL has no token, or it has the one already kept. Keeping the stored
+ * one, even past its 30 days, is what stops an old click from being reported
+ * as a recent one.
+ */
+export const clickIdToKeep = (stored, search, businessId, now = Date.now()) => {
+  const clickId = buildClickId(search, businessId, now)
+  if (!clickId) return null
+  const kept = stored && typeof stored === 'object' &&
+    stored.type === CLICK_ID_TYPE &&
+    stored.value === clickId.value &&
+    Number.isFinite(Number(stored.clicked_at)) &&
+    Number.isInteger(Number(stored.landing_business_id)) && Number(stored.landing_business_id) > 0
+  return kept ? null : clickId
 }
 
 /**

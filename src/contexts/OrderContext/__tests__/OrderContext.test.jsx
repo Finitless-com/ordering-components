@@ -709,6 +709,75 @@ describe('OrderContext referral', () => {
     expect(body).not.toHaveProperty('referral')
   })
 
+  describe('click id', () => {
+    const TOKEN = 'AFd1xnHr+JWKcjtriCyB5j3QL0bz=='
+    const TOKEN_URL = '?rwg_token=' + encodeURIComponent(TOKEN)
+    const clickId = { type: 'rwg_token', value: TOKEN, landing_business_id: 12, clicked_at: NOW }
+    const sent = {
+      click_id: { type: 'rwg_token', value: TOKEN },
+      landing_business_id: 12,
+      clicked_at: new Date(NOW).toISOString()
+    }
+
+    it('keeps the token of the store link and sends it for any store', async () => {
+      open('/taco-shop' + TOKEN_URL)
+      await renderProvider()
+      await act(async () => { await orderActions.captureReferral(12) })
+
+      expect(storage.referral_click_id).toEqual(clickId)
+      expect((await place('cart-12')).referral).toEqual(sent)
+      expect((await place('cart-5')).referral).toEqual(sent)
+    })
+
+    it('sends it next to the UTM visit', async () => {
+      open('/taco-shop' + GOOGLE + '&rwg_token=' + encodeURIComponent(TOKEN))
+      await renderProvider()
+      await act(async () => { await orderActions.captureReferral(12) })
+
+      expect((await place('cart-12')).referral).toEqual({ ...google, business_id: 12, ...sent })
+      expect((await place('cart-5')).referral).toEqual(sent)
+    })
+
+    it('keeps the date of the click when the same token comes again', async () => {
+      storage.referral_click_id = { ...clickId, clicked_at: NOW - 86400000 }
+      open('/burgers' + TOKEN_URL)
+      await renderProvider()
+      await act(async () => { await orderActions.captureReferral(5) })
+
+      expect(storage.referral_click_id).toEqual({ ...clickId, clicked_at: NOW - 86400000 })
+      expect(strategy.setItem).not.toHaveBeenCalledWith('referral_click_id', expect.anything(), true)
+    })
+
+    it('replaces it with a new token', async () => {
+      storage.referral_click_id = { ...clickId, value: 'older-token', clicked_at: NOW - 86400000 }
+      open('/burgers' + TOKEN_URL)
+      await renderProvider()
+      await act(async () => { await orderActions.captureReferral(5) })
+
+      expect(storage.referral_click_id).toEqual({ ...clickId, landing_business_id: 5 })
+    })
+
+    it('still keeps the token when the UTM visit cannot be stored', async () => {
+      open('/taco-shop' + GOOGLE + '&rwg_token=' + encodeURIComponent(TOKEN))
+      strategy.setItem.mockImplementation(async (key, value) => {
+        if (key === 'referral') throw new Error('quota exceeded')
+        storage[key] = value
+      })
+      await renderProvider()
+      await act(async () => { await orderActions.captureReferral(12) })
+
+      expect(storage.referral_click_id).toEqual(clickId)
+    })
+
+    it('sends none on an order placed for a customer', async () => {
+      storage.referral_click_id = clickId
+      storage['user-customer'] = { id: 99 }
+      await renderProvider()
+
+      expect(await place('cart-12')).not.toHaveProperty('referral')
+    })
+  })
+
   it('places without a referral when the storage fails', async () => {
     open('/' + CAMPAIGN)
     await renderProvider()

@@ -4,6 +4,7 @@ import {
   REFERRAL_TTL_MS,
   buildClickId,
   clickIdForPlace,
+  clickIdToKeep,
   rwgTokenFromSearch
 } from '../referral'
 
@@ -45,6 +46,38 @@ describe('buildClickId', () => {
     expect(buildClickId('?utm_source=google', 12, NOW)).toBeNull()
     expect(buildClickId(`?rwg_token=${TOKEN_A_URL}`, undefined, NOW)).toBeNull()
     expect(buildClickId(`?rwg_token=${TOKEN_A_URL}`, 0, NOW)).toBeNull()
+  })
+})
+
+describe('clickIdToKeep', () => {
+  const search = `?rwg_token=${TOKEN_A_URL}`
+  const stored = { type: 'rwg_token', value: TOKEN_A, landing_business_id: 12, clicked_at: NOW }
+
+  it('writes a token that is not the one kept', () => {
+    const fresh = { type: 'rwg_token', value: TOKEN_A, landing_business_id: 12, clicked_at: NOW }
+    expect(clickIdToKeep(null, search, 12, NOW)).toEqual(fresh)
+    expect(clickIdToKeep({ ...stored, value: 'another-token' }, search, 12, NOW)).toEqual(fresh)
+  })
+
+  it('leaves the same token with its date and its store', () => {
+    expect(clickIdToKeep(stored, search, 12, NOW + 86400000)).toBeNull()
+    expect(clickIdToKeep(stored, search, 30, NOW + 86400000)).toBeNull()
+  })
+
+  it('does not renew the same token after its 30 days', () => {
+    expect(clickIdToKeep(stored, search, 12, NOW + REFERRAL_TTL_MS + 86400000)).toBeNull()
+  })
+
+  it('rewrites the same token when what is kept cannot be used', () => {
+    expect(clickIdToKeep({ ...stored, clicked_at: 'x' }, search, 12, NOW + 5)).toMatchObject({ clicked_at: NOW + 5 })
+    expect(clickIdToKeep({ ...stored, landing_business_id: null }, search, 12, NOW + 5)).not.toBeNull()
+    expect(clickIdToKeep({ ...stored, type: 'gclid' }, search, 12, NOW + 5)).not.toBeNull()
+    expect(clickIdToKeep('token', search, 12, NOW + 5)).not.toBeNull()
+  })
+
+  it('writes nothing without a token or a store', () => {
+    expect(clickIdToKeep(stored, '?utm_source=google', 12, NOW)).toBeNull()
+    expect(clickIdToKeep(null, search, undefined, NOW)).toBeNull()
   })
 })
 

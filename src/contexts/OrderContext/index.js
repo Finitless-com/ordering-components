@@ -20,9 +20,9 @@ import {
 import {
   CLICK_ID_STORAGE_KEY,
   REFERRAL_STORAGE_KEY,
-  buildClickId,
   captureVisit,
   clickIdForPlace,
+  clickIdToKeep,
   isRepeatedNavigation,
   referralForPlace
 } from '../../utils/referral'
@@ -1168,7 +1168,7 @@ export const OrderProvider = ({
       } catch (e) {}
       try {
         // Google's rwg_token (ORD-2402): one per site, a new one replaces it.
-        const clickId = buildClickId(search, businessId)
+        const clickId = clickIdToKeep(await strategy.getItem(CLICK_ID_STORAGE_KEY, true), search, businessId)
         if (clickId) await strategy.setItem(CLICK_ID_STORAGE_KEY, clickId, true)
       } catch (e) {}
     })
