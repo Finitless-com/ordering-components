@@ -17,6 +17,12 @@
  * campaign?, captured_at, business_ids }] }`, so a visit to one store does
  * not erase the one of another. On place the newest visit that applies to the
  * store wins (last non-direct click). A visit is not removed after an order.
+ *
+ * The visit comes from one of two places, both ending in the same storage:
+ *
+ * - web: the URL of the page (`captureVisit`, fed by `captureReferral`);
+ * - React Native, where there is no URL: the data of a marketing push
+ *   notification the user opened (`registerVisit`, fed by `registerReferral`).
  */
 
 export const REFERRAL_STORAGE_KEY = 'referral'
@@ -141,6 +147,40 @@ export const captureVisit = (stored, { search, businessId, landing, repeated = f
     stored: { visits: visits.slice(-REFERRAL_MAX_VISITS) },
     landing: { search, captured_at: visit.captured_at }
   }
+}
+
+/**
+ * Registers a visit from explicit values (an opened push notification) instead
+ * of a URL. The values are normalized and validated like the ones of a URL and
+ * `source` is required: it returns null when it is not usable. It reads no
+ * query string, so it does not depend on the platform's URLSearchParams.
+ *
+ * Every call is a click the user really made, so unlike a page load it is
+ * never taken for one already captured (no `landing`, no `repeated`): it is a
+ * visit dated `now`, the newest one, and it wins on place. To keep opening the
+ * same notification from filling the 20 visits, it replaces the older visits
+ * of the same combination and the same stores instead of adding to them (its
+ * date moves forward, which is the newest click being the one that counts).
+ * A visit of the same combination that opened other stores is kept.
+ *
+ * It does not touch the page-load memory: the returned object has `stored`
+ * only.
+ */
+export const registerVisit = (stored, { source, medium, campaign, businessId, now = Date.now() } = {}) => {
+  const visit = { source: normalizeUtmValue(source) }
+  if (!visit.source) return null
+  const normalizedMedium = normalizeUtmValue(medium)
+  const normalizedCampaign = normalizeUtmValue(campaign)
+  if (normalizedMedium) visit.medium = normalizedMedium
+  if (normalizedCampaign) visit.campaign = normalizedCampaign
+  visit.captured_at = now
+  const id = businessIdOf(businessId)
+  visit.business_ids = id ? [id] : []
+  const scope = (item) => [...item.business_ids].sort((a, b) => a - b).join(',')
+  const visits = storedVisits(stored, now)
+    .filter(item => !(sameUtm(item, visit) && scope(item) === scope(visit)))
+  visits.push(visit)
+  return { stored: { visits: visits.slice(-REFERRAL_MAX_VISITS) } }
 }
 
 /**

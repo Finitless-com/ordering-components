@@ -839,6 +839,100 @@ describe('OrderContext referral', () => {
     })
   })
 
+  describe('registerReferral', () => {
+    const push = { source: 'ordering_marketing', medium: 'push', campaign: 'mkt-7' }
+
+    it('stores a visit with no URL and sends it on place', async () => {
+      await renderProvider()
+      await act(async () => { await orderActions.registerReferral(push) })
+
+      expect(storage.referral).toEqual({ visits: [{ ...push, captured_at: NOW, business_ids: [] }] })
+      expect((await place('cart-12')).referral).toEqual(push)
+    })
+
+    it('stores nothing without a usable source', async () => {
+      await renderProvider()
+      await act(async () => { await orderActions.registerReferral({ source: 'a/b', medium: 'push' }) })
+      await act(async () => { await orderActions.registerReferral({}) })
+
+      expect(storage).toEqual({})
+      expect(await place('cart-12')).not.toHaveProperty('referral')
+    })
+
+    it('is a new click every time: the same combination keeps one entry with the newest date', async () => {
+      await renderProvider()
+      await act(async () => { await orderActions.registerReferral(push) })
+      Date.now.mockReturnValue(NOW + 60000)
+      await act(async () => { await orderActions.registerReferral(push) })
+
+      expect(storage.referral).toEqual({ visits: [{ ...push, captured_at: NOW + 60000, business_ids: [] }] })
+    })
+
+    it('the newest visit wins over a web one', async () => {
+      open('/' + GOOGLE)
+      await renderProvider()
+      Date.now.mockReturnValue(NOW + 1000)
+      await act(async () => { await orderActions.registerReferral(push) })
+
+      expect((await place('cart-5')).referral).toEqual(push)
+    })
+
+    it('does not corrupt the landing memory of the web capture', async () => {
+      open('/taco-shop' + GOOGLE)
+      await renderProvider()
+      Date.now.mockReturnValue(NOW + 1000)
+      await act(async () => { await orderActions.registerReferral(push) })
+      Date.now.mockReturnValue(NOW + 2000)
+      await act(async () => { await orderActions.captureReferral(12) })
+
+      expect(storage.referral.visits).toEqual([
+        { ...google, captured_at: NOW, business_ids: [12] },
+        { ...push, captured_at: NOW + 1000, business_ids: [] }
+      ])
+    })
+
+    it('with a store, applies to that store only', async () => {
+      await renderProvider()
+      await act(async () => { await orderActions.registerReferral(push, 12) })
+
+      expect(storage.referral).toEqual({ visits: [{ ...push, captured_at: NOW, business_ids: [12] }] })
+      expect((await place('cart-12')).referral).toEqual({ ...push, business_id: 12 })
+      expect(await place('cart-5')).not.toHaveProperty('referral')
+    })
+
+    it('while attribution is off stores nothing, and stores it with its own time once on', async () => {
+      const ui = (enabled) => (
+        <OrderProvider strategy={strategy} referralEnabled={enabled}>
+          <OrderProbe />
+        </OrderProvider>
+      )
+      const view = render(ui(false))
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      await act(async () => { orderActions.setStateValues({ carts }) })
+      await waitFor(() => expect(orderState.carts['businessId:12']).toBeDefined())
+      await act(async () => { await orderActions.registerReferral(push) })
+
+      expect(storage).toEqual({})
+      expect(await place('cart-12')).not.toHaveProperty('referral')
+
+      Date.now.mockReturnValue(NOW + 3600000)
+      view.rerender(ui(true))
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+
+      expect(storage.referral).toEqual({ visits: [{ ...push, captured_at: NOW, business_ids: [] }] })
+      expect((await place('cart-12')).referral).toEqual(push)
+    })
+
+    it('is held and never stored if attribution never turns on', async () => {
+      const view = render(<OrderProvider strategy={strategy} referralEnabled={false}><OrderProbe /></OrderProvider>)
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      await act(async () => { await orderActions.registerReferral(push) })
+      view.unmount()
+
+      expect(storage).toEqual({})
+    })
+  })
+
   describe('click id', () => {
     const TOKEN = 'AFd1xnHr+JWKcjtriCyB5j3QL0bz=='
     const TOKEN_URL = '?rwg_token=' + encodeURIComponent(TOKEN)
