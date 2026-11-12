@@ -24,7 +24,8 @@ import {
   clickIdForPlace,
   clickIdToKeep,
   isRepeatedNavigation,
-  referralForPlace
+  referralForPlace,
+  registerVisit
 } from '../../utils/referral'
 
 dayjs.extend(utc)
@@ -1181,6 +1182,38 @@ export const OrderProvider = ({
   }
 
   /**
+   * Remember a visit from explicit values instead of a URL, for apps with no
+   * URL (React Native: the data of a marketing push notification the user
+   * opened) and for the web alike. Returns the capture queue promise.
+   *
+   * `{ source, medium, campaign }` are the `utm_*` values; `source` is
+   * required and an unusable one records nothing. `businessId` makes it a
+   * visit to that store, like `captureReferral(businessId)`.
+   *
+   * It goes through the same machinery as a URL visit: same storage, same
+   * normalization, 30 days, 20 visits, same queue, and the same consent: while
+   * `referralEnabled` is false it is held in memory with its time and stored
+   * when attribution turns on; if it never does, nothing is stored.
+   *
+   * Each call is a click the user made, so it is always a new visit dated now
+   * and the newest one wins on place. Calling it again with the same
+   * combination (and the same store) does not add a second entry: it
+   * replaces the previous one, so its date is the newest click. It never
+   * touches the page-load memory `captureReferral` relies on.
+   */
+  const registerReferral = ({ source, medium, campaign } = {}, businessId) => {
+    const register = { source, medium, campaign }
+    if (!referralEnabledRef.current) {
+      pendingReferrals.current = [
+        ...pendingReferrals.current,
+        { register, businessId, at: Date.now() }
+      ].slice(-REFERRAL_MAX_PENDING)
+      return referralCapture.current.queue
+    }
+    return enqueueReferral(() => ({ register, businessId }))
+  }
+
+  /**
    * Queues one capture. `read` runs when its turn comes (the URL can change
    * while earlier captures finish) and may carry the time of the visit.
    */
@@ -1188,7 +1221,14 @@ export const OrderProvider = ({
     referralCapture.current.queue = referralCapture.current.queue.then(async () => {
       // Checked again here: the site may have turned attribution off while this waited.
       if (!referralEnabledRef.current) return
-      const { search, businessId, repeated, now } = read()
+      const { search, businessId, repeated, now, register } = read()
+      if (register) {
+        try {
+          const registered = registerVisit(await strategy.getItem(REFERRAL_STORAGE_KEY, true), { ...register, businessId, now })
+          if (registered) await strategy.setItem(REFERRAL_STORAGE_KEY, registered.stored, true)
+        } catch (e) {}
+        return
+      }
       if (!search) return
       try {
         const captured = captureVisit(await strategy.getItem(REFERRAL_STORAGE_KEY, true), {
@@ -1859,6 +1899,7 @@ export const OrderProvider = ({
     setStateValues,
     placeMultiCarts,
     captureReferral,
+    registerReferral,
     getLastOrderHasNoReview,
     changeCityFilter,
     clearOrderAddress,
@@ -1957,7 +1998,8 @@ export const useOrder = () => {
     setStateValues: warningMessage,
     getLastOrderHasNoReview: warningMessage,
     clearOrderAddress: warningMessage,
-    captureReferral: () => {}
+    captureReferral: () => {},
+    registerReferral: () => {}
   }
   return orderManager || [{}, functionsPlaceholders]
 }
