@@ -183,6 +183,26 @@ describe('OrderDetails', () => {
     expect(orders.mockBusinessGet).toHaveBeenCalled()
   })
 
+  it('does not ask for messages while there is no order (it could not load)', async () => {
+    orders.mockOrderGet.mockResolvedValue({ content: { error: true, result: ['ERROR_ORDER_FIND'] } })
+    renderController(OrderDetails, { orderId: 999 })
+    await waitFor(() => {
+      expect(lastControllerProps.order.loading).toBe(false)
+    })
+    expect(lastControllerProps.order.error).toEqual(['ERROR_ORDER_FIND'])
+    const messageCalls = global.fetch.mock.calls.filter(([url]) => String(url).includes('/messages'))
+    expect(messageCalls).toEqual([])
+  })
+
+  it('asks for the messages of the order once it has loaded', async () => {
+    renderController(OrderDetails, { orderId: 101 })
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith('https://api.test/orders/101/messages', expect.anything())
+    })
+    const urls = global.fetch.mock.calls.map(([url]) => String(url))
+    expect(urls.some(url => url.includes('undefined'))).toBe(false)
+  })
+
   it('cancels the previous order GET when orderId changes and ignores a late response', async () => {
     const pending = []
     orders.mockOrderGet.mockImplementation(async (options) => {

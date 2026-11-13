@@ -40,7 +40,7 @@ export const BusinessAndProductList = (props) => {
     onChangeBusinessSelected
   } = props
 
-  const [orderState, { removeProduct }] = useOrder()
+  const [orderState, { removeProduct, captureReferral }] = useOrder()
   const [alertState, setAlertState] = useState({ open: false, content: [] })
   const [{ configs }] = useConfig()
   const [, { showToast }] = useToast()
@@ -907,6 +907,7 @@ export const BusinessAndProductList = (props) => {
         loading: false
       }
       onChangeBusinessSelected && onChangeBusinessSelected(result)
+      result?.id && captureReferral && captureReferral(result.id)
       if (menusProps && isGetMenus) {
         const { content: { result: menus } } = await ordering
           .businesses(result.id)

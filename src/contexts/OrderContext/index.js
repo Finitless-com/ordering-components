@@ -17,8 +17,20 @@ import {
   mergeCartsByUpdatedAt,
   resolveOrderOptionsCarts
 } from './mergeCartsByUpdatedAt'
+import {
+  CLICK_ID_STORAGE_KEY,
+  REFERRAL_STORAGE_KEY,
+  captureVisit,
+  clickIdForPlace,
+  clickIdToKeep,
+  isRepeatedNavigation,
+  referralForPlace,
+  registerVisit
+} from '../../utils/referral'
 
 dayjs.extend(utc)
+
+const REFERRAL_MAX_PENDING = 20
 
 /**
  * Create OrderContext
@@ -63,7 +75,8 @@ export const OrderProvider = ({
   isDisabledDefaultOpts,
   businessSlug,
   userAgent,
-  enableCouponsRetries = false
+  enableCouponsRetries = false,
+  referralEnabled = true
 }) => {
   const [confirmAlert, setConfirm] = useState({ show: false })
   const [alert, setAlert] = useState({ show: false })
@@ -122,6 +135,15 @@ export const OrderProvider = ({
   })
 
   const intervalRetriesRef = useRef(null)
+  // The URL's UTM visit this page load already captured, and the queue of captures.
+  const referralCapture = useRef({ landing: null, queue: Promise.resolve() })
+  // Read at execution time (queued closures and the stable actions outlive a render),
+  // so it is kept in a ref instead of captured by the functions below.
+  const referralEnabledRef = useRef(referralEnabled)
+  referralEnabledRef.current = referralEnabled
+  // What the URL carried while attribution was off. Memory only, never storage:
+  // it is captured with its own time once the site allows it.
+  const pendingReferrals = useRef([])
   const timeIntervalProduct = 4000
   const retriesProduct = 4
 
@@ -1130,6 +1152,125 @@ export const OrderProvider = ({
   }
 
   /**
+   * Remember the UTM parameters the current URL carries (ORD-1992). Web only.
+   * Called when the site loads, and with `businessId` when the store that URL
+   * opened finishes loading: that makes it a visit to that store. A URL
+   * without `utm_source` keeps what was remembered (last non-direct click).
+   *
+   * Calls run one after another: each one reads the stored visits, changes
+   * them and writes them back.
+   */
+  const captureReferral = (businessId) => {
+    if (typeof window === 'undefined' || !window.location) return referralCapture.current.queue
+    if (!referralEnabledRef.current) {
+      const search = window.location.search
+      // A store that reloads reports itself again: the first report keeps its time.
+      const known = pendingReferrals.current.some(pending => pending.search === search && pending.businessId === businessId)
+      if (search && !known) {
+        pendingReferrals.current = [
+          ...pendingReferrals.current,
+          { search, businessId, at: Date.now(), repeated: isRepeatedNavigation(window.performance) }
+        ].slice(-REFERRAL_MAX_PENDING)
+      }
+      return referralCapture.current.queue
+    }
+    return enqueueReferral(() => ({
+      search: window.location.search,
+      businessId,
+      repeated: isRepeatedNavigation(window.performance)
+    }))
+  }
+
+  /**
+   * Remember a visit from explicit values instead of a URL, for apps with no
+   * URL (React Native: the data of a marketing push notification the user
+   * opened) and for the web alike. Returns the capture queue promise.
+   *
+   * `{ source, medium, campaign }` are the `utm_*` values; `source` is
+   * required and an unusable one records nothing. `businessId` makes it a
+   * visit to that store, like `captureReferral(businessId)`.
+   *
+   * It goes through the same machinery as a URL visit: same storage, same
+   * normalization, 30 days, 20 visits, same queue, and the same consent: while
+   * `referralEnabled` is false it is held in memory with its time and stored
+   * when attribution turns on; if it never does, nothing is stored.
+   *
+   * Each call is a click the user made, so it is always a new visit dated now
+   * and the newest one wins on place. Calling it again with the same
+   * combination (and the same store) does not add a second entry: it
+   * replaces the previous one, so its date is the newest click. It never
+   * touches the page-load memory `captureReferral` relies on.
+   */
+  const registerReferral = ({ source, medium, campaign } = {}, businessId) => {
+    const register = { source, medium, campaign }
+    if (!referralEnabledRef.current) {
+      pendingReferrals.current = [
+        ...pendingReferrals.current,
+        { register, businessId, at: Date.now() }
+      ].slice(-REFERRAL_MAX_PENDING)
+      return referralCapture.current.queue
+    }
+    return enqueueReferral(() => ({ register, businessId }))
+  }
+
+  /**
+   * Queues one capture. `read` runs when its turn comes (the URL can change
+   * while earlier captures finish) and may carry the time of the visit.
+   */
+  const enqueueReferral = (read) => {
+    referralCapture.current.queue = referralCapture.current.queue.then(async () => {
+      // Checked again here: the site may have turned attribution off while this waited.
+      if (!referralEnabledRef.current) return
+      const { search, businessId, repeated, now, register } = read()
+      if (register) {
+        try {
+          const registered = registerVisit(await strategy.getItem(REFERRAL_STORAGE_KEY, true), { ...register, businessId, now })
+          if (registered) await strategy.setItem(REFERRAL_STORAGE_KEY, registered.stored, true)
+        } catch (e) {}
+        return
+      }
+      if (!search) return
+      try {
+        const captured = captureVisit(await strategy.getItem(REFERRAL_STORAGE_KEY, true), {
+          search,
+          businessId,
+          landing: referralCapture.current.landing,
+          repeated,
+          now
+        })
+        if (captured) {
+          referralCapture.current.landing = captured.landing
+          await strategy.setItem(REFERRAL_STORAGE_KEY, captured.stored, true)
+        }
+      } catch (e) {}
+      try {
+        // Google's rwg_token (ORD-2402): one per site, a new one replaces it.
+        const clickId = clickIdToKeep(await strategy.getItem(CLICK_ID_STORAGE_KEY, true), search, businessId, now)
+        if (clickId) await strategy.setItem(CLICK_ID_STORAGE_KEY, clickId, true)
+      } catch (e) {}
+    })
+    return referralCapture.current.queue
+  }
+
+  /**
+   * Adds the remembered `referral` (the UTM visit, ORD-1992) and the site's
+   * click id (ORD-2402) to a place body; never blocks the place.
+   * `businessIds` are the stores being placed. An order placed for a customer
+   * (`onBehalf`, the call center) is not a result of the agent's own visit
+   * and gets neither.
+   */
+  const withReferral = async (body, { businessIds = [], onBehalf = false } = {}) => {
+    if (body.referral || onBehalf || !referralEnabledRef.current) return body
+    try {
+      const referral = referralForPlace(await strategy.getItem(REFERRAL_STORAGE_KEY, true), businessIds)
+      const clickId = clickIdForPlace(await strategy.getItem(CLICK_ID_STORAGE_KEY, true))
+      return referral || clickId ? { ...body, referral: { ...referral, ...clickId } } : body
+    } catch (e) {
+      return body
+    }
+  }
+
+  /**
    * Place cart
    */
   const placeCart = async (cardId, data) => {
@@ -1138,10 +1279,13 @@ export const OrderProvider = ({
       const countryCode = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
       const userCustomerId = customerFromLocalStorage?.id
-      const body = {
+      const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
-      }
+      }, {
+        businessIds: Object.values(state.carts ?? {}).filter(cart => cart?.uuid === cardId).map(cart => cart.business_id),
+        onBehalf: !!userCustomerId
+      })
       let headers = {
         'X-Socket-Id-X': socket?.getId(),
         'X-Country-Code-X': countryCode,
@@ -1205,10 +1349,13 @@ export const OrderProvider = ({
       const countryCode = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
       const userCustomerId = customerFromLocalStorage?.id
-      const body = {
+      const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
-      }
+      }, {
+        businessIds: Object.values(state.carts ?? {}).filter(cart => cart?.cart_group_id).map(cart => cart.business_id),
+        onBehalf: !!userCustomerId
+      })
       const requestOptions = {
         method: 'POST',
         headers: {
@@ -1597,6 +1744,18 @@ export const OrderProvider = ({
   }
 
   useEffect(() => {
+    captureReferral()
+  }, [])
+
+  useEffect(() => {
+    if (!referralEnabled || !pendingReferrals.current.length) return
+    const pending = pendingReferrals.current
+    pendingReferrals.current = []
+    // Dated with the visit, not with the consent.
+    pending.forEach(({ at, ...visit }) => enqueueReferral(() => ({ ...visit, now: at })))
+  }, [referralEnabled])
+
+  useEffect(() => {
     if (session.loading || languageState.loading || !ordering?.project) return
     if (session.auth) {
       setState(prevState => (prevState.loading ? prevState : { ...prevState, loading: true }))
@@ -1739,6 +1898,8 @@ export const OrderProvider = ({
     setUserCustomerOptions,
     setStateValues,
     placeMultiCarts,
+    captureReferral,
+    registerReferral,
     getLastOrderHasNoReview,
     changeCityFilter,
     clearOrderAddress,
@@ -1836,7 +1997,9 @@ export const useOrder = () => {
     changePaymethod: warningMessage,
     setStateValues: warningMessage,
     getLastOrderHasNoReview: warningMessage,
-    clearOrderAddress: warningMessage
+    clearOrderAddress: warningMessage,
+    captureReferral: () => {},
+    registerReferral: () => {}
   }
   return orderManager || [{}, functionsPlaceholders]
 }

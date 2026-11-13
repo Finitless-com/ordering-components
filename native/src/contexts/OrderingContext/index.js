@@ -38,7 +38,7 @@ export const OrderingContext = createContext()
  * Use restOfProps on contexts that requiere extra settings that aren't in the sdk
  * This prop doesn't need permission from sdk.
  */
-export const OrderingProvider = ({ Alert, isValidColor, noValidateColors, settings, children, isDisableToast, isDisabledDefaultOpts, enableCouponsRetries = false, sessionCheckInterval }) => {
+export const OrderingProvider = ({ Alert, isValidColor, noValidateColors, settings, children, isDisableToast, isDisabledDefaultOpts, enableCouponsRetries = false, sessionCheckInterval, referralEnabled = true }) => {
   // Stateless, one for the provider's life: a new one each render reached every provider that receives it.
   const nativeStrategy = useMemo(() => new NativeStrategy(), [])
   const restOfSettings = {
@@ -79,6 +79,7 @@ export const OrderingProvider = ({ Alert, isValidColor, noValidateColors, settin
                                     businessSlug={settings?.businessSlug}
                                     userAgent={settings?.userAgent}
                                     enableCouponsRetries={enableCouponsRetries}
+                                    referralEnabled={referralEnabled}
                                   >
                                     <BusinessProvider
                                       businessId={settings?.businessSlug ?? settings?.businessId}
