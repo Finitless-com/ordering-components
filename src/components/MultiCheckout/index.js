@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import PropTypes from 'prop-types'
 
 import { useOrder } from '../../contexts/OrderContext'
@@ -9,6 +9,8 @@ import { useLanguage } from '../../contexts/LanguageContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
 import { isBlockingApplePayConfirmError } from '../../utils/applePayConfirm'
 import { getPlaceAmount } from '../../utils/placeAmount'
+import { useReferral } from '../../contexts/ReferralContext'
+import { referralAttributionSettled } from '../../utils/referral'
 
 /**
  * Component to manage Multi businesses checkout page behavior without UI component
@@ -37,6 +39,10 @@ export const MultiCheckout = (props) => {
    * Session content
    */
   const [{ token }] = useSession()
+  const [, { getReferralCode, consumeReferralCode }] = useReferral()
+  const [updatingReferralDiscount, setUpdatingReferralDiscount] = useState(false)
+  const [referralAttribution, setReferralAttribution] = useState(null)
+  const referralApplyRef = useRef(null)
   const [, { placeMultiCarts, confirmMultiCarts }] = useOrder()
   /**
 * Toast state
@@ -64,11 +70,83 @@ export const MultiCheckout = (props) => {
   const totalCartsPrice = openCarts?.length && openCarts.reduce((total, cart) => { return total + cart?.total }, 0)
   const totalCartsFee = openCarts?.length && openCarts?.filter(cart => cart?.status !== 1 && cart?.valid)?.reduce((total, cart) => { return total + (cart?.delivery_price_with_discount) }, 0)
 
+  const groupCarts = (group) => (
+    group?.carts?.filter(cart => cart?.valid && cart?.status !== 1 && cart?.business_id && cart?.uuid) || []
+  )
+
+  const fetchCartGroup = useCallback(async () => {
+    const response = await fetch(`${ordering.root}/cart_groups/${cartUuid}${qParams}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `bearer ${token}`,
+        'X-App-X': ordering.appId,
+        'X-INTERNAL-PRODUCT-X': ordering.appInternalName,
+        'X-Socket-Id-X': socket?.getId()
+      }
+    })
+    return response.json()
+  }, [cartUuid, ordering, qParams, socket, token])
+
+  // The group place request adds up each cart again. A code sent at that
+  // moment changes the total the customer already confirmed.
+  const applyStoredReferralCode = useCallback(async (group) => {
+    if (!group?.uuid || !token) return group
+    const pending = referralApplyRef.current
+    if (pending?.uuid === group.uuid) return pending.done ? group : pending.promise
+
+    let referralCode = null
+    try {
+      referralCode = await getReferralCode()
+    } catch {
+      return group
+    }
+    if (!referralCode) return group
+
+    const task = { uuid: group.uuid, promise: null }
+    referralApplyRef.current = task
+    task.promise = (async () => {
+      let attribution = null
+      let updated = false
+      try {
+        for (const cart of groupCarts(group)) {
+          const response = await ordering
+            .setAccessToken(token)
+            .carts(cart.uuid)
+            .set({ referral_code: referralCode })
+          const content = response?.content
+          if (!content || content.error) continue
+          updated = true
+          if (content.referral_attribution) attribution = content.referral_attribution
+        }
+        if (!updated) {
+          if (referralApplyRef.current === task) referralApplyRef.current = null
+          return group
+        }
+        if (referralAttributionSettled(attribution)) await consumeReferralCode()
+        if (attribution) setReferralAttribution(attribution)
+        const { result, error } = await fetchCartGroup()
+        if (!error && result?.uuid) {
+          setCartGroup((previous) => ({ ...previous, loading: false, result, error: null }))
+          task.done = true
+          return result
+        }
+        task.done = true
+        return group
+      } catch {
+        if (referralApplyRef.current === task) referralApplyRef.current = null
+        return group
+      }
+    })()
+    return task.promise
+  }, [consumeReferralCode, fetchCartGroup, getReferralCode, ordering, token])
+
   const handleGroupPlaceOrder = async (confirmPayment) => {
     if (placing) {
       showToast(ToastType.Info, t('CART_IN_PROGRESS', 'Cart in progress'))
       return
     }
+    const pricedGroup = await applyStoredReferralCode(cartGroup?.result)
     let paymethodData = paymethodSelected?.paymethod_data
     if (paymethodSelected?.paymethod_data && ['stripe', 'stripe_connect', 'stripe_direct'].includes(paymethodSelected?.paymethod?.gateway)) {
       paymethodData = JSON.stringify({
@@ -79,7 +157,7 @@ export const MultiCheckout = (props) => {
       paymethodData = JSON.stringify(paymethodSelected.paymethod_data)
     }
     let payload = {
-      amount: getPlaceAmount(cartGroup?.result)
+      amount: getPlaceAmount(pricedGroup)
     }
     if (paymethodSelected?.paymethod) {
       payload = {
@@ -132,6 +210,28 @@ export const MultiCheckout = (props) => {
       error,
       result
     })
+  }
+
+  const handleUseReferralDiscountChange = async (enabled) => {
+    if (!openCarts.length || !token) return { error: true, result: null }
+    setUpdatingReferralDiscount(true)
+    try {
+      for (const cart of openCarts) {
+        await ordering
+          .setAccessToken(token)
+          .carts(cart.uuid)
+          .set({ use_referral_discount: Boolean(enabled) })
+      }
+      const { result, error } = await fetchCartGroup()
+      if (!error && result?.uuid) {
+        setCartGroup((previous) => ({ ...previous, loading: false, result, error: null }))
+      }
+      return { error: Boolean(error), result }
+    } catch (err) {
+      return { error: true, result: [err.message] }
+    } finally {
+      setUpdatingReferralDiscount(false)
+    }
   }
 
   const handleSelectPaymethod = (paymethod) => {
@@ -401,6 +501,11 @@ export const MultiCheckout = (props) => {
   }, [])
 
   useEffect(() => {
+    if (cartGroup.loading || !cartGroup.result?.uuid) return
+    applyStoredReferralCode(cartGroup.result)
+  }, [applyStoredReferralCode, cartGroup.loading, cartGroup.result])
+
+  useEffect(() => {
     if (cartGroup?.result?.status === 'completed') {
       onPlaceOrderClick && onPlaceOrderClick(cartGroup.result, { id: cartGroup.result.id })
     }
@@ -440,6 +545,12 @@ export const MultiCheckout = (props) => {
           deliveryOptionSelected={deliveryOptionSelected}
           instructionsOptions={instructionsOptions}
           cartGroup={cartGroup}
+          referralLines={openCarts.map(cart => cart?.referral).filter(Boolean)}
+          referralNotice={openCarts.map(cart => cart?.referral?.notice).find(Boolean) ?? null}
+          useReferralDiscount={openCarts.some(cart => cart?.use_referral_discount)}
+          updatingReferralDiscount={updatingReferralDiscount}
+          referralAttribution={referralAttribution}
+          handleUseReferralDiscountChange={handleUseReferralDiscountChange}
           walletState={walletState}
           totalCartsFee={totalCartsFee}
           cartsInvalid={cartsInvalid}
