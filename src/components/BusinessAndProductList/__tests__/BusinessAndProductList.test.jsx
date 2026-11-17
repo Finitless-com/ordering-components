@@ -1,6 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { waitFor } from '@testing-library/react'
+import React from 'react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, waitFor } from '@testing-library/react'
 import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
+import { EventProvider } from '../../../contexts/EventContext'
 
 const menu = vi.hoisted(() => {
   const h = require('../../../__tests__/helpers/menuListingTestHelpers')
@@ -25,8 +27,10 @@ const menu = vi.hoisted(() => {
   }
 })
 
+const studentHookState = vi.hoisted(() => ({ studentId: null }))
+
 vi.mock('../../../hooks/useSelectedStudent', () => ({
-  useSelectedStudent: () => ({ studentId: null, setStudentId: vi.fn() })
+  useSelectedStudent: () => ({ studentId: studentHookState.studentId, setStudentId: vi.fn() })
 }))
 
 vi.mock('../../../contexts/LanguageContext', () => ({
@@ -80,7 +84,13 @@ describe('BusinessAndProductList', () => {
     avoidBusinessLoading: false
   }
 
-  beforeEach(() => menu.reset())
+  const defaultBusinessesImpl = menu.mockOrdering.businesses.getMockImplementation()
+
+  beforeEach(() => {
+    studentHookState.studentId = null
+    menu.reset()
+    menu.mockOrdering.businesses.mockImplementation(defaultBusinessesImpl)
+  })
 
   it('loads business and exposes product list handlers', async () => {
     renderController(BusinessAndProductList, baseProps)
@@ -219,6 +229,204 @@ describe('BusinessAndProductList', () => {
     await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
     await waitFor(() => {
       expect(lastControllerProps.categoryState.loading).toBe(false)
+    })
+  })
+
+  describe('showMenuWhenClosed', () => {
+    const closedBusiness = { id: 5, slug: 'taco-shop', name: 'Taco Shop', open: false, categories: [] }
+    const reopenedBusiness = {
+      id: 5,
+      slug: 'taco-shop',
+      name: 'Taco Shop',
+      open: true,
+      categories: [{ id: 1, name: 'Mains', products: menu.sampleProducts, subcategories: [] }]
+    }
+
+    // All params calls recorded on the business-by-slug chain, in request order
+    const getBusinessRequestParamsCalls = () => {
+      const { calls, results } = menu.mockOrdering.businesses.mock
+      const paramsCalls = []
+      calls.forEach(([arg], i) => {
+        if (arg === baseProps.slug) {
+          paramsCalls.push(...results[i].value.parameters.mock.calls.map((call) => call[0]))
+        }
+      })
+      return paramsCalls
+    }
+
+    // Renders the controller directly (bypassing lastControllerProps) so we can inspect every
+    // intermediate render, not just the last one, and prove loading never flips to false early
+    const renderWithProbe = (props) => {
+      const renders = []
+      const ProbeUI = (probeProps) => {
+        renders.push({
+          loading: probeProps.businessState.loading,
+          business: probeProps.businessState.business,
+          businessCallCount: menu.mockBusinessGet.mock.calls.length
+        })
+        return null
+      }
+      render(
+        <EventProvider>
+          <BusinessAndProductList UIComponent={ProbeUI} {...props} />
+        </EventProvider>
+      )
+      return renders
+    }
+
+    afterEach(() => {
+      delete menu.defaultOrderState.options.moment
+    })
+
+    it('retries with ignore_menu_schedule when true, ASAP and the business answers closed, without ever exposing the empty first result', async () => {
+      menu.mockBusinessGet
+        .mockResolvedValueOnce({ content: { error: false, result: closedBusiness } })
+        .mockResolvedValueOnce({ content: { error: false, result: reopenedBusiness } })
+      const renders = renderWithProbe({ ...baseProps, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(renders[renders.length - 1].loading).toBe(false))
+
+      expect(menu.mockBusinessGet).toHaveBeenCalledTimes(2)
+      const paramsCalls = getBusinessRequestParamsCalls()
+      expect(paramsCalls).toHaveLength(2)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+      expect(paramsCalls[1].ignore_menu_schedule).toBe(1)
+
+      // the final render must carry the retried (open) business, never the closed one
+      const lastRender = renders[renders.length - 1]
+      expect(lastRender.business.open).toBe(true)
+      expect(lastRender.business.categories).toHaveLength(1)
+
+      // no render reported loading:false before the second request had already happened
+      const prematureFalseRender = renders.find((r) => r.loading === false && r.businessCallCount < 2)
+      expect(prematureFalseRender).toBeUndefined()
+    })
+
+    it('sends a single request without ignore_menu_schedule when true, ASAP and the business is open', async () => {
+      const openBusiness = { id: 5, slug: 'taco-shop', name: 'Taco Shop', open: true, categories: [] }
+      menu.mockBusinessGet.mockResolvedValueOnce({ content: { error: false, result: openBusiness } })
+      const renders = renderWithProbe({ ...baseProps, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(renders[renders.length - 1].loading).toBe(false))
+
+      expect(menu.mockBusinessGet).toHaveBeenCalledTimes(1)
+      const paramsCalls = getBusinessRequestParamsCalls()
+      expect(paramsCalls).toHaveLength(1)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+    })
+
+    it('sends a single request with timestamp and no ignore_menu_schedule when a valid moment is set', async () => {
+      menu.defaultOrderState.options.moment = '2026-01-01 10:00:00'
+      const renders = renderWithProbe({ ...baseProps, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(renders[renders.length - 1].loading).toBe(false))
+
+      expect(menu.mockBusinessGet).toHaveBeenCalledTimes(1)
+      const paramsCalls = getBusinessRequestParamsCalls()
+      expect(paramsCalls).toHaveLength(1)
+      expect(typeof paramsCalls[0].timestamp).toBe('number')
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+    })
+
+    it('sends a single request without ignore_menu_schedule when the prop is absent, even if the business is closed', async () => {
+      menu.mockBusinessGet.mockResolvedValueOnce({ content: { error: false, result: closedBusiness } })
+      const renders = renderWithProbe(baseProps)
+
+      await waitFor(() => expect(renders[renders.length - 1].loading).toBe(false))
+
+      expect(menu.mockBusinessGet).toHaveBeenCalledTimes(1)
+      const paramsCalls = getBusinessRequestParamsCalls()
+      expect(paramsCalls).toHaveLength(1)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+    })
+
+    it('still retries with ignore_menu_schedule when the first response errored and a student retry corrected it to closed', async () => {
+      studentHookState.studentId = 99
+      menu.mockBusinessGet
+        .mockResolvedValueOnce({ content: { error: true, result: 'Invalid student_id for this business' } })
+        .mockResolvedValueOnce({ content: { error: false, result: closedBusiness } })
+        .mockResolvedValueOnce({ content: { error: false, result: reopenedBusiness } })
+
+      // getBusiness mutates (deletes student_id/version from) and reuses the same parameters
+      // object across the student retry and the closed retry, so mock.calls would only show
+      // its final, mutated state; snapshot each call's params eagerly instead.
+      const paramsCalls = []
+      const originalBusinesses = menu.mockOrdering.businesses.getMockImplementation()
+      menu.mockOrdering.businesses.mockImplementation((ref) => {
+        const api = originalBusinesses(ref)
+        const originalParameters = api.parameters
+        api.parameters = vi.fn((p) => {
+          if (ref === baseProps.slug) paramsCalls.push({ ...p })
+          return originalParameters.call(api, p)
+        })
+        return api
+      })
+
+      const renders = renderWithProbe({ ...baseProps, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(renders[renders.length - 1].loading).toBe(false))
+
+      expect(menu.mockBusinessGet).toHaveBeenCalledTimes(3)
+      expect(paramsCalls).toHaveLength(3)
+      expect(paramsCalls[0].student_id).toBe(99)
+      expect(paramsCalls[1].student_id).toBeUndefined()
+      expect(paramsCalls[2].ignore_menu_schedule).toBe(1)
+
+      // the third (ignore_menu_schedule) request's result is what reaches the UI, not the closed student-retry result
+      const lastRender = renders[renders.length - 1]
+      expect(lastRender.business.open).toBe(true)
+      expect(lastRender.business.categories).toHaveLength(1)
+    })
+  })
+
+  describe('isApp lazy product loading reads the fresh business', () => {
+    // All params passed to .parameters() on every businesses(<numeric id>) call, in request order
+    const getLazyFetchParamsCalls = () => {
+      const { calls, results } = menu.mockOrdering.businesses.mock
+      const paramsCalls = []
+      calls.forEach(([arg], i) => {
+        if (arg !== baseProps.slug) {
+          results[i].value.categories.mock.results.forEach((catResult) => {
+            paramsCalls.push(...catResult.value.parameters.mock.calls.map((call) => call[0]))
+          })
+        }
+      })
+      return paramsCalls
+    }
+
+    afterEach(() => {
+      delete menu.defaultOrderState.options.moment
+    })
+
+    it('adds ignore_menu_schedule to the lazy products request made before setBusinessState commits, when the business is closed', async () => {
+      const closedLazyBusiness = { ...menu.lazyBusiness, open: false }
+      menu.mockBusinessGet
+        .mockResolvedValueOnce({ content: { error: false, result: closedLazyBusiness } })
+        .mockResolvedValueOnce({ content: { error: false, result: closedLazyBusiness } })
+
+      renderController(BusinessAndProductList, { ...baseProps, isApp: true, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+      await waitFor(() => expect(lastControllerProps.categoryState.loading).toBe(false))
+
+      const paramsCalls = getLazyFetchParamsCalls()
+      expect(paramsCalls.length).toBeGreaterThan(0)
+      // the first lazy fetch is the one isApp triggers from inside getBusiness, before setBusinessState commits
+      expect(paramsCalls[0].ignore_menu_schedule).toBe(1)
+    })
+
+    it('does not add ignore_menu_schedule to the lazy products request when the business is open', async () => {
+      const openLazyBusiness = { ...menu.lazyBusiness, open: true }
+      menu.mockBusinessGet.mockResolvedValueOnce({ content: { error: false, result: openLazyBusiness } })
+
+      renderController(BusinessAndProductList, { ...baseProps, isApp: true, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+      await waitFor(() => expect(lastControllerProps.categoryState.loading).toBe(false))
+
+      const paramsCalls = getLazyFetchParamsCalls()
+      expect(paramsCalls.length).toBeGreaterThan(0)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
     })
   })
 })
