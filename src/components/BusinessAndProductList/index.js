@@ -37,7 +37,8 @@ export const BusinessAndProductList = (props) => {
     isCustomerMode,
     notLoadProducts,
     isSlugRequired,
-    onChangeBusinessSelected
+    onChangeBusinessSelected,
+    showMenuWhenClosed
   } = props
 
   const [orderState, { removeProduct, captureReferral }] = useOrder()
@@ -392,6 +393,8 @@ export const BusinessAndProductList = (props) => {
     if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
       const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
       parameters.timestamp = moment
+    } else if (showMenuWhenClosed) {
+      parameters.ignore_menu_schedule = 1
     }
 
     let where = null
@@ -855,6 +858,8 @@ export const BusinessAndProductList = (props) => {
       if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
         const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
         parameters.timestamp = moment
+      } else if (showMenuWhenClosed) {
+        parameters.ignore_menu_schedule = 1
       }
 
       if (filterByMenus) {
@@ -1171,5 +1176,9 @@ BusinessAndProductList.propTypes = {
    * UI Component, this must be containt all graphic elements and use parent props
    */
   UIComponent: PropTypes.elementType,
-  productsPageSize: PropTypes.number
+  productsPageSize: PropTypes.number,
+  /**
+   * When true and there is no valid moment (ASAP), request the menu ignoring the business schedule
+   */
+  showMenuWhenClosed: PropTypes.bool
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { waitFor } from '@testing-library/react'
 import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
 
@@ -219,6 +219,48 @@ describe('BusinessAndProductList', () => {
     await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
     await waitFor(() => {
       expect(lastControllerProps.categoryState.loading).toBe(false)
+    })
+  })
+
+  describe('showMenuWhenClosed', () => {
+    const getBusinessRequestParams = () => {
+      const { calls, results } = menu.mockOrdering.businesses.mock
+      for (let i = calls.length - 1; i >= 0; i--) {
+        if (calls[i][0] === baseProps.slug) {
+          const paramsCalls = results[i].value.parameters.mock.calls
+          return paramsCalls[paramsCalls.length - 1][0]
+        }
+      }
+      return undefined
+    }
+
+    afterEach(() => {
+      delete menu.defaultOrderState.options.moment
+    })
+
+    it('sends ignore_menu_schedule and no timestamp when true and there is no valid moment (ASAP)', async () => {
+      renderController(BusinessAndProductList, { ...baseProps, showMenuWhenClosed: true })
+      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+      const params = getBusinessRequestParams()
+      expect(params.ignore_menu_schedule).toBe(1)
+      expect(params.timestamp).toBeUndefined()
+    })
+
+    it('sends timestamp and no ignore_menu_schedule when true but a valid moment is set', async () => {
+      menu.defaultOrderState.options.moment = '2026-01-01 10:00:00'
+      renderController(BusinessAndProductList, { ...baseProps, showMenuWhenClosed: true })
+      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+      const params = getBusinessRequestParams()
+      expect(typeof params.timestamp).toBe('number')
+      expect(params.ignore_menu_schedule).toBeUndefined()
+    })
+
+    it('does not send ignore_menu_schedule when the prop is absent', async () => {
+      renderController(BusinessAndProductList, baseProps)
+      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+      const params = getBusinessRequestParams()
+      expect(params.ignore_menu_schedule).toBeUndefined()
+      expect(params.timestamp).toBeUndefined()
     })
   })
 })
