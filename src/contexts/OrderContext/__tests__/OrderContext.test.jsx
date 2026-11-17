@@ -407,6 +407,50 @@ describe('OrderContext platform gift carts', () => {
   })
 })
 
+describe('OrderContext updateOrderOptions', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+
+  const renderProvider = () => render(
+    <OrderProvider strategy={strategy}>
+      <OrderProbe />
+    </OrderProvider>
+  )
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    strategy.getItem.mockResolvedValue(null)
+  })
+
+  it('is exposed as a function on the second item of useOrder()', async () => {
+    renderProvider()
+    await waitFor(() => expect(typeof orderActions.updateOrderOptions).toBe('function'))
+  })
+
+  it('saves the changes plus the session user_id and returns true on success', async () => {
+    mocks.orderOptionsSave.mockResolvedValue({
+      content: { error: false, result: { type: 1, moment: '2026-08-25 12:00:00' } },
+      status: 200
+    })
+    renderProvider()
+    await waitFor(() => expect(typeof orderActions.updateOrderOptions).toBe('function'))
+
+    let result
+    await act(async () => {
+      result = await orderActions.updateOrderOptions({ type: 1, moment: 1756123200 })
+    })
+
+    expect(mocks.orderOptionsSave).toHaveBeenCalledWith(
+      { type: 1, moment: 1756123200, user_id: 8 },
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-Socket-Id-X': 'socket-id' }) })
+    )
+    expect(result).toBe(true)
+  })
+})
+
 describe('PurchaseGiftCard with real OrderProvider', () => {
   const strategy = {
     getItem: vi.fn().mockResolvedValue(null),
