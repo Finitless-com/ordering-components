@@ -6,6 +6,7 @@ import {
   isRepeatedNavigation,
   normalizeUtmValue,
   referralForPlace,
+  registerVisit,
   storedVisits,
   utmFromSearch
 } from '../referral'
@@ -242,5 +243,62 @@ describe('referralForPlace', () => {
   it('sends nothing when nothing usable is stored', () => {
     expect(referralForPlace(null, [12], NOW)).toBeNull()
     expect(referralForPlace({ visits: [] }, [12], NOW)).toBeNull()
+  })
+})
+
+describe('registerVisit', () => {
+  const push = { source: 'Ordering_Marketing', medium: 'Push', campaign: 'mkt-7' }
+  const pushVisit = { source: 'ordering_marketing', medium: 'push', campaign: 'mkt-7' }
+
+  it('records a visit from explicit values, normalized, with no URL', () => {
+    const result = registerVisit(null, { ...push, now: NOW })
+    expect(result.stored).toEqual({ visits: [{ ...pushVisit, captured_at: NOW, business_ids: [] }] })
+    expect(result).not.toHaveProperty('landing')
+  })
+
+  it('records nothing without a usable source', () => {
+    expect(registerVisit(null, { medium: 'push', now: NOW })).toBeNull()
+    expect(registerVisit(null, { source: 'a/b', now: NOW })).toBeNull()
+    expect(registerVisit(null, { source: 5, now: NOW })).toBeNull()
+    expect(registerVisit(null)).toBeNull()
+  })
+
+  it('keeps medium and campaign optional and drops unusable ones', () => {
+    const { stored } = registerVisit(null, { source: 'push', medium: 'a/b', campaign: 3, now: NOW })
+    expect(stored.visits).toEqual([{ source: 'push', captured_at: NOW, business_ids: [] }])
+  })
+
+  it('marks the stores the visit opened', () => {
+    const { stored } = registerVisit(null, { ...push, businessId: 12, now: NOW })
+    expect(stored.visits[0].business_ids).toEqual([12])
+  })
+
+  it('replaces the same combination and scope: the newest click is the only one', () => {
+    const first = registerVisit(null, { ...push, now: NOW }).stored
+    const second = registerVisit(first, { ...push, now: NOW + 1000 }).stored
+    expect(second.visits).toEqual([{ ...pushVisit, captured_at: NOW + 1000, business_ids: [] }])
+  })
+
+  it('keeps the visits of other combinations and orders the newest last', () => {
+    const other = { source: 'google', captured_at: NOW + 500, business_ids: [] }
+    const stored = { visits: [{ ...pushVisit, captured_at: NOW, business_ids: [] }, other] }
+    const result = registerVisit(stored, { ...push, now: NOW + 1000 }).stored
+    expect(result.visits.map(visit => visit.source)).toEqual(['google', 'ordering_marketing'])
+    expect(referralForPlace(result, [], NOW + 2000)).toEqual(pushVisit)
+  })
+
+  it('keeps a visit of the same combination that opened another store', () => {
+    const first = registerVisit(null, { ...push, businessId: 12, now: NOW }).stored
+    const second = registerVisit(first, { ...push, businessId: 5, now: NOW + 1000 }).stored
+    expect(second.visits.map(visit => visit.business_ids)).toEqual([[12], [5]])
+    expect(referralForPlace(second, [12], NOW + 2000)).toEqual({ ...pushVisit, business_id: 12 })
+  })
+
+  it('never goes past the maximum of visits', () => {
+    let stored = null
+    for (let i = 0; i < REFERRAL_MAX_VISITS + 5; i++) {
+      stored = registerVisit(stored, { source: `s${i}`, now: NOW + i }).stored
+    }
+    expect(stored.visits).toHaveLength(REFERRAL_MAX_VISITS)
   })
 })
