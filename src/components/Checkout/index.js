@@ -10,7 +10,7 @@ import { useWebsocket } from '../../contexts/WebsocketContext'
 import { useReferral } from '../../contexts/ReferralContext'
 import { isBlockingApplePayConfirmError } from '../../utils/applePayConfirm'
 import { getPlaceAmount } from '../../utils/placeAmount'
-import { referralAttributionSettled } from '../../utils/referral'
+import { normalizeReferralCode, referralAttributionSettled } from '../../utils/referral'
 
 /**
  * Redirect gateways whose pending cart (status 2) can be released on demand,
@@ -370,6 +370,33 @@ export const Checkout = (props) => {
 
   const handlePaymethodChange = (paymethod) => {
     setPaymethodSelected(paymethod)
+  }
+
+  const handleApplyReferralCode = async (rawCode) => {
+    const referralCode = normalizeReferralCode(rawCode)
+    if (!referralCode || !cart?.uuid || !token) return { error: true, result: null }
+    try {
+      const response = await ordering
+        .setAccessToken(token)
+        .carts(cart.uuid)
+        .set({ referral_code: referralCode })
+      const content = response?.content
+      const result = content?.result
+      if (!content?.error && result?.uuid) {
+        const key = result.business_id ? `businessId:${result.business_id}` : 'businessId:null'
+        setStateValues({
+          carts: {
+            ...orderState.carts,
+            [key]: result
+          }
+        })
+      }
+      if (content?.referral_attribution) setReferralAttribution(content.referral_attribution)
+      if (referralAttributionSettled(content?.referral_attribution)) await consumeReferralCode()
+      return content
+    } catch (error) {
+      return { error: true, result: [error.message] }
+    }
   }
 
   const handleUseReferralDiscountChange = async (enabled) => {
@@ -840,6 +867,7 @@ export const Checkout = (props) => {
           deliveryOptionSelected={deliveryOptionSelected}
           handlePaymethodChange={handlePaymethodChange}
           handleUseReferralDiscountChange={handleUseReferralDiscountChange}
+          handleApplyReferralCode={handleApplyReferralCode}
           handlerClickPlaceOrder={handlerClickPlaceOrder}
           isPendingCartReleasable={isPendingCartReleasable}
           releasingPendingCart={releasingPendingCart}
