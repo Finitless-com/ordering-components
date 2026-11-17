@@ -381,7 +381,7 @@ export const BusinessAndProductList = (props) => {
     setCategoryState({ ...categoryState })
   }
 
-  const getLazyProducts = async ({ page, pageSize = categoryStateDefault.pagination.pageSize }) => {
+  const getLazyProducts = async ({ page, pageSize = categoryStateDefault.pagination.pageSize, business }) => {
     const parameters = buildLazyProductParameters({
       isFetchAllProducts,
       page,
@@ -393,8 +393,9 @@ export const BusinessAndProductList = (props) => {
     if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
       const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
       parameters.timestamp = moment
-    } else if (showMenuWhenClosed && businessState.business?.open === false) {
-      // By the time products load lazily, getBusiness already knows whether the store is closed
+    } else if (showMenuWhenClosed && (business ?? businessState.business)?.open === false) {
+      // By the time products load lazily, getBusiness already knows whether the store is closed.
+      // `business` is the freshly fetched one when isApp calls loadProducts before setBusinessState commits.
       parameters.ignore_menu_schedule = 1
     }
 
@@ -547,7 +548,7 @@ export const BusinessAndProductList = (props) => {
 
     try {
       setCategoryState({ ...curCategoryState, loading: true })
-      const [lazyRes, featuredRes] = await getLazyProducts({ page: 1, pageSize })
+      const [lazyRes, featuredRes] = await getLazyProducts({ page: 1, pageSize, business })
       const { content } = lazyRes
       const error = content?.error
       const result = content?.result
@@ -893,7 +894,8 @@ export const BusinessAndProductList = (props) => {
       }
 
       // Only ask the backend to ignore the schedule once we know from the first response that the business is actually closed, so an open store never shows out-of-hours menus
-      if (!error && showMenuWhenClosed && !hasValidMoment && (!slug ? result?.[0] : result)?.open === false) {
+      // no !error check: an error response never carries open === false, so the open check alone is enough, even after a student retry cleared the original error
+      if (showMenuWhenClosed && !hasValidMoment && (!slug ? result?.[0] : result)?.open === false) {
         const retry = await ordering.businesses(slug).select(businessProps).parameters({ ...parameters, ignore_menu_schedule: 1 }).get({ cancelToken: source })
         if (!retry?.content?.error) {
           result = retry.content.result
