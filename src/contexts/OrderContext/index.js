@@ -1870,6 +1870,7 @@ export const OrderProvider = ({
     changeAddress,
     changeType,
     changeMoment,
+    updateOrderOptions,
     addProduct,
     removeProduct,
     updateProduct,
