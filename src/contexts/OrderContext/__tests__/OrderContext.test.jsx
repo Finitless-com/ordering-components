@@ -994,6 +994,45 @@ describe('OrderContext pickupWithoutAddress', () => {
     expect(mocks.addProduct).toHaveBeenCalledTimes(1)
   })
 
+  it('skips the address for the extra unaddressed types, and still requires it for delivery', async () => {
+    renderProvider()
+    await act(async () => { orderActions.setExtraUnaddressedOrderTypes([2, 3, 4, 5, 6, 8]) })
+    await act(async () => { orderActions.setStateValues({ options: { type: 3 } }) })
+
+    let response
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(true)
+    expect(mocks.emit).not.toHaveBeenCalledWith('require_order_address', expect.anything())
+    expect(mocks.addProduct).toHaveBeenCalledTimes(1)
+
+    mocks.emit.mockClear()
+    await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(false)
+    expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 1 })
+    expect(mocks.addProduct).toHaveBeenCalledTimes(1)
+  })
+
+  it('requires the address for eat in by default (no extra unaddressed types)', async () => {
+    renderProvider()
+    await act(async () => { orderActions.setStateValues({ options: { type: 3 } }) })
+
+    let response
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(false)
+    expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 3 })
+    expect(mocks.addProduct).not.toHaveBeenCalled()
+  })
+
   it('restores the default rule once disabled again', async () => {
     renderProvider()
     await act(async () => { orderActions.setPickupWithoutAddress(true) })
