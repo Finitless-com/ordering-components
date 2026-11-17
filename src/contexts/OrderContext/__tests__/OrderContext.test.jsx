@@ -407,6 +407,50 @@ describe('OrderContext platform gift carts', () => {
   })
 })
 
+describe('OrderContext updateOrderOptions', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+
+  const renderProvider = () => render(
+    <OrderProvider strategy={strategy}>
+      <OrderProbe />
+    </OrderProvider>
+  )
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    strategy.getItem.mockResolvedValue(null)
+  })
+
+  it('is exposed as a function on the second item of useOrder()', async () => {
+    renderProvider()
+    await waitFor(() => expect(typeof orderActions.updateOrderOptions).toBe('function'))
+  })
+
+  it('saves the changes plus the session user_id and returns true on success', async () => {
+    mocks.orderOptionsSave.mockResolvedValue({
+      content: { error: false, result: { type: 1, moment: '2026-08-25 12:00:00' } },
+      status: 200
+    })
+    renderProvider()
+    await waitFor(() => expect(typeof orderActions.updateOrderOptions).toBe('function'))
+
+    let result
+    await act(async () => {
+      result = await orderActions.updateOrderOptions({ type: 1, moment: 1756123200 })
+    })
+
+    expect(mocks.orderOptionsSave).toHaveBeenCalledWith(
+      { type: 1, moment: 1756123200, user_id: 8 },
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-Socket-Id-X': 'socket-id' }) })
+    )
+    expect(result).toBe(true)
+  })
+})
+
 describe('PurchaseGiftCard with real OrderProvider', () => {
   const strategy = {
     getItem: vi.fn().mockResolvedValue(null),
@@ -1021,5 +1065,125 @@ describe('OrderContext referral', () => {
 
     expect(global.fetch).toHaveBeenCalledWith('https://api.test/cart_groups/group-uuid/place', expect.any(Object))
     expect(JSON.parse(global.fetch.mock.calls[0][1].body).referral).toEqual(campaign)
+  })
+})
+
+describe('OrderContext pickupWithoutAddress', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+  const cart = { business_id: 5 }
+  const product = { id: 1, name: 'Taco' }
+
+  const renderProvider = () => render(
+    <OrderProvider strategy={strategy}>
+      <OrderProbe />
+    </OrderProvider>
+  )
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState({}, '', '/')
+    strategy.getItem.mockResolvedValue(null)
+    mocks.addProduct.mockResolvedValue({
+      content: { error: false, result: { business_id: 5, uuid: 'cart-uuid-5' } },
+      status: 200
+    })
+  })
+
+  it('still requires the address for pickup by default', async () => {
+    renderProvider()
+    await act(async () => { orderActions.setStateValues({ options: { type: 2 } }) })
+
+    let response
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(false)
+    expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 2 })
+    expect(mocks.addProduct).not.toHaveBeenCalled()
+  })
+
+  it('skips the address for pickup once enabled, and still requires it for delivery', async () => {
+    renderProvider()
+    await act(async () => { orderActions.setPickupWithoutAddress(true) })
+    await act(async () => { orderActions.setStateValues({ options: { type: 2 } }) })
+
+    let response
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(true)
+    expect(mocks.emit).not.toHaveBeenCalledWith('require_order_address', expect.anything())
+    expect(mocks.addProduct).toHaveBeenCalledTimes(1)
+
+    mocks.emit.mockClear()
+    await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(false)
+    expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 1 })
+    expect(mocks.addProduct).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips the address for the extra unaddressed types, and still requires it for delivery', async () => {
+    renderProvider()
+    await act(async () => { orderActions.setExtraUnaddressedOrderTypes([2, 3, 4, 5, 6, 8]) })
+    await act(async () => { orderActions.setStateValues({ options: { type: 3 } }) })
+
+    let response
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(true)
+    expect(mocks.emit).not.toHaveBeenCalledWith('require_order_address', expect.anything())
+    expect(mocks.addProduct).toHaveBeenCalledTimes(1)
+
+    mocks.emit.mockClear()
+    await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(false)
+    expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 1 })
+    expect(mocks.addProduct).toHaveBeenCalledTimes(1)
+  })
+
+  it('requires the address for eat in by default (no extra unaddressed types)', async () => {
+    renderProvider()
+    await act(async () => { orderActions.setStateValues({ options: { type: 3 } }) })
+
+    let response
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(false)
+    expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 3 })
+    expect(mocks.addProduct).not.toHaveBeenCalled()
+  })
+
+  it('restores the default rule once disabled again', async () => {
+    renderProvider()
+    await act(async () => { orderActions.setPickupWithoutAddress(true) })
+    await act(async () => { orderActions.setPickupWithoutAddress(false) })
+    await act(async () => { orderActions.setStateValues({ options: { type: 2 } }) })
+
+    let response
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(false)
+    expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 2 })
+    expect(mocks.addProduct).not.toHaveBeenCalled()
   })
 })

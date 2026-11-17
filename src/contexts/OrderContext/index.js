@@ -80,6 +80,10 @@ export const OrderProvider = ({
 }) => {
   const [confirmAlert, setConfirm] = useState({ show: false })
   const [alert, setAlert] = useState({ show: false })
+  // Off by default: keeps the project's `unaddressed_order_types_allowed` rule for pickup.
+  const [pickupWithoutAddress, setPickupWithoutAddressState] = useState(false)
+  // Off by default ([]): order types the consumer adds to the project's unaddressed ones.
+  const [extraUnaddressedOrderTypes, setExtraUnaddressedOrderTypesState] = useState([])
   const [ordering] = useApi()
   const socket = useWebsocket()
   const [languageState, t] = useLanguage()
@@ -582,6 +586,27 @@ export const OrderProvider = ({
   }
 
   /**
+   * Lets a pickup order proceed without an address. The web marketplace turns
+   * this on for a store opened directly by link, or a one-store site; off by
+   * default, which keeps the project's `unaddressed_order_types_allowed` rule.
+   * @param {boolean} enabled
+   */
+  const setPickupWithoutAddress = (enabled) => {
+    setPickupWithoutAddressState(!!enabled)
+  }
+
+  /**
+   * Order types that never need the customer's address, on top of the
+   * project's `unaddressed_order_types_allowed`. The web marketplace sets
+   * every type but delivery and catering delivery; empty by default, which
+   * keeps the project's rule.
+   * @param {number[]} types
+   */
+  const setExtraUnaddressedOrderTypes = (types) => {
+    setExtraUnaddressedOrderTypesState(Array.isArray(types) ? types.map(Number).filter(Number.isFinite) : [])
+  }
+
+  /**
    * Add product to cart
    * @param {object} product product for add
    * @param {object} cart cart of the product
@@ -597,6 +622,10 @@ export const OrderProvider = ({
       const unaddressedTypes = parseUnaddressedOrderTypes(
         configState?.configs?.unaddressed_order_types_allowed?.value
       )
+      if (pickupWithoutAddress && !unaddressedTypes.includes(orderTypes.pickup)) {
+        unaddressedTypes.push(orderTypes.pickup)
+      }
+      unaddressedTypes.push(...extraUnaddressedOrderTypes)
       if (shouldRequireOrderAddress(state.options?.type, state.options, unaddressedTypes)) {
         events.emit('require_order_address', { orderType: state.options?.type })
         return false
@@ -1881,6 +1910,7 @@ export const OrderProvider = ({
     changeAddress,
     changeType,
     changeMoment,
+    updateOrderOptions,
     addProduct,
     removeProduct,
     updateProduct,
@@ -1909,10 +1939,12 @@ export const OrderProvider = ({
     handleOrderStateLoading,
     createReservation,
     handleLogEvent,
-    clearTimeout
+    clearTimeout,
+    setPickupWithoutAddress,
+    setExtraUnaddressedOrderTypes
   }
 
-  const copyState = JSON.parse(JSON.stringify(state))
+  const copyState = { ...JSON.parse(JSON.stringify(state)), pickupWithoutAddress }
 
   const latestFunctions = useRef(functions)
   latestFunctions.current = functions
