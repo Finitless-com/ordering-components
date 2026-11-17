@@ -929,3 +929,84 @@ describe('OrderContext referral', () => {
     expect(JSON.parse(global.fetch.mock.calls[0][1].body).referral).toEqual(campaign)
   })
 })
+
+describe('OrderContext pickupWithoutAddress', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+  const cart = { business_id: 5 }
+  const product = { id: 1, name: 'Taco' }
+
+  const renderProvider = () => render(
+    <OrderProvider strategy={strategy}>
+      <OrderProbe />
+    </OrderProvider>
+  )
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState({}, '', '/')
+    strategy.getItem.mockResolvedValue(null)
+    mocks.addProduct.mockResolvedValue({
+      content: { error: false, result: { business_id: 5, uuid: 'cart-uuid-5' } },
+      status: 200
+    })
+  })
+
+  it('still requires the address for pickup by default', async () => {
+    renderProvider()
+    await act(async () => { orderActions.setStateValues({ options: { type: 2 } }) })
+
+    let response
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(false)
+    expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 2 })
+    expect(mocks.addProduct).not.toHaveBeenCalled()
+  })
+
+  it('skips the address for pickup once enabled, and still requires it for delivery', async () => {
+    renderProvider()
+    await act(async () => { orderActions.setPickupWithoutAddress(true) })
+    await act(async () => { orderActions.setStateValues({ options: { type: 2 } }) })
+
+    let response
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(true)
+    expect(mocks.emit).not.toHaveBeenCalledWith('require_order_address', expect.anything())
+    expect(mocks.addProduct).toHaveBeenCalledTimes(1)
+
+    mocks.emit.mockClear()
+    await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(false)
+    expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 1 })
+    expect(mocks.addProduct).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores the default rule once disabled again', async () => {
+    renderProvider()
+    await act(async () => { orderActions.setPickupWithoutAddress(true) })
+    await act(async () => { orderActions.setPickupWithoutAddress(false) })
+    await act(async () => { orderActions.setStateValues({ options: { type: 2 } }) })
+
+    let response
+    await act(async () => {
+      response = await orderActions.addProduct(product, cart, false)
+    })
+
+    expect(response).toBe(false)
+    expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 2 })
+    expect(mocks.addProduct).not.toHaveBeenCalled()
+  })
+})
