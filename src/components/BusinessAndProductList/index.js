@@ -393,7 +393,8 @@ export const BusinessAndProductList = (props) => {
     if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
       const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
       parameters.timestamp = moment
-    } else if (showMenuWhenClosed) {
+    } else if (showMenuWhenClosed && businessState.business?.open === false) {
+      // By the time products load lazily, getBusiness already knows whether the store is closed
       parameters.ignore_menu_schedule = 1
     }
 
@@ -855,11 +856,10 @@ export const BusinessAndProductList = (props) => {
             ? `${orderState.options?.address?.location?.lat},${orderState.options?.address?.location?.lng}`
             : null
       }
-      if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
+      const hasValidMoment = orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')
+      if (hasValidMoment) {
         const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
         parameters.timestamp = moment
-      } else if (showMenuWhenClosed) {
-        parameters.ignore_menu_schedule = 1
       }
 
       if (filterByMenus) {
@@ -889,6 +889,14 @@ export const BusinessAndProductList = (props) => {
           delete parameters.student_id
           const retry = await ordering.businesses(slug).select(businessProps).parameters(parameters).get({ cancelToken: source })
           result = retry?.content?.result
+        }
+      }
+
+      // Only ask the backend to ignore the schedule once we know from the first response that the business is actually closed, so an open store never shows out-of-hours menus
+      if (!error && showMenuWhenClosed && !hasValidMoment && (!slug ? result?.[0] : result)?.open === false) {
+        const retry = await ordering.businesses(slug).select(businessProps).parameters({ ...parameters, ignore_menu_schedule: 1 }).get({ cancelToken: source })
+        if (!retry?.content?.error) {
+          result = retry.content.result
         }
       }
 
@@ -1178,7 +1186,7 @@ BusinessAndProductList.propTypes = {
   UIComponent: PropTypes.elementType,
   productsPageSize: PropTypes.number,
   /**
-   * When true and there is no valid moment (ASAP), request the menu ignoring the business schedule
+   * When true and there is no valid moment (ASAP), retry the business/lazy products request ignoring the schedule once the backend reports the business as closed
    */
   showMenuWhenClosed: PropTypes.bool
 }

@@ -1,6 +1,8 @@
+import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { waitFor } from '@testing-library/react'
+import { render, waitFor } from '@testing-library/react'
 import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
+import { EventProvider } from '../../../contexts/EventContext'
 
 const menu = vi.hoisted(() => {
   const h = require('../../../__tests__/helpers/menuListingTestHelpers')
@@ -223,44 +225,111 @@ describe('BusinessAndProductList', () => {
   })
 
   describe('showMenuWhenClosed', () => {
-    const getBusinessRequestParams = () => {
+    const closedBusiness = { id: 5, slug: 'taco-shop', name: 'Taco Shop', open: false, categories: [] }
+    const reopenedBusiness = {
+      id: 5,
+      slug: 'taco-shop',
+      name: 'Taco Shop',
+      open: true,
+      categories: [{ id: 1, name: 'Mains', products: menu.sampleProducts, subcategories: [] }]
+    }
+
+    // All params calls recorded on the business-by-slug chain, in request order
+    const getBusinessRequestParamsCalls = () => {
       const { calls, results } = menu.mockOrdering.businesses.mock
-      for (let i = calls.length - 1; i >= 0; i--) {
-        if (calls[i][0] === baseProps.slug) {
-          const paramsCalls = results[i].value.parameters.mock.calls
-          return paramsCalls[paramsCalls.length - 1][0]
+      const paramsCalls = []
+      calls.forEach(([arg], i) => {
+        if (arg === baseProps.slug) {
+          paramsCalls.push(...results[i].value.parameters.mock.calls.map((call) => call[0]))
         }
+      })
+      return paramsCalls
+    }
+
+    // Renders the controller directly (bypassing lastControllerProps) so we can inspect every
+    // intermediate render, not just the last one, and prove loading never flips to false early
+    const renderWithProbe = (props) => {
+      const renders = []
+      const ProbeUI = (probeProps) => {
+        renders.push({
+          loading: probeProps.businessState.loading,
+          business: probeProps.businessState.business,
+          businessCallCount: menu.mockBusinessGet.mock.calls.length
+        })
+        return null
       }
-      return undefined
+      render(
+        <EventProvider>
+          <BusinessAndProductList UIComponent={ProbeUI} {...props} />
+        </EventProvider>
+      )
+      return renders
     }
 
     afterEach(() => {
       delete menu.defaultOrderState.options.moment
     })
 
-    it('sends ignore_menu_schedule and no timestamp when true and there is no valid moment (ASAP)', async () => {
-      renderController(BusinessAndProductList, { ...baseProps, showMenuWhenClosed: true })
-      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
-      const params = getBusinessRequestParams()
-      expect(params.ignore_menu_schedule).toBe(1)
-      expect(params.timestamp).toBeUndefined()
+    it('retries with ignore_menu_schedule when true, ASAP and the business answers closed, without ever exposing the empty first result', async () => {
+      menu.mockBusinessGet
+        .mockResolvedValueOnce({ content: { error: false, result: closedBusiness } })
+        .mockResolvedValueOnce({ content: { error: false, result: reopenedBusiness } })
+      const renders = renderWithProbe({ ...baseProps, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(renders[renders.length - 1].loading).toBe(false))
+
+      expect(menu.mockBusinessGet).toHaveBeenCalledTimes(2)
+      const paramsCalls = getBusinessRequestParamsCalls()
+      expect(paramsCalls).toHaveLength(2)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+      expect(paramsCalls[1].ignore_menu_schedule).toBe(1)
+
+      // the final render must carry the retried (open) business, never the closed one
+      const lastRender = renders[renders.length - 1]
+      expect(lastRender.business.open).toBe(true)
+      expect(lastRender.business.categories).toHaveLength(1)
+
+      // no render reported loading:false before the second request had already happened
+      const prematureFalseRender = renders.find((r) => r.loading === false && r.businessCallCount < 2)
+      expect(prematureFalseRender).toBeUndefined()
     })
 
-    it('sends timestamp and no ignore_menu_schedule when true but a valid moment is set', async () => {
+    it('sends a single request without ignore_menu_schedule when true, ASAP and the business is open', async () => {
+      const openBusiness = { id: 5, slug: 'taco-shop', name: 'Taco Shop', open: true, categories: [] }
+      menu.mockBusinessGet.mockResolvedValueOnce({ content: { error: false, result: openBusiness } })
+      const renders = renderWithProbe({ ...baseProps, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(renders[renders.length - 1].loading).toBe(false))
+
+      expect(menu.mockBusinessGet).toHaveBeenCalledTimes(1)
+      const paramsCalls = getBusinessRequestParamsCalls()
+      expect(paramsCalls).toHaveLength(1)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+    })
+
+    it('sends a single request with timestamp and no ignore_menu_schedule when a valid moment is set', async () => {
       menu.defaultOrderState.options.moment = '2026-01-01 10:00:00'
-      renderController(BusinessAndProductList, { ...baseProps, showMenuWhenClosed: true })
-      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
-      const params = getBusinessRequestParams()
-      expect(typeof params.timestamp).toBe('number')
-      expect(params.ignore_menu_schedule).toBeUndefined()
+      const renders = renderWithProbe({ ...baseProps, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(renders[renders.length - 1].loading).toBe(false))
+
+      expect(menu.mockBusinessGet).toHaveBeenCalledTimes(1)
+      const paramsCalls = getBusinessRequestParamsCalls()
+      expect(paramsCalls).toHaveLength(1)
+      expect(typeof paramsCalls[0].timestamp).toBe('number')
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
     })
 
-    it('does not send ignore_menu_schedule when the prop is absent', async () => {
-      renderController(BusinessAndProductList, baseProps)
-      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
-      const params = getBusinessRequestParams()
-      expect(params.ignore_menu_schedule).toBeUndefined()
-      expect(params.timestamp).toBeUndefined()
+    it('sends a single request without ignore_menu_schedule when the prop is absent, even if the business is closed', async () => {
+      menu.mockBusinessGet.mockResolvedValueOnce({ content: { error: false, result: closedBusiness } })
+      const renders = renderWithProbe(baseProps)
+
+      await waitFor(() => expect(renders[renders.length - 1].loading).toBe(false))
+
+      expect(menu.mockBusinessGet).toHaveBeenCalledTimes(1)
+      const paramsCalls = getBusinessRequestParamsCalls()
+      expect(paramsCalls).toHaveLength(1)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
     })
   })
 })
