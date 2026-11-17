@@ -74,6 +74,8 @@ export const InviteAndEarn = (props) => {
         code={state.mine?.code ?? null}
         link={state.mine?.link ?? null}
         remainingRewardedInvites={state.mine?.remaining_rewarded_invites ?? 0}
+        completedOrdersCount={state.mine?.completed_orders_count ?? 0}
+        nextUnlock={state.mine?.next_unlock ?? null}
         pendingBenefits={benefits.pending || []}
         obtainedBenefits={benefits.obtained || []}
         invitees={state.mine?.invitees || []}
