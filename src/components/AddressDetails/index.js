@@ -30,9 +30,15 @@ export const AddressDetails = (props) => {
   const [formatUrl, setFormatUrl] = useState(null)
   const [logo, setLogo] = useState(null)
   const [ordering] = useApi()
-  const businessId = props.uuid
-    ? Object.values(orderState.carts).find(_cart => _cart?.uuid === props.uuid)?.business_id ?? {}
+  const resolvedBusinessId = props.uuid
+    ? Object.values(orderState?.carts ?? {}).find(_cart => _cart?.uuid === props.uuid)?.business_id
     : props.businessId
+  const businessId = (
+    (typeof resolvedBusinessId === 'number' && Number.isFinite(resolvedBusinessId)) ||
+    (typeof resolvedBusinessId === 'string' && resolvedBusinessId !== '')
+  )
+    ? resolvedBusinessId
+    : null
   /**
    * Method to format google url for business location
    */
@@ -77,7 +83,7 @@ export const AddressDetails = (props) => {
     if (props.location && props.businessLogo && !props.uuid) {
       setLocation(props.location)
       setLogo(props.businessLogo)
-    } else {
+    } else if (businessId != null) {
       getBusiness()
     }
     return () => {
