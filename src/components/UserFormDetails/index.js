@@ -219,6 +219,69 @@ export const UserFormDetails = (props) => {
   }
 
   /**
+   * Remove the user's photo.
+   * The API clears the photo when it is sent as an empty string: a `null` is refused by the photo's
+   * validation and a missing `photo` changes nothing, which is why `handleButtonUpdateClick` (that
+   * sends `image || formState.changes.photo`) cannot do it. The flow after the request is the one of
+   * saving a new photo (`handleButtonUpdateClick(null, true, image)`): the result is in `formState`,
+   * and the session (or the customer) user takes the answer.
+   */
+  const handleRemovePhoto = async () => {
+    try {
+      setFormState({ ...formState, loading: true })
+      const response = await ordering.users(props?.userData?.id || userState.result.result.id).save({ photo: '' }, {
+        accessToken
+      })
+
+      const { photo, ...changes } = formState.changes
+
+      setFormState({
+        ...formState,
+        changes: response.content.error ? formState.changes : changes,
+        result: response.content,
+        loading: false
+      })
+
+      if (!response.content.error) {
+        setUserState({
+          ...userState,
+          loadingDriver: false,
+          result: {
+            ...userState.result,
+            ...response.content
+          }
+        })
+        if (!isCustomerMode) {
+          changeUser({
+            ...session.user,
+            ...response.content.result
+          })
+        } else {
+          setUserCustomer({
+            ...customer.user,
+            ...response.content.result
+          }, true)
+        }
+
+        if (handleSuccessUpdate) {
+          handleSuccessUpdate(response.content.result)
+        }
+
+        onClose && onClose()
+      }
+    } catch (err) {
+      setFormState({
+        ...formState,
+        result: {
+          error: true,
+          result: err.message
+        },
+        loading: false
+      })
+    }
+  }
+
+  /**
    * Update credential data
    * @param {EventTarget} e Related HTML event
    */
@@ -657,6 +720,7 @@ export const UserFormDetails = (props) => {
           handleChangeInput={handleChangeInput}
           handleButtonUpdateClick={handleUpdateClick}
           handlechangeImage={handlechangeImage}
+          handleRemovePhoto={handleRemovePhoto}
           toggleIsEdit={() => setIsEdit(!isEdit)}
           handleToggleAvalaibleStatusDriver={handleToggleAvalaibleStatusDriver}
           handleSendVerifyCode={sendVerifyPhoneCode}
