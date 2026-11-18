@@ -790,16 +790,35 @@ export const BusinessAndProductList = (props) => {
           version: 'v2'
         }
 
-        if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
+        const hasValidMoment = orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')
+        const businessOpen = businessState.business?.open
+        if (hasValidMoment) {
           const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
           parameters.timestamp = moment
+        } else if (showMenuWhenClosed && businessOpen === false) {
+          // Business is already known to be closed (e.g. coming from BusinessAndProductList), so ask upfront.
+          parameters.ignore_menu_schedule = 1
         }
-        const { content: { result, error } } = await ordering
+        let { content: { result, error } } = await ordering
           .businesses(businessState.business.id || props.product?.businessId)
           .categories(categoryId || props.product?.categoryId)
           .products(productId || props.product?.id)
           .parameters(parameters)
           .get({ cancelToken: source })
+
+        // Business open state isn't known yet (e.g. props.product route after guest login): retry once on error, ignoring the schedule
+        if (error && showMenuWhenClosed && !hasValidMoment && businessOpen === undefined) {
+          const retry = await ordering
+            .businesses(businessState.business.id || props.product?.businessId)
+            .categories(categoryId || props.product?.categoryId)
+            .products(productId || props.product?.id)
+            .parameters({ ...parameters, ignore_menu_schedule: 1 })
+            .get({ cancelToken: source })
+          if (!retry?.content?.error) {
+            result = retry.content.result
+          }
+        }
+
         if (result?.extras && Array.isArray(result.extras) && result?.extras?.length > 0) {
           result.extras = result.extras.sort((a, b) => (a?.rank || 0) - (b?.rank || 0))
 

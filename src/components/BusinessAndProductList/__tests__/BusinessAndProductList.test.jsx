@@ -379,6 +379,105 @@ describe('BusinessAndProductList', () => {
     })
   })
 
+  describe('getProduct showMenuWhenClosed', () => {
+    // All params passed to .parameters() on the products() endpoint of every businesses(<businessId>) call
+    const getProductRequestParamsCalls = (businessId) => {
+      const { calls, results } = menu.mockOrdering.businesses.mock
+      const paramsCalls = []
+      calls.forEach(([arg], i) => {
+        if (arg === businessId) {
+          results[i].value.categories.mock.results.forEach((catResult) => {
+            catResult.value.products.mock.results.forEach((prodResult) => {
+              paramsCalls.push(...prodResult.value.parameters.mock.calls.map((call) => call[0]))
+            })
+          })
+        }
+      })
+      return paramsCalls
+    }
+
+    afterEach(() => {
+      delete menu.defaultOrderState.options.moment
+    })
+
+    it('adds ignore_menu_schedule when the business is known closed, ASAP, and the prop is set', async () => {
+      const closedBusiness = { id: 5, slug: 'taco-shop', name: 'Taco Shop', open: false, categories: [] }
+      menu.mockBusinessGet.mockResolvedValue({ content: { error: false, result: closedBusiness } })
+      renderController(BusinessAndProductList, { ...baseProps, categoryId: 1, productId: 10, isInitialRender: true, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+      await waitFor(() => expect(lastControllerProps.productModal.product?.id).toBe(10))
+
+      const paramsCalls = getProductRequestParamsCalls(5)
+      expect(paramsCalls).toHaveLength(1)
+      expect(paramsCalls[0].ignore_menu_schedule).toBe(1)
+    })
+
+    it('does not add ignore_menu_schedule when the business is open', async () => {
+      const openBusiness = { id: 5, slug: 'taco-shop', name: 'Taco Shop', open: true, categories: [] }
+      menu.mockBusinessGet.mockResolvedValue({ content: { error: false, result: openBusiness } })
+      renderController(BusinessAndProductList, { ...baseProps, categoryId: 1, productId: 10, isInitialRender: true, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+      await waitFor(() => expect(lastControllerProps.productModal.product?.id).toBe(10))
+
+      const paramsCalls = getProductRequestParamsCalls(5)
+      expect(paramsCalls).toHaveLength(1)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+    })
+
+    it('sends timestamp and no ignore_menu_schedule when a valid moment is set, even if the business is closed', async () => {
+      menu.defaultOrderState.options.moment = '2026-01-01 10:00:00'
+      const closedBusiness = { id: 5, slug: 'taco-shop', name: 'Taco Shop', open: false, categories: [] }
+      menu.mockBusinessGet.mockResolvedValue({ content: { error: false, result: closedBusiness } })
+      renderController(BusinessAndProductList, { ...baseProps, categoryId: 1, productId: 10, isInitialRender: true, showMenuWhenClosed: true })
+
+      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+      await waitFor(() => expect(lastControllerProps.productModal.product?.id).toBe(10))
+
+      const paramsCalls = getProductRequestParamsCalls(5)
+      expect(paramsCalls).toHaveLength(1)
+      expect(typeof paramsCalls[0].timestamp).toBe('number')
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+    })
+
+    it('does not add ignore_menu_schedule when the prop is absent, even if the business is closed', async () => {
+      const closedBusiness = { id: 5, slug: 'taco-shop', name: 'Taco Shop', open: false, categories: [] }
+      menu.mockBusinessGet.mockResolvedValue({ content: { error: false, result: closedBusiness } })
+      renderController(BusinessAndProductList, { ...baseProps, categoryId: 1, productId: 10, isInitialRender: true })
+
+      await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+      await waitFor(() => expect(lastControllerProps.productModal.product?.id).toBe(10))
+
+      const paramsCalls = getProductRequestParamsCalls(5)
+      expect(paramsCalls).toHaveLength(1)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+    })
+
+    it('retries with ignore_menu_schedule only after the first request errors, when the business is not known yet (props.product route)', async () => {
+      menu.mockProductGet
+        .mockResolvedValueOnce({ content: { error: true, result: 'Product does not exist' } })
+        .mockResolvedValueOnce({ content: { error: false, result: { id: 10, name: 'Burger', extras: [] } } })
+
+      renderController(BusinessAndProductList, {
+        ...baseProps,
+        slug: undefined,
+        isSlugRequired: true,
+        showMenuWhenClosed: true,
+        product: { businessId: 5, categoryId: 1, id: 10 }
+      })
+
+      await waitFor(() => expect(lastControllerProps.productModal.loading).toBe(false))
+
+      const paramsCalls = getProductRequestParamsCalls(5)
+      expect(paramsCalls).toHaveLength(2)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+      expect(paramsCalls[1].ignore_menu_schedule).toBe(1)
+      expect(lastControllerProps.productModal.product?.id).toBe(10)
+      expect(lastControllerProps.notFound).toBeFalsy()
+    })
+  })
+
   describe('isApp lazy product loading reads the fresh business', () => {
     // All params passed to .parameters() on every businesses(<numeric id>) call, in request order
     const getLazyFetchParamsCalls = () => {
