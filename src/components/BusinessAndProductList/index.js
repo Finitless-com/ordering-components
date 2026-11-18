@@ -37,7 +37,8 @@ export const BusinessAndProductList = (props) => {
     isCustomerMode,
     notLoadProducts,
     isSlugRequired,
-    onChangeBusinessSelected
+    onChangeBusinessSelected,
+    showMenuWhenClosed
   } = props
 
   const [orderState, { removeProduct, captureReferral }] = useOrder()
@@ -380,7 +381,7 @@ export const BusinessAndProductList = (props) => {
     setCategoryState({ ...categoryState })
   }
 
-  const getLazyProducts = async ({ page, pageSize = categoryStateDefault.pagination.pageSize }) => {
+  const getLazyProducts = async ({ page, pageSize = categoryStateDefault.pagination.pageSize, business }) => {
     const parameters = buildLazyProductParameters({
       isFetchAllProducts,
       page,
@@ -392,6 +393,10 @@ export const BusinessAndProductList = (props) => {
     if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
       const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
       parameters.timestamp = moment
+    } else if (showMenuWhenClosed && (business ?? businessState.business)?.open === false) {
+      // By the time products load lazily, getBusiness already knows whether the store is closed.
+      // `business` is the freshly fetched one when isApp calls loadProducts before setBusinessState commits.
+      parameters.ignore_menu_schedule = 1
     }
 
     let where = null
@@ -543,7 +548,7 @@ export const BusinessAndProductList = (props) => {
 
     try {
       setCategoryState({ ...curCategoryState, loading: true })
-      const [lazyRes, featuredRes] = await getLazyProducts({ page: 1, pageSize })
+      const [lazyRes, featuredRes] = await getLazyProducts({ page: 1, pageSize, business })
       const { content } = lazyRes
       const error = content?.error
       const result = content?.result
@@ -785,16 +790,35 @@ export const BusinessAndProductList = (props) => {
           version: 'v2'
         }
 
-        if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
+        const hasValidMoment = orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')
+        const businessOpen = businessState.business?.open
+        if (hasValidMoment) {
           const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
           parameters.timestamp = moment
+        } else if (showMenuWhenClosed && businessOpen === false) {
+          // Business is already known to be closed (e.g. coming from BusinessAndProductList), so ask upfront.
+          parameters.ignore_menu_schedule = 1
         }
-        const { content: { result, error } } = await ordering
+        let { content: { result, error } } = await ordering
           .businesses(businessState.business.id || props.product?.businessId)
           .categories(categoryId || props.product?.categoryId)
           .products(productId || props.product?.id)
           .parameters(parameters)
           .get({ cancelToken: source })
+
+        // Business open state isn't known yet (e.g. props.product route after guest login): retry once on error, ignoring the schedule
+        if (error && showMenuWhenClosed && !hasValidMoment && businessOpen === undefined) {
+          const retry = await ordering
+            .businesses(businessState.business.id || props.product?.businessId)
+            .categories(categoryId || props.product?.categoryId)
+            .products(productId || props.product?.id)
+            .parameters({ ...parameters, ignore_menu_schedule: 1 })
+            .get({ cancelToken: source })
+          if (!retry?.content?.error) {
+            result = retry.content.result
+          }
+        }
+
         if (result?.extras && Array.isArray(result.extras) && result?.extras?.length > 0) {
           result.extras = result.extras.sort((a, b) => (a?.rank || 0) - (b?.rank || 0))
 
@@ -852,7 +876,8 @@ export const BusinessAndProductList = (props) => {
             ? `${orderState.options?.address?.location?.lat},${orderState.options?.address?.location?.lng}`
             : null
       }
-      if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
+      const hasValidMoment = orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')
+      if (hasValidMoment) {
         const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
         parameters.timestamp = moment
       }
@@ -884,6 +909,15 @@ export const BusinessAndProductList = (props) => {
           delete parameters.student_id
           const retry = await ordering.businesses(slug).select(businessProps).parameters(parameters).get({ cancelToken: source })
           result = retry?.content?.result
+        }
+      }
+
+      // Only ask the backend to ignore the schedule once we know from the first response that the business is actually closed, so an open store never shows out-of-hours menus
+      // no !error check: an error response never carries open === false, so the open check alone is enough, even after a student retry cleared the original error
+      if (showMenuWhenClosed && !hasValidMoment && (!slug ? result?.[0] : result)?.open === false) {
+        const retry = await ordering.businesses(slug).select(businessProps).parameters({ ...parameters, ignore_menu_schedule: 1 }).get({ cancelToken: source })
+        if (!retry?.content?.error) {
+          result = retry.content.result
         }
       }
 
@@ -1171,5 +1205,9 @@ BusinessAndProductList.propTypes = {
    * UI Component, this must be containt all graphic elements and use parent props
    */
   UIComponent: PropTypes.elementType,
-  productsPageSize: PropTypes.number
+  productsPageSize: PropTypes.number,
+  /**
+   * When true and there is no valid moment (ASAP), retry the business/lazy products request ignoring the schedule once the backend reports the business as closed
+   */
+  showMenuWhenClosed: PropTypes.bool
 }
