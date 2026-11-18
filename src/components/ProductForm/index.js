@@ -306,9 +306,12 @@ export const ProductForm = (props) => {
         version: 'v2',
         type: orderState?.options?.type
       }
-      if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
+      const hasValidMoment = orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')
+      if (hasValidMoment) {
         const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
         parameters.timestamp = moment
+      } else if (props.showMenuWhenClosed && props.business?.open === false) {
+        parameters.ignore_menu_schedule = 1
       }
       const { content: { result, error } } = await ordering
         .businesses(props.businessId)
@@ -1168,11 +1171,20 @@ ProductForm.propTypes = {
   /**
    * Function to save event
    */
-  onSave: PropTypes.func
+  onSave: PropTypes.func,
+  /**
+   * When true and there is no valid moment (ASAP), ask the API to ignore the schedule once `business.open` is known to be false
+   */
+  showMenuWhenClosed: PropTypes.bool,
+  /**
+   * Business state used to check `business.open` when `showMenuWhenClosed` is set
+   */
+  business: PropTypes.object
 }
 
 const defaultProps = {
   productCart: {},
   useOrderContext: true,
-  balance: 0
+  balance: 0,
+  showMenuWhenClosed: false
 }

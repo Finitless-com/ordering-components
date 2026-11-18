@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { waitFor } from '@testing-library/react'
 import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
 
@@ -344,6 +344,86 @@ describe('ProductForm', () => {
       expect(lastControllerProps.actionStatus.loading).toBe(false)
     })
     expect(detail.mockLogin).toHaveBeenCalled()
+  })
+
+  describe('showMenuWhenClosed', () => {
+    // All params passed to .parameters() on the products() endpoint of every businesses() call
+    const getLoadProductParamsCalls = () => {
+      const paramsCalls = []
+      detail.mockOrdering.businesses.mock.results.forEach((businessResult) => {
+        businessResult.value.categories.mock.results.forEach((catResult) => {
+          catResult.value.products.mock.results.forEach((prodResult) => {
+            paramsCalls.push(...prodResult.value.parameters.mock.calls.map((call) => call[0]))
+          })
+        })
+      })
+      return paramsCalls
+    }
+
+    afterEach(() => {
+      delete detail.defaultOrderState.options.moment
+    })
+
+    it('adds ignore_menu_schedule when closed, ASAP, and the prop is set', async () => {
+      renderController(ProductForm, {
+        businessId: 5,
+        categoryId: 1,
+        productId: 10,
+        useOrderContext: false,
+        showMenuWhenClosed: true,
+        business: { id: 5, open: false }
+      })
+      await waitFor(() => expect(lastControllerProps.productObject.loading).toBe(false))
+      const paramsCalls = getLoadProductParamsCalls()
+      expect(paramsCalls).toHaveLength(1)
+      expect(paramsCalls[0].ignore_menu_schedule).toBe(1)
+    })
+
+    it('does not add ignore_menu_schedule when the business is open', async () => {
+      renderController(ProductForm, {
+        businessId: 5,
+        categoryId: 1,
+        productId: 10,
+        useOrderContext: false,
+        showMenuWhenClosed: true,
+        business: { id: 5, open: true }
+      })
+      await waitFor(() => expect(lastControllerProps.productObject.loading).toBe(false))
+      const paramsCalls = getLoadProductParamsCalls()
+      expect(paramsCalls).toHaveLength(1)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+    })
+
+    it('sends timestamp and no ignore_menu_schedule when a valid moment is set, even if the business is closed', async () => {
+      detail.defaultOrderState.options.moment = '2026-01-01 10:00:00'
+      renderController(ProductForm, {
+        businessId: 5,
+        categoryId: 1,
+        productId: 10,
+        useOrderContext: false,
+        showMenuWhenClosed: true,
+        business: { id: 5, open: false }
+      })
+      await waitFor(() => expect(lastControllerProps.productObject.loading).toBe(false))
+      const paramsCalls = getLoadProductParamsCalls()
+      expect(paramsCalls).toHaveLength(1)
+      expect(typeof paramsCalls[0].timestamp).toBe('number')
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+    })
+
+    it('does not add ignore_menu_schedule when the prop is absent, even if the business is closed', async () => {
+      renderController(ProductForm, {
+        businessId: 5,
+        categoryId: 1,
+        productId: 10,
+        useOrderContext: false,
+        business: { id: 5, open: false }
+      })
+      await waitFor(() => expect(lastControllerProps.productObject.loading).toBe(false))
+      const paramsCalls = getLoadProductParamsCalls()
+      expect(paramsCalls).toHaveLength(1)
+      expect(paramsCalls[0].ignore_menu_schedule).toBeUndefined()
+    })
   })
 
   it('loads professionals for service bookings', async () => {
