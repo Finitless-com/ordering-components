@@ -12,6 +12,7 @@ const social = vi.hoisted(() => {
   const reset = () => {
     vi.clearAllMocks()
     resetSocialAuthDom()
+    delete window.fbAsyncInit
     mockAuthFacebook.mockResolvedValue({
       content: { error: false, result: { id: 11, session: { access_token: 'f-tok' } } }
     })
@@ -27,14 +28,14 @@ vi.mock('../../../contexts/SessionContext', () => ({
   useSession: () => [{ user: { id: 3, guest_id: 'guest-1' } }, { login: vi.fn() }]
 }))
 
-import { FacebookLoginButton } from '../index'
+import { FacebookLoginButton, isValidFacebookAppId } from '../index'
 
 describe('FacebookLoginButton', () => {
   beforeEach(() => social.reset())
 
   it('loads SDK and exposes facebook handlers', async () => {
     setupFacebook()
-    renderController(FacebookLoginButton, { appId: 'fb-app' })
+    renderController(FacebookLoginButton, { appId: '1234567890' })
     window.fbAsyncInit?.()
     await waitFor(() => {
       expect(lastControllerProps.facebookStatus.ready).toBe(true)
@@ -46,7 +47,7 @@ describe('FacebookLoginButton', () => {
   it('delegates to custom facebook handler', async () => {
     setupFacebook()
     const handleButtonFacebookLoginClick = vi.fn()
-    renderController(FacebookLoginButton, { appId: 'fb-app', handleButtonFacebookLoginClick })
+    renderController(FacebookLoginButton, { appId: '1234567890', handleButtonFacebookLoginClick })
     window.fbAsyncInit?.()
     await waitFor(() => {
       expect(lastControllerProps.facebookStatus.ready).toBe(true)
@@ -61,7 +62,7 @@ describe('FacebookLoginButton', () => {
     setupFacebook()
     const handleSuccessFacebookLogin = vi.fn()
     renderController(FacebookLoginButton, {
-      appId: 'fb-app',
+      appId: '1234567890',
       handleSuccessFacebookLogin,
       isGuest: true
     })
@@ -85,12 +86,48 @@ describe('FacebookLoginButton', () => {
   it('logs out through facebook SDK', async () => {
     setupFacebook()
     const handleSuccessFacebookLogout = vi.fn()
-    renderController(FacebookLoginButton, { appId: 'fb-app', handleSuccessFacebookLogout })
+    renderController(FacebookLoginButton, { appId: '1234567890', handleSuccessFacebookLogout })
     window.fbAsyncInit?.()
     lastControllerProps.handleFacebookLogout()
     await waitFor(() => {
       expect(handleSuccessFacebookLogout).toHaveBeenCalled()
     })
     expect(lastControllerProps.facebookStatus.logged).toBe(false)
+  })
+
+  it.each([
+    ['', ''],
+    ['0', '0'],
+    [0, '0 (number)'],
+    ['Add your Facebook ID', 'placeholder text'],
+    ['fb-app', 'non-numeric id']
+  ])('does not load the SDK for an invalid appId (%s → %s)', (appId) => {
+    setupFacebook()
+    renderController(FacebookLoginButton, { appId })
+    expect(window.document.getElementById('facebook-jssdk')).toBeNull()
+    expect(window.fbAsyncInit).toBeUndefined()
+  })
+
+  it('loads the SDK for a valid numeric appId', () => {
+    setupFacebook()
+    renderController(FacebookLoginButton, { appId: '1234567890' })
+    expect(window.document.getElementById('facebook-jssdk')).not.toBeNull()
+    expect(typeof window.fbAsyncInit).toBe('function')
+  })
+})
+
+describe('isValidFacebookAppId', () => {
+  it('a digits-only, non-zero id', () => {
+    expect(isValidFacebookAppId('1234567890')).toBe(true)
+  })
+
+  it('blank, zero or placeholder values', () => {
+    expect(isValidFacebookAppId(null)).toBe(false)
+    expect(isValidFacebookAppId(undefined)).toBe(false)
+    expect(isValidFacebookAppId(0)).toBe(false)
+    expect(isValidFacebookAppId('')).toBe(false)
+    expect(isValidFacebookAppId('0')).toBe(false)
+    expect(isValidFacebookAppId('Add your Facebook ID')).toBe(false)
+    expect(isValidFacebookAppId('fb-app')).toBe(false)
   })
 })
