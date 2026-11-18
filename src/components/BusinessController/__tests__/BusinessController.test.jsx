@@ -26,11 +26,13 @@ vi.mock('../../../contexts/LanguageContext', () => ({
   useLanguage: () => [{ language: { code: 'en' } }, (key, fallback) => fallback || key]
 }))
 
+const sessionMock = vi.hoisted(() => ({ token: 'session-tok' }))
+
 vi.mock('../../../contexts/SessionContext', () => ({
   useSession: () => [{
     auth: true,
     user: { id: 8 },
-    token: 'session-tok'
+    token: sessionMock.token
   }, { refreshUserInfo: vi.fn() }]
 }))
 
@@ -54,7 +56,10 @@ vi.mock('../../../contexts/WebsocketContext', () => ({
 import { BusinessController } from '../index'
 
 describe('BusinessController', () => {
-  beforeEach(() => biz.reset())
+  beforeEach(() => {
+    biz.reset()
+    sessionMock.token = 'session-tok'
+  })
 
   it('exposes formatting helpers', () => {
     renderController(BusinessController, { business: biz.sampleBusiness, isDisabledInterval: true })
@@ -85,6 +90,23 @@ describe('BusinessController', () => {
         expect.objectContaining({ method: 'POST' })
       )
     })
+  })
+
+  it('does not call tracking_events when there is no token', async () => {
+    sessionMock.token = null
+    const onBusinessClick = vi.fn()
+    renderController(BusinessController, {
+      business: biz.sampleBusiness,
+      isDisabledInterval: true,
+      onBusinessClick
+    })
+    lastControllerProps.handleClick()
+    expect(onBusinessClick).toHaveBeenCalledWith(biz.sampleBusiness)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      'https://api.test/tracking_events',
+      expect.anything()
+    )
   })
 
   it('adds business to favorites', async () => {

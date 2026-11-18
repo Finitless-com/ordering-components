@@ -177,6 +177,7 @@ export const BusinessController = (props) => {
   }
 
   const registerClickBusinessEvent = async (business) => {
+    if (!token) return
     await fetch(`${ordering.root}/tracking_events`, {
       method: 'POST',
       body: JSON.stringify({

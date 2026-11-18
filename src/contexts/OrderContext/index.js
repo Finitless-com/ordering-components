@@ -1712,6 +1712,7 @@ export const OrderProvider = ({
   }
 
   const handleLogEvent = async (events) => {
+    if (!session.token) return
     try {
       const countryCode = await strategy.getItem('country-code')
       const headers = {

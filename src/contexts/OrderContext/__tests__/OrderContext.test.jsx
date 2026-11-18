@@ -12,14 +12,15 @@ const mocks = vi.hoisted(() => ({
   addProduct: vi.fn(),
   place: vi.fn(),
   orderOptionsGet: vi.fn(),
-  orderOptionsSave: vi.fn()
+  orderOptionsSave: vi.fn(),
+  sessionToken: 'session-token'
 }))
 
 vi.mock('../../SessionContext', () => ({
   useSession: () => [{
     auth: true,
     loading: true,
-    token: 'session-token',
+    token: mocks.sessionToken,
     user: { id: 8 }
   }, { logout: vi.fn() }]
 }))
@@ -560,6 +561,60 @@ describe('OrderContext state and actions without the copy', () => {
     expect(state).toEqual({})
     expect(actions).toEqual({})
     warn.mockRestore()
+  })
+})
+
+describe('OrderContext handleLogEvent', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    strategy.getItem.mockResolvedValue(null)
+    mocks.sessionToken = 'session-token'
+    global.fetch = vi.fn().mockResolvedValue({ status: 200, json: async () => ({}) })
+  })
+
+  afterEach(() => {
+    mocks.sessionToken = 'session-token'
+  })
+
+  it('sends tracking events with the session token', async () => {
+    render(
+      <OrderProvider strategy={strategy}>
+        <OrderProbe />
+      </OrderProvider>
+    )
+
+    await act(async () => {
+      await orderActions.handleLogEvent([{ event: 'click', model: 'Product', object_id: 1 }])
+    })
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.test/tracking_events',
+      expect.objectContaining({ method: 'POST' })
+    )
+  })
+
+  it('does not call tracking_events when there is no session token', async () => {
+    mocks.sessionToken = null
+    render(
+      <OrderProvider strategy={strategy}>
+        <OrderProbe />
+      </OrderProvider>
+    )
+
+    await act(async () => {
+      await orderActions.handleLogEvent([{ event: 'click', model: 'Product', object_id: 1 }])
+    })
+
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      'https://api.test/tracking_events',
+      expect.anything()
+    )
   })
 })
 
