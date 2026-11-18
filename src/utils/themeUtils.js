@@ -150,19 +150,27 @@ export const getMergedImages = (theme, orderingTheme, settings) => {
  * @param {Object} orderingTheme - Ordering theme object from API
  * @returns {Object} - Complete merged theme object
  */
+const withAppActiveColors = (theme) => ({
+  ...theme.colors,
+  active: theme.colors.primary,
+  activeContrast: theme.colors.lightPrimary
+})
+
 export const createMergedTheme = (theme, orderingTheme, settings) => {
   if (!theme) return {}
-  if (!orderingTheme?.theme) return theme
+  if (!orderingTheme?.theme) {
+    if (!settings?.isApp) return theme
+    return {
+      ...theme,
+      colors: withAppActiveColors(theme)
+    }
+  }
 
   return {
     ...theme,
     ...orderingTheme?.theme,
     colors: settings?.isApp
-      ? {
-          ...theme.colors,
-          active: theme.colors.primary,
-          activeContrast: theme.colors.lightPrimary
-        }
+      ? withAppActiveColors(theme)
       : getMergedColors(theme, orderingTheme),
     images: getMergedImages(theme, orderingTheme, settings)
   }
