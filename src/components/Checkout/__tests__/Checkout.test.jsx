@@ -8,6 +8,10 @@ const cart = vi.hoisted(() => {
 })
 
 const mockConfirmCart = vi.hoisted(() => vi.fn())
+const referral = vi.hoisted(() => ({
+  getReferralCode: vi.fn(),
+  consumeReferralCode: vi.fn()
+}))
 
 vi.mock('../../../contexts/LanguageContext', () => ({
   useLanguage: () => [{ loading: false, language: { code: 'en' } }, (key, fallback) => fallback || key]
@@ -47,11 +51,22 @@ vi.mock('../../../contexts/WebsocketContext', () => ({
   useWebsocket: () => ({ getId: () => 'socket-14' })
 }))
 
+vi.mock('../../../contexts/ReferralContext', () => ({
+  useReferral: () => [{ referralCode: 'REF123' }, {
+    getReferralCode: referral.getReferralCode,
+    consumeReferralCode: referral.consumeReferralCode
+  }]
+}))
+
 // eslint-disable-next-line import/first
 import { Checkout } from '../index'
 
 describe('Checkout', () => {
-  beforeEach(() => cart.reset())
+  beforeEach(() => {
+    cart.reset()
+    referral.getReferralCode.mockResolvedValue(null)
+    referral.consumeReferralCode.mockResolvedValue(undefined)
+  })
 
   it('loads business details on mount', async () => {
     renderController(Checkout, { businessId: 5 })
@@ -80,8 +95,97 @@ describe('Checkout', () => {
     lastControllerProps.handlePaymethodChange({ paymethodId: 3, gateway: 'cash', data: {} })
     await lastControllerProps.handlerClickPlaceOrder({}, {}, null, null, lastControllerProps.paymethodSelected)
     expect(cart.mockPlaceCart).toHaveBeenCalledWith('cart-uuid-5', expect.any(Object))
+    expect(cart.mockPlaceCart).toHaveBeenCalledWith('cart-uuid-5', expect.objectContaining({
+      amount: 25,
+      use_referral_discount: false
+    }))
+    expect(cart.mockPlaceCart.mock.calls.at(-1)[1]).not.toHaveProperty('referral_code')
+    expect(referral.consumeReferralCode).not.toHaveBeenCalled()
     expect(onPlaceOrderClick).toHaveBeenCalled()
     expect(cart.mockCartSet).not.toHaveBeenCalled()
+  })
+
+  it('stores a referral code on the cart and pays the discounted total', async () => {
+    referral.getReferralCode.mockResolvedValue('REF123')
+    const priced = {
+      ...cart.mockOrderState.carts['businessId:5'],
+      balance: 18,
+      total: 18,
+      referral: { name: 'Referral', applied: true, amount: 7, notice: null }
+    }
+    cart.mockCartSet.mockResolvedValue({
+      content: {
+        error: false,
+        result: priced,
+        referral_attribution: { accepted: true, error_code: null }
+      }
+    })
+
+    renderController(Checkout, { businessId: 5 })
+    await waitFor(() => expect(cart.mockCartSet).toHaveBeenCalledWith({ referral_code: 'REF123' }))
+    await waitFor(() => expect(referral.consumeReferralCode).toHaveBeenCalled())
+    expect(cart.mockSetStateValues).toHaveBeenCalledWith(expect.objectContaining({
+      carts: expect.objectContaining({
+        'businessId:5': expect.objectContaining({ balance: 18 })
+      })
+    }))
+
+    await lastControllerProps.handlerClickPlaceOrder({}, {}, null, null, {
+      paymethodId: 3,
+      gateway: 'cash',
+      paymethod: { id: 3, gateway: 'cash' },
+      data: {}
+    })
+
+    expect(cart.mockCartSet).toHaveBeenCalledTimes(1)
+    const payload = cart.mockPlaceCart.mock.calls.at(-1)[1]
+    expect(payload.amount).toBe(18)
+    expect(payload).not.toHaveProperty('referral_code')
+  })
+
+  it('keeps the stored code when the program does not accept it yet', async () => {
+    referral.getReferralCode.mockResolvedValue('REF123')
+    cart.mockCartSet.mockResolvedValue({
+      content: {
+        error: false,
+        result: { ...cart.mockOrderState.carts['businessId:5'] }
+      }
+    })
+
+    renderController(Checkout, { businessId: 5 })
+    await waitFor(() => expect(cart.mockCartSet).toHaveBeenCalledWith({ referral_code: 'REF123' }))
+    expect(referral.consumeReferralCode).not.toHaveBeenCalled()
+  })
+
+  it('exposes the referral line and updates inviter opt-in on the cart', async () => {
+    cart.mockOrderState.carts['businessId:5'].referral = {
+      name: 'Referral',
+      applied: false,
+      notice: 'referral_quote.unavailable'
+    }
+    cart.mockCartSet.mockResolvedValueOnce({
+      content: {
+        error: false,
+        result: {
+          ...cart.mockOrderState.carts['businessId:5'],
+          use_referral_discount: true
+        }
+      }
+    })
+
+    renderController(Checkout, { businessId: 5 })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+
+    expect(lastControllerProps.referralLine.name).toBe('Referral')
+    expect(lastControllerProps.referralNotice).toBe('referral_quote.unavailable')
+    await lastControllerProps.handleUseReferralDiscountChange(true)
+
+    expect(cart.mockCartSet).toHaveBeenCalledWith({ use_referral_discount: true })
+    expect(cart.mockSetStateValues).toHaveBeenCalledWith(expect.objectContaining({
+      carts: expect.objectContaining({
+        'businessId:5': expect.objectContaining({ use_referral_discount: true })
+      })
+    }))
   })
 
   it('places a stripe connect v2 order with the card as source', async () => {

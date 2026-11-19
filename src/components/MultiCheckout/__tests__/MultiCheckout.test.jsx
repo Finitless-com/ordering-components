@@ -38,10 +38,26 @@ vi.mock('../../../contexts/WebsocketContext', () => ({
   useWebsocket: () => ({ getId: () => 'socket-14' })
 }))
 
+const referral = vi.hoisted(() => ({
+  getReferralCode: vi.fn(),
+  consumeReferralCode: vi.fn()
+}))
+
+vi.mock('../../../contexts/ReferralContext', () => ({
+  useReferral: () => [{ referralCode: null }, {
+    getReferralCode: referral.getReferralCode,
+    consumeReferralCode: referral.consumeReferralCode
+  }]
+}))
+
 import { MultiCheckout } from '../index'
 
 describe('MultiCheckout', () => {
-  beforeEach(() => cart.reset())
+  beforeEach(() => {
+    cart.reset()
+    referral.getReferralCode.mockResolvedValue(null)
+    referral.consumeReferralCode.mockResolvedValue(undefined)
+  })
 
   it('loads cart group on mount', async () => {
     renderController(MultiCheckout, { cartUuid: 'group-uuid-1' })
@@ -113,6 +129,53 @@ describe('MultiCheckout', () => {
     })
     await lastControllerProps.handleGroupPlaceOrder(confirmPayment)
     expect(onPlaceOrderClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('prices every cart with the referral code before placing the group', async () => {
+    referral.getReferralCode.mockResolvedValue('REF123')
+    cart.mockCartSet.mockResolvedValue({
+      content: {
+        error: false,
+        result: { uuid: 'cart-uuid-5', business_id: 5 },
+        referral_attribution: { accepted: true, error_code: null }
+      }
+    })
+    const baseFetch = global.fetch
+    let groupGets = 0
+    global.fetch = vi.fn(async (url, options = {}) => {
+      const isGroup = String(url).includes('/cart_groups/group-uuid-1') && !String(url).includes('prepare') && (options.method || 'GET') === 'GET'
+      if (isGroup) {
+        groupGets += 1
+        if (groupGets > 1) {
+          return {
+            json: async () => ({
+              error: false,
+              result: {
+                uuid: 'group-uuid-1',
+                balance: 33,
+                carts: [
+                  { uuid: 'cart-uuid-5', business_id: 5, valid: true, status: 0, total: 18, balance: 18, referral: { name: 'Referral', applied: true, notice: null } },
+                  { uuid: 'cart-uuid-6', business_id: 6, valid: true, status: 0, total: 15, balance: 15, referral: { notice: null } }
+                ]
+              }
+            })
+          }
+        }
+      }
+      return baseFetch(url, options)
+    })
+
+    renderController(MultiCheckout, { cartUuid: 'group-uuid-1', onPlaceOrderClick: vi.fn() })
+    await waitFor(() => expect(cart.mockCartSet).toHaveBeenCalledWith({ referral_code: 'REF123' }))
+    await waitFor(() => expect(lastControllerProps.cartGroup.result?.balance).toBe(33))
+    expect(referral.consumeReferralCode).toHaveBeenCalled()
+    expect(lastControllerProps.referralLines[0].name).toBe('Referral')
+
+    await lastControllerProps.handleGroupPlaceOrder()
+    const payload = cart.mockPlaceMultiCarts.mock.calls.at(-1)[0]
+    expect(payload.amount).toBe(33)
+    expect(payload).not.toHaveProperty('referral_code')
+    expect(cart.mockCartSet).toHaveBeenCalledTimes(2)
   })
 
   it('places multi-cart order on success', async () => {

@@ -30,6 +30,7 @@ import { FloatingButton } from '../src/components/FloatingButton'
 import { ForgotPasswordForm } from '../src/components/ForgotPasswordForm'
 import { GiftCardOrdersList } from '../src/components/GiftCard/GiftCardOrdersList'
 import { LanguageSelector } from '../src/components/LanguageSelector'
+import { InviteAndEarn } from '../src/components/InviteAndEarn'
 import { LoginForm } from '../src/components/LoginForm'
 import { LogoutAction } from '../src/components/LogoutAction'
 import { MainSearch } from '../src/components/MainSearch'
@@ -111,6 +112,7 @@ import { UtilsContext, UtilsProviders, useUtils } from '../src/contexts/UtilsCon
 import { ValidationFieldsContext, useValidationFields, ValidationFieldsProvider } from '../src/contexts/ValidationsFieldsContext'
 import { WebsocketContext, WebsocketProvider, useWebsocket } from '../src/contexts/WebsocketContext'
 import { OrderingContext, OrderingProvider } from './src/contexts/OrderingContext'
+import { ReferralContext, ReferralProvider, useReferral } from '../src/contexts/ReferralContext'
 import { ToastType, ToastContext, ToastProvider, useToast, useToastActions } from '../src/contexts/ToastContext'
 import { OrderingThemeContext, OrderingThemeProvider, useOrderingTheme } from '../src/contexts/OrderingThemeContext'
 import { createMergedTheme } from '../src/utils/themeUtils'
@@ -163,6 +165,7 @@ export {
   ForgotPasswordForm,
   GiftCardOrdersList,
   LanguageSelector,
+  InviteAndEarn,
   LoginForm,
   LogoutAction,
   MainSearch,
@@ -257,6 +260,9 @@ export {
   useOrderActions,
   OrderingContext,
   OrderingProvider,
+  ReferralContext,
+  ReferralProvider,
+  useReferral,
   SessionContext,
   SessionProvider,
   useSession,

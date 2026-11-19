@@ -13,13 +13,28 @@ const auth = vi.hoisted(() => {
     socket: { connected: true, on: vi.fn(), off: vi.fn() },
     getId: () => 'socket-1'
   }
+  const mockGetReferralCode = vi.fn()
+  const mockConsumeReferralCode = vi.fn()
   const reset = () => {
     vi.clearAllMocks()
+    mockGetReferralCode.mockResolvedValue('REF123')
     mockSave.mockResolvedValue({
-      content: { error: false, result: { id: 99, session: { access_token: 'signup-tok' } } }
+      content: {
+        error: false,
+        result: { id: 99, session: { access_token: 'signup-tok' } },
+        referral_attribution: { accepted: true, error_code: null }
+      }
     })
   }
-  return { mockT, mockSave, mockOrdering, mockSocket, reset }
+  return {
+    mockT,
+    mockSave,
+    mockOrdering,
+    mockSocket,
+    mockGetReferralCode,
+    mockConsumeReferralCode,
+    reset
+  }
 })
 
 vi.mock('../../../contexts/SessionContext', () => ({
@@ -51,6 +66,13 @@ vi.mock('../../../contexts/WebsocketContext', () => ({
   useWebsocket: () => auth.mockSocket
 }))
 
+vi.mock('../../../contexts/ReferralContext', () => ({
+  useReferral: () => [{ referralCode: 'REF123' }, {
+    getReferralCode: auth.mockGetReferralCode,
+    consumeReferralCode: auth.mockConsumeReferralCode
+  }]
+}))
+
 import { SignupForm } from '../index'
 
 describe('SignupForm', () => {
@@ -78,8 +100,29 @@ describe('SignupForm', () => {
       password: 'secret',
       cellphone: '5551234'
     })
-    expect(auth.mockSave).toHaveBeenCalled()
+    expect(auth.mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ referral_code: 'REF123' }),
+      expect.any(Object)
+    )
+    expect(auth.mockConsumeReferralCode).toHaveBeenCalled()
     expect(handleSuccessSignup).toHaveBeenCalled()
+  })
+
+  it('keeps the referral code when signup does not settle attribution', async () => {
+    auth.mockSave.mockResolvedValue({
+      content: { error: false, result: { id: 99, session: { access_token: 'signup-tok' } } }
+    })
+    renderController(SignupForm, { handleSuccessSignup: vi.fn() })
+    await lastControllerProps.handleButtonSignupClick({
+      email: 'new@test.com',
+      password: 'secret',
+      cellphone: '5551234'
+    })
+    expect(auth.mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ referral_code: 'REF123' }),
+      expect.any(Object)
+    )
+    expect(auth.mockConsumeReferralCode).not.toHaveBeenCalled()
   })
 
   it('updates signup data through handleChangeInput', async () => {

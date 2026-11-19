@@ -15,6 +15,10 @@ import { ToastProvider } from '../ToastContext'
 import { WebStrategy } from '../../webStrategy'
 import { OrderingThemeProvider } from '../OrderingThemeContext'
 import { OptimizationLoadProvider } from '../OptimizationLoadContext'
+import { ReferralProvider } from '../ReferralContext'
+import { subscribeToBrowserReferralUrls } from '../../utils/referral'
+
+const getInitialReferralUrl = () => typeof window === 'undefined' ? null : window.location?.href
 
 /**
  * Create OrderingContext
@@ -52,25 +56,31 @@ export const OrderingProvider = ({ Alert, settings, children, enableCouponsRetri
                       <ToastProvider>
                         <ValidationFieldsProvider appId={settings.app_id}>
                           <SessionProvider strategy={webStrategy}>
-                            <WebsocketProvider
+                            <ReferralProvider
                               strategy={webStrategy}
-                              settings={Object.assign(settings.socket, restOfSettings)}
+                              getInitialUrl={getInitialReferralUrl}
+                              subscribeToUrls={subscribeToBrowserReferralUrls}
                             >
-                              <CustomerProvider strategy={webStrategy}>
-                                <OrderProvider
-                                  Alert={Alert}
-                                  strategy={webStrategy}
-                                  businessSlug={settings?.businessSlug}
-                                  franchiseId={settings?.franchiseSlug ?? settings?.franchiseId}
-                                  enableCouponsRetries={enableCouponsRetries}
-                                  referralEnabled={referralEnabled}
-                                >
-                                  <BusinessProvider>
-                                    {children}
-                                  </BusinessProvider>
-                                </OrderProvider>
-                              </CustomerProvider>
-                            </WebsocketProvider>
+                              <WebsocketProvider
+                                strategy={webStrategy}
+                                settings={Object.assign(settings.socket, restOfSettings)}
+                              >
+                                <CustomerProvider strategy={webStrategy}>
+                                  <OrderProvider
+                                    Alert={Alert}
+                                    strategy={webStrategy}
+                                    businessSlug={settings?.businessSlug}
+                                    franchiseId={settings?.franchiseSlug ?? settings?.franchiseId}
+                                    enableCouponsRetries={enableCouponsRetries}
+                                    referralEnabled={referralEnabled}
+                                  >
+                                    <BusinessProvider>
+                                      {children}
+                                    </BusinessProvider>
+                                  </OrderProvider>
+                                </CustomerProvider>
+                              </WebsocketProvider>
+                            </ReferralProvider>
                           </SessionProvider>
                         </ValidationFieldsProvider>
                       </ToastProvider>
