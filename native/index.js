@@ -86,6 +86,8 @@ import { SingleOrderCard } from '../src/components/SingleOrderCard'
 import { SingleProductCard } from '../src/components/SingleProductCard'
 import { SingleProfessionalCard } from '../src/components/SingleProfessionalCard'
 import { StoreProductList } from '../src/components/StoreProductList'
+import { StoreProductSearch } from '../src/components/StoreProductSearch'
+import { isProductUnavailable } from '../src/components/StoreProductSearch/utils'
 import { StoreProductOptions } from '../src/components/StoreProductOptions'
 import { StripeConnectAccount } from '../src/components/StripeConnectAccount'
 import { StripeElementsForm } from '../src/components/StripeElementsForm'
@@ -218,6 +220,8 @@ export {
   SingleProductCard,
   SingleProfessionalCard,
   StoreProductList,
+  StoreProductSearch,
+  isProductUnavailable,
   StoreProductOptions,
   StripeConnectAccount,
   StripeElementsForm,
