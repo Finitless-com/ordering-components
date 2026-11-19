@@ -79,6 +79,7 @@ export const SingleProductCard = (props) => {
   }
 
   const registerClickProductEvent = async (product) => {
+    if (!token) return
     await fetch(`${ordering.root}/tracking_events`, {
       method: 'POST',
       body: JSON.stringify({
