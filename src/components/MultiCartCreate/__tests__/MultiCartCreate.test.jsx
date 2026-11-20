@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
 
 const cart = vi.hoisted(() => {
@@ -75,7 +75,30 @@ describe('MultiCartCreate', () => {
     await waitFor(() => {
       expect(handleOnRedirectCheckout).toHaveBeenCalledWith('cart-uuid-5')
     })
-    expect(cart.mockRefreshOrderOptions).toHaveBeenCalled()
+    expect(global.fetch).not.toHaveBeenCalled()
+    expect(cart.mockRefreshOrderOptions).not.toHaveBeenCalled()
+    expect(handleOnRedirectCheckout).toHaveBeenCalledTimes(1)
+    expect(handleOnRedirectMultiCheckout).not.toHaveBeenCalled()
+  })
+
+  it.each(['creation', 'refresh'])('does not navigate after unmount during %s', async (phase) => {
+    cart.mockOrderState.carts = {
+      a: { uuid: 'cart-uuid-5', valid: true, status: 0, business_id: 5 },
+      b: { uuid: 'cart-uuid-6', valid: true, status: 0, business_id: 6 }
+    }
+    let finish
+    const pending = new Promise(resolve => { finish = resolve })
+    const groupResponse = { json: async () => ({ error: false, result: { uuid: 'group-uuid-1' } }) }
+    if (phase === 'creation') global.fetch.mockReturnValueOnce(pending)
+    else cart.mockRefreshOrderOptions.mockReturnValueOnce(pending)
+
+    const handleOnRedirectMultiCheckout = vi.fn()
+    const { unmount } = renderController(MultiCartCreate, { handleOnRedirectMultiCheckout })
+    const pendingCall = phase === 'creation' ? global.fetch : cart.mockRefreshOrderOptions
+    await waitFor(() => expect(pendingCall).toHaveBeenCalledTimes(1))
+    unmount()
+    await act(async () => { finish(phase === 'creation' ? groupResponse : true) })
+    expect(handleOnRedirectMultiCheckout).not.toHaveBeenCalled()
   })
 
   it('creates cart group and redirects for multiple carts', async () => {

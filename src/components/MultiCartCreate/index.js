@@ -21,12 +21,14 @@ export const MultiCartCreate = (props) => {
 
   const [groupCreationFailed, setGroupCreationFailed] = useState(false)
   const creationStarted = useRef(false)
+  const mounted = useRef(false)
+
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
 
   const createMultiCart = async (cartList) => {
-    if (cartList.length === 1) {
-      handleOnRedirectCheckout?.(cartList[0])
-    }
-
     const body = { carts: cartList }
     if (userId) body.user_id = userId
 
@@ -46,9 +48,11 @@ export const MultiCartCreate = (props) => {
       const payload = await response.json()
       if (!payload?.error) uuid = payload?.result?.uuid
     } catch {
-      setGroupCreationFailed(true)
+      if (mounted.current) setGroupCreationFailed(true)
       return
     }
+
+    if (!mounted.current) return
 
     if (typeof uuid !== 'string' || !uuid.trim()) {
       setGroupCreationFailed(true)
@@ -56,7 +60,7 @@ export const MultiCartCreate = (props) => {
     }
 
     await refreshOrderOptions()
-    handleOnRedirectMultiCheckout?.(uuid)
+    if (mounted.current) handleOnRedirectMultiCheckout?.(uuid)
   }
 
   useEffect(() => {
@@ -65,6 +69,10 @@ export const MultiCartCreate = (props) => {
     if (!cartList.length) return
 
     creationStarted.current = true
+    if (cartList.length === 1 && handleOnRedirectCheckout) {
+      handleOnRedirectCheckout(cartList[0])
+      return
+    }
     createMultiCart(cartList)
   }, [orderState?.loading, orderState?.carts])
 
