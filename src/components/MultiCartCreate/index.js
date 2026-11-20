@@ -24,6 +24,7 @@ export const MultiCartCreate = (props) => {
   const [groupCreationFailed, setGroupCreationFailed] = useState(false)
   const [refreshFailedGroup, setRefreshFailedGroup] = useState(null)
   const [retryingRefresh, setRetryingRefresh] = useState(false)
+  const [retryRefreshFailed, setRetryRefreshFailed] = useState(false)
   const retryInFlight = useRef(false)
   const creationStarted = useRef(false)
   const mounted = useRef(false)
@@ -79,16 +80,24 @@ export const MultiCartCreate = (props) => {
     if (retryInFlight.current) return
     retryInFlight.current = true
     setRetryingRefresh(true)
+    setRetryRefreshFailed(false)
+    let refreshed
     try {
-      const refreshed = await refreshOrderOptions({ deferMalformedResponse: true, recovering: true })
-      if (mounted.current && refreshed === true) {
-        setRefreshFailedGroup(null)
-        handleOnRedirectMultiCheckout?.(refreshFailedGroup)
-      }
+      refreshed = await refreshOrderOptions({ deferMalformedResponse: true, recovering: true })
+    } catch {
+      refreshed = false
     } finally {
       retryInFlight.current = false
-      if (mounted.current) setRetryingRefresh(false)
     }
+    if (!mounted.current) return
+
+    setRetryingRefresh(false)
+    if (refreshed !== true) {
+      setRetryRefreshFailed(true)
+      return
+    }
+    setRefreshFailedGroup(null)
+    handleOnRedirectMultiCheckout?.(refreshFailedGroup)
   }
 
   useEffect(() => {
@@ -112,6 +121,7 @@ export const MultiCartCreate = (props) => {
           groupCreationFailed={groupCreationFailed}
           onRetryRefresh={refreshFailedGroup ? retryRefresh : undefined}
           retryingRefresh={retryingRefresh}
+          retryRefreshFailed={retryRefreshFailed}
         />
       )}
     </>
