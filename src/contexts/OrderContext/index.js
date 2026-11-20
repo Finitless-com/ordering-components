@@ -155,7 +155,7 @@ export const OrderProvider = ({
   /**
    * Refresh order options and carts from API
    */
-  const refreshOrderOptions = async () => {
+  const refreshOrderOptions = async ({ deferMalformedResponse = false, onlyRead = false } = {}) => {
     try {
       if (!state.loading) {
         setState(prevState => ({ ...prevState, loading: true }))
@@ -214,6 +214,11 @@ export const OrderProvider = ({
           }
         })
 
+        if (onlyRead) {
+          setState(prevState => ({ ...prevState, loading: false }))
+          return true
+        }
+
         const shouldSyncPickup = shouldForceWorkerPickup(options) && options.type !== orderTypes.pickup
         const shouldSyncCountryCode = !countryCodeFromLocalStorage && options?.address?.country_code
 
@@ -244,15 +249,17 @@ export const OrderProvider = ({
             await strategy.removeItem('user')
             await strategy.removeItem('device_code')
             window.location.reload()
-            return
+            return { status }
           }
           await logout()
-          return
+          return { status }
         }
-        if (invalidResponse) {
-          setAlert({ show: true, content: t('CART_REFRESH_RESPONSE_ERROR', 'We couldn’t refresh your carts. Check your cart before placing your order.'), status })
+        if (invalidResponse || onlyRead) {
+          if (invalidResponse && !deferMalformedResponse && !onlyRead) {
+            setAlert({ show: true, content: t('CART_REFRESH_RESPONSE_ERROR', 'We couldn’t refresh your carts. Check your cart before placing your order.'), status })
+          }
           setState(prevState => ({ ...prevState, loading: false }))
-          return
+          return { invalidResponse, status }
         }
         setAlert({ show: true, content: result, status })
       }
@@ -318,7 +325,7 @@ export const OrderProvider = ({
         : !err.message
             ? t('NETWORK_ERROR', 'Network error')
             : err.message
-      setAlert({ show: true, content: message })
+      if (!onlyRead) setAlert({ show: true, content: message })
       setState(prevState => ({ ...prevState, loading: false }))
     }
   }

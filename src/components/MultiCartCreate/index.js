@@ -10,6 +10,7 @@ export const MultiCartCreate = (props) => {
   const {
     UIComponent,
     userId,
+    recoverMalformedRefresh,
     handleOnRedirectCheckout,
     handleOnRedirectMultiCheckout
   } = props
@@ -20,6 +21,9 @@ export const MultiCartCreate = (props) => {
   const [orderState, { refreshOrderOptions }] = useOrder()
 
   const [groupCreationFailed, setGroupCreationFailed] = useState(false)
+  const [refreshFailedGroup, setRefreshFailedGroup] = useState(null)
+  const [retryingRefresh, setRetryingRefresh] = useState(false)
+  const retryInFlight = useRef(false)
   const creationStarted = useRef(false)
   const mounted = useRef(false)
 
@@ -59,8 +63,31 @@ export const MultiCartCreate = (props) => {
       return
     }
 
-    await refreshOrderOptions()
-    if (mounted.current) handleOnRedirectMultiCheckout?.(uuid)
+    const refresh = recoverMalformedRefresh
+      ? await refreshOrderOptions({ deferMalformedResponse: true })
+      : await refreshOrderOptions()
+    if (!mounted.current || refresh?.status === 401) return
+    if (recoverMalformedRefresh && refresh?.invalidResponse) {
+      setRefreshFailedGroup(uuid)
+      return
+    }
+    handleOnRedirectMultiCheckout?.(uuid)
+  }
+
+  const retryRefresh = async () => {
+    if (retryInFlight.current) return
+    retryInFlight.current = true
+    setRetryingRefresh(true)
+    try {
+      const refreshed = await refreshOrderOptions({ deferMalformedResponse: true, onlyRead: true })
+      if (mounted.current && refreshed === true) {
+        setRefreshFailedGroup(null)
+        handleOnRedirectMultiCheckout?.(refreshFailedGroup)
+      }
+    } finally {
+      retryInFlight.current = false
+      if (mounted.current) setRetryingRefresh(false)
+    }
   }
 
   useEffect(() => {
@@ -82,6 +109,8 @@ export const MultiCartCreate = (props) => {
         <UIComponent
           {...props}
           groupCreationFailed={groupCreationFailed}
+          onRetryRefresh={refreshFailedGroup ? retryRefresh : undefined}
+          retryingRefresh={retryingRefresh}
         />
       )}
     </>

@@ -101,6 +101,33 @@ describe('MultiCartCreate', () => {
     expect(handleOnRedirectMultiCheckout).not.toHaveBeenCalled()
   })
 
+  it('retries a malformed refresh without reposting the persisted group', async () => {
+    cart.mockOrderState.carts = {
+      a: { uuid: 'cart-uuid-5', valid: true, status: 0, business_id: 5 },
+      b: { uuid: 'cart-uuid-6', valid: true, status: 0, business_id: 6 }
+    }
+    cart.mockRefreshOrderOptions
+      .mockResolvedValueOnce({ invalidResponse: true })
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    const handleOnRedirectMultiCheckout = vi.fn()
+    renderController(MultiCartCreate, { handleOnRedirectMultiCheckout, recoverMalformedRefresh: true })
+
+    await waitFor(() => expect(lastControllerProps.onRetryRefresh).toEqual(expect.any(Function)))
+    expect(handleOnRedirectMultiCheckout).not.toHaveBeenCalled()
+    await act(async () => {
+      await lastControllerProps.onRetryRefresh()
+    })
+    expect(handleOnRedirectMultiCheckout).not.toHaveBeenCalled()
+    await act(async () => {
+      await lastControllerProps.onRetryRefresh()
+    })
+    expect(cart.mockRefreshOrderOptions).toHaveBeenCalledTimes(3)
+    expect(cart.mockRefreshOrderOptions).toHaveBeenLastCalledWith({ deferMalformedResponse: true, onlyRead: true })
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    expect(handleOnRedirectMultiCheckout).toHaveBeenCalledExactlyOnceWith('group-uuid-1')
+  })
+
   it('creates cart group and redirects for multiple carts', async () => {
     cart.mockOrderState.carts = {
       'businessId:5': { uuid: 'cart-uuid-5', valid: true, status: 0, business_id: 5 },
