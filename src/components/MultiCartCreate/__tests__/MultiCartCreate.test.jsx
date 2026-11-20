@@ -49,12 +49,12 @@ describe('MultiCartCreate', () => {
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
-  it('reports a group response without a UUID and stays on the current route', async () => {
+  it.each([undefined, 'undefined', ' null ', '  '])('rejects an unusable group UUID (%s) and stays on the current route', async (uuid) => {
     cart.mockOrderState.carts = {
       a: { uuid: 'cart-uuid-5', valid: true, status: 0, business_id: 5 },
       b: { uuid: 'cart-uuid-6', valid: true, status: 0, business_id: 6 }
     }
-    global.fetch.mockResolvedValueOnce({ json: async () => ({ error: false, result: {} }) })
+    global.fetch.mockResolvedValueOnce({ json: async () => ({ error: false, result: { uuid } }) })
     const handleOnRedirectMultiCheckout = vi.fn()
     renderController(MultiCartCreate, { handleOnRedirectMultiCheckout })
     await waitFor(() => expect(lastControllerProps.groupCreationFailed).toBe(true))

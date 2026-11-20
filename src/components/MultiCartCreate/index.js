@@ -50,7 +50,8 @@ export const MultiCartCreate = (props) => {
         body: JSON.stringify(body)
       })
       const payload = await response.json()
-      if (!payload?.error) uuid = payload?.result?.uuid
+      const groupId = payload?.result?.uuid
+      if (!payload?.error && typeof groupId === 'string') uuid = groupId.trim()
     } catch {
       if (mounted.current) setGroupCreationFailed(true)
       return
@@ -58,7 +59,7 @@ export const MultiCartCreate = (props) => {
 
     if (!mounted.current) return
 
-    if (typeof uuid !== 'string' || !uuid.trim()) {
+    if (!uuid || /^(undefined|null)$/i.test(uuid)) {
       setGroupCreationFailed(true)
       return
     }
