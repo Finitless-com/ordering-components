@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { waitFor, act } from '@testing-library/react'
 import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
+import { PaymentOptions } from '../index'
 
 const pay = vi.hoisted(() => {
   const { createPaymentTestContext } = require('../../../__tests__/helpers/paymentTestHelpers')
@@ -54,8 +55,6 @@ vi.mock('../../../contexts/ApiContext', () => ({
 vi.mock('../../../contexts/WebsocketContext', () => ({
   useWebsocket: () => ({ getId: () => 'socket-15' })
 }))
-
-import { PaymentOptions } from '../index'
 
 describe('PaymentOptions', () => {
   beforeEach(() => pay.reset())
@@ -155,6 +154,32 @@ describe('PaymentOptions', () => {
       expect(lastControllerProps.paymethodsList.loading).toBe(false)
     })
     expect(pay.mockBusinessGet).toHaveBeenCalled()
+    expect(lastControllerProps.paymethodsList.paymethods).toHaveLength(1)
+  })
+
+  it.each([
+    ['omitted', { id: 5 }],
+    ['empty', { id: 5, paymethods: [] }]
+  ])('exposes an empty list when business paymethods are %s', async (_label, result) => {
+    pay.mockBusinessGet.mockResolvedValueOnce({ content: { error: false, result } })
+    renderController(PaymentOptions, { businessId: 5 })
+
+    await waitFor(() => expect(lastControllerProps.paymethodsList).toEqual({
+      paymethods: [], loading: false, error: null
+    }))
+  })
+
+  it('can retry a rejected payment methods request', async () => {
+    pay.mockBusinessGet.mockRejectedValueOnce(new Error('Provider unavailable'))
+    renderController(PaymentOptions, { businessId: 5 })
+
+    await waitFor(() => expect(lastControllerProps.paymethodsList).toEqual({
+      paymethods: [], loading: false, error: ['Provider unavailable']
+    }))
+    await act(async () => {
+      await lastControllerProps.retryPaymethods()
+    })
+    expect(lastControllerProps.paymethodsList).toMatchObject({ loading: false, error: null })
     expect(lastControllerProps.paymethodsList.paymethods).toHaveLength(1)
   })
 

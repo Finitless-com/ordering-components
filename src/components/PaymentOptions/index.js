@@ -115,32 +115,31 @@ export const PaymentOptions = (props) => {
   }
 
   const parsePaymethods = (paymethods) => {
-    const _paymethods = paymethods &&
-      filterPaymentMethods(paymethods)
-        .filter(credentials => isCustomerMode
-          ? !paymethodsNotAllowed.includes(credentials?.paymethod?.gateway) &&
-          paymethodsCallcenterMode.includes(credentials?.paymethod?.gateway)
-          : ![...paymethodsNotAllowed, stripeLink].includes(credentials?.paymethod?.gateway))
-        .map(credentials => {
-          const paymethod = {
-            ...credentials?.paymethod,
-            sandbox: credentials?.sandbox,
-            credentials: credentials?.data
-          }
-          const resolvedImage = getPaymethodImage(paymethod)
-          return {
-            ...paymethod,
-            image: resolvedImage ?? undefined
-          }
-        })
-    return _paymethods
+    if (!Array.isArray(paymethods)) return []
+    return filterPaymentMethods(paymethods)
+      .filter(credentials => isCustomerMode
+        ? !paymethodsNotAllowed.includes(credentials?.paymethod?.gateway) &&
+        paymethodsCallcenterMode.includes(credentials?.paymethod?.gateway)
+        : ![...paymethodsNotAllowed, stripeLink].includes(credentials?.paymethod?.gateway))
+      .map(credentials => {
+        const paymethod = {
+          ...credentials?.paymethod,
+          sandbox: credentials?.sandbox,
+          credentials: credentials?.data
+        }
+        const resolvedImage = getPaymethodImage(paymethod)
+        return {
+          ...paymethod,
+          image: resolvedImage ?? undefined
+        }
+      })
   }
 
   /**
    * Method to get payment options from API
    */
   const getPaymentOptions = async () => {
-    setPaymethodsList({ ...paymethodsList, loading: true })
+    setPaymethodsList({ ...paymethodsList, loading: true, error: null })
     const propsToFetch = ['id', 'name', 'paymethods']
     const headers = {
       'X-Physical-Device-Code-X': `${device_code}`
@@ -148,18 +147,14 @@ export const PaymentOptions = (props) => {
 
     try {
       const { content: { error, result } } = await ordering.businesses(businessId).select(propsToFetch).get(device_code ? { headers } : {})
-      if (!error) {
-        paymethodsList.paymethods = parsePaymethods(result.paymethods)
-      }
       setPaymethodsList({
-        ...paymethodsList,
         loading: false,
-        error: error ? result : null,
-        paymethods: error ? [] : parsePaymethods(result.paymethods)
+        error: error ? (result ?? error) : null,
+        paymethods: error ? [] : parsePaymethods(result?.paymethods)
       })
     } catch (error) {
       setPaymethodsList({
-        ...paymethodsList,
+        paymethods: [],
         loading: false,
         error: [error.message]
       })
@@ -272,8 +267,8 @@ export const PaymentOptions = (props) => {
     }
     if (paymethods) {
       setPaymethodsList({
-        ...paymethodsList,
         loading: isLoading,
+        error: null,
         paymethods: parsePaymethods(paymethods)
       })
     } else {
@@ -313,6 +308,7 @@ export const PaymentOptions = (props) => {
           paymethodSelected={paymethodSelected}
           paymethodData={paymethodData}
           paymethodV2Featured={paymethodV2Featured}
+          retryPaymethods={getPaymentOptions}
           setPaymethodData={setPaymethodData}
           handlePaymethodClick={handlePaymethodClick}
           handlePaymethodDataChange={handlePaymethodDataChange}
