@@ -24,6 +24,7 @@ export const OrderDetails = (props) => {
     driverAndBusinessId,
     sendCustomMessage,
     isDisabledOrdersRoom,
+    disableMessages,
     isDriverNotification,
     isBusinessApp
   } = props
@@ -148,6 +149,7 @@ export const OrderDetails = (props) => {
    * Method to Load message for first time
    */
   const loadMessages = async () => {
+    if (disableMessages) return
     try {
       setMessages({ ...messages, loading: true })
       const url = (userCustomerId || driverAndBusinessId)
@@ -631,7 +633,7 @@ export const OrderDetails = (props) => {
   // request went to `orders/undefined/messages`.
   useEffect(() => {
     !orderState.loading && orderState?.order?.id && loadMessages()
-  }, [orderState?.order?.id, orderState?.order?.status, orderState.loading])
+  }, [disableMessages, orderState?.order?.id, orderState?.order?.status, orderState.loading])
 
   useEffect(() => {
     if (props.order && !isDriverNotification) {

@@ -101,6 +101,17 @@ describe('OrderDetails', () => {
     expect(lastControllerProps.messages.messages).toHaveLength(1)
   })
 
+  it('does not request chat messages when the caller disables them', async () => {
+    await act(async () => {
+      renderController(OrderDetails, { orderId: 101, order: orderProp, disableMessages: true })
+    })
+    expect(lastControllerProps.order.order.id).toBe(101)
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      'https://api.test/orders/101/messages',
+      expect.anything()
+    )
+  })
+
   it('sends parking spot message to customer', async () => {
     renderController(OrderDetails, { orderId: 101, order: orderProp })
     await act(async () => {
