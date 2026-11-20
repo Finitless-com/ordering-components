@@ -49,6 +49,27 @@ describe('MultiCartCreate', () => {
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
+  it.each(['undefined', ' null ', '   '])('excludes a cart with identifier %j from checkout', (uuid) => {
+    cart.mockOrderState.carts = {
+      a: { uuid, valid: true, status: 0, business_id: 5 }
+    }
+    const handleOnRedirectCheckout = vi.fn()
+    renderController(MultiCartCreate, { handleOnRedirectCheckout })
+    expect(handleOnRedirectCheckout).not.toHaveBeenCalled()
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it('only redirects to the normalized identifier when one of two carts is usable', () => {
+    cart.mockOrderState.carts = {
+      a: { uuid: 'undefined', valid: true, status: 0, business_id: 5 },
+      b: { uuid: ' cart-uuid-6 ', valid: true, status: 0, business_id: 6 }
+    }
+    const handleOnRedirectCheckout = vi.fn()
+    renderController(MultiCartCreate, { handleOnRedirectCheckout })
+    expect(handleOnRedirectCheckout).toHaveBeenCalledExactlyOnceWith('cart-uuid-6')
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
   it.each([undefined, 'undefined', ' null ', '  '])('rejects an unusable group UUID (%s) and stays on the current route', async (uuid) => {
     cart.mockOrderState.carts = {
       a: { uuid: 'cart-uuid-5', valid: true, status: 0, business_id: 5 },
@@ -131,7 +152,8 @@ describe('MultiCartCreate', () => {
   it('creates cart group and redirects for multiple carts', async () => {
     cart.mockOrderState.carts = {
       'businessId:5': { uuid: 'cart-uuid-5', valid: true, status: 0, business_id: 5 },
-      'businessId:6': { uuid: 'cart-uuid-6', valid: true, status: 0, business_id: 6 }
+      'businessId:6': { uuid: 'cart-uuid-6', valid: true, status: 0, business_id: 6 },
+      'businessId:7': { uuid: 'undefined', valid: true, status: 0, business_id: 7 }
     }
     const handleOnRedirectMultiCheckout = vi.fn()
     renderController(MultiCartCreate, { handleOnRedirectMultiCheckout })
@@ -140,7 +162,7 @@ describe('MultiCartCreate', () => {
     })
     expect(global.fetch).toHaveBeenCalledWith(
       'https://api.test/cart_groups',
-      expect.objectContaining({ method: 'POST' })
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ carts: ['cart-uuid-5', 'cart-uuid-6'] }) })
     )
   })
 })

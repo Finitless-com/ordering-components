@@ -4,6 +4,7 @@ import { useApi } from '../../contexts/ApiContext'
 import { useOrder } from '../../contexts/OrderContext'
 import { useSession } from '../../contexts/SessionContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+import { normalizeCartUuid } from '../../utils/normalizeCartUuid'
 import { getEligibleCartUuids } from './getEligibleCartUuids'
 
 export const MultiCartCreate = (props) => {
@@ -50,8 +51,7 @@ export const MultiCartCreate = (props) => {
         body: JSON.stringify(body)
       })
       const payload = await response.json()
-      const groupId = payload?.result?.uuid
-      if (!payload?.error && typeof groupId === 'string') uuid = groupId.trim()
+      if (!payload?.error) uuid = normalizeCartUuid(payload?.result?.uuid)
     } catch {
       if (mounted.current) setGroupCreationFailed(true)
       return
@@ -59,7 +59,7 @@ export const MultiCartCreate = (props) => {
 
     if (!mounted.current) return
 
-    if (!uuid || /^(undefined|null)$/i.test(uuid)) {
+    if (!uuid) {
       setGroupCreationFailed(true)
       return
     }
