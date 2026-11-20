@@ -89,6 +89,7 @@ export const Checkout = (props) => {
    * Object to save an object with business information
    */
   const [businessDetails, setBusinessDetails] = useState({ business: null, loading: true, error: null })
+  const businessRequest = useRef(0)
   /**
    * This must be contains an object with info about paymente selected
    */
@@ -147,6 +148,8 @@ export const Checkout = (props) => {
   const braintreeIFrameUrl = useMemo(() => `https://paypal-braintree.plugins.orderingplus.com/${ordering.project}/views/card_form/user/${user?.id}/business/${businessDetails?.business?.id}?access_token=${token}&language=${ordering.language}`, [ordering.project, ordering.language, user, businessDetails, token])
 
   const getBusiness = async () => {
+    const request = ++businessRequest.current
+    setBusinessDetails(current => ({ ...current, loading: true }))
     refreshConfigs()
     try {
       const parameters = {
@@ -154,6 +157,7 @@ export const Checkout = (props) => {
         version: 'v2'
       }
       const { content: { result, error } } = await ordering.businesses(businessId).select(propsToFetch).parameters(parameters).get()
+      if (request !== businessRequest.current) return
       if (!error && cartState.cart?.paymethod_id) {
         const paymethodSelected = result?.paymethods?.find(paymethod => paymethod?.paymethod_id === cartState.cart?.paymethod_id)
         if (paymethodSelected?.paymethod?.id) {
@@ -172,17 +176,17 @@ export const Checkout = (props) => {
         }
       }
       setBusinessDetails({
-        ...businessDetails,
         loading: false,
-        business: result,
-        error
+        business: error ? null : result,
+        error: error ? (result ?? error) : null
       })
     } catch (error) {
-      setBusinessDetails({
-        ...businessDetails,
+      if (request !== businessRequest.current) return
+      setBusinessDetails(current => ({
+        ...current,
         loading: false,
         error
-      })
+      }))
     }
   }
   /**
@@ -664,6 +668,7 @@ export const Checkout = (props) => {
     if (businessId && typeof businessId === 'number') {
       getBusiness()
     }
+    return () => { businessRequest.current++ }
   }, [businessId, orderState.options?.type])
 
   /**
@@ -740,6 +745,7 @@ export const Checkout = (props) => {
           orderOptions={orderState.options}
           paymethodSelected={paymethodSelected}
           businessDetails={businessDetails}
+          retryBusinessDetails={getBusiness}
           commentState={commentState}
           placeSpotNumber={placeSpotNumber}
           setPlaceSpotNumber={setPlaceSpotNumber}
