@@ -39,6 +39,29 @@ describe('MultiCartCreate', () => {
     expect(lastControllerProps.loadingLabel).toBe('Creating carts')
   })
 
+  it.each([
+    {},
+    { a: { uuid: 'invalid', valid: false, status: 0, business_id: 5 } },
+    { a: { uuid: 'pending', valid: true, status: 2, business_id: 5 } }
+  ])('does not create a group without eligible carts (%j)', (carts) => {
+    cart.mockOrderState.carts = carts
+    renderController(MultiCartCreate)
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it('reports a group response without a UUID and stays on the current route', async () => {
+    cart.mockOrderState.carts = {
+      a: { uuid: 'cart-uuid-5', valid: true, status: 0, business_id: 5 },
+      b: { uuid: 'cart-uuid-6', valid: true, status: 0, business_id: 6 }
+    }
+    global.fetch.mockResolvedValueOnce({ json: async () => ({ error: false, result: {} }) })
+    const handleOnRedirectMultiCheckout = vi.fn()
+    renderController(MultiCartCreate, { handleOnRedirectMultiCheckout })
+    await waitFor(() => expect(lastControllerProps.groupCreationFailed).toBe(true))
+    expect(cart.mockRefreshOrderOptions).not.toHaveBeenCalled()
+    expect(handleOnRedirectMultiCheckout).not.toHaveBeenCalled()
+  })
+
   it('redirects to single checkout when only one valid cart exists', async () => {
     cart.mockOrderState.carts = {
       'businessId:5': { uuid: 'cart-uuid-5', valid: true, status: 0, business_id: 5 }

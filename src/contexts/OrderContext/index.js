@@ -9,6 +9,7 @@ import { useCustomer } from '../CustomerContext'
 import { ToastType, useToastActions } from '../ToastContext'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
+import { INVALID_API_JSON_BODY } from '../../utils/parseApiJsonBody'
 import { parseUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
 import { isUnchangedDriverTip } from './isUnchangedDriverTip'
 import { evictConsumedCart, shouldEvictConsumedCart } from './evictConsumedCart'
@@ -187,6 +188,14 @@ export const OrderProvider = ({
       }
 
       const res = await ordering.setAccessToken(session.token).orderOptions().get(options)
+      // The SDK casts error results on HTTP 200. Read this sentinel before its
+      // message is replaced by an OrderOption model that the alert cannot show.
+      if (res?.response?.data === INVALID_API_JSON_BODY) {
+        setAlert({ show: true, content: t('CART_REFRESH_RESPONSE_ERROR', 'We couldn’t refresh your carts. Check your cart before placing your order.') })
+        setState(prevState => ({ ...prevState, loading: false }))
+        return
+      }
+
       const error = res?.content?.error
       const result = res?.content?.result
       const status = res?.status
