@@ -144,7 +144,7 @@ describe('MultiCartCreate', () => {
       await lastControllerProps.onRetryRefresh()
     })
     expect(cart.mockRefreshOrderOptions).toHaveBeenCalledTimes(3)
-    expect(cart.mockRefreshOrderOptions).toHaveBeenLastCalledWith({ deferMalformedResponse: true, onlyRead: true })
+    expect(cart.mockRefreshOrderOptions).toHaveBeenLastCalledWith({ deferMalformedResponse: true, recovering: true })
     expect(global.fetch).toHaveBeenCalledTimes(1)
     expect(handleOnRedirectMultiCheckout).toHaveBeenCalledExactlyOnceWith('group-uuid-1')
   })

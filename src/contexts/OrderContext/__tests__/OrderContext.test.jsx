@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   place: vi.fn(),
   orderOptionsGet: vi.fn(),
   orderOptionsSave: vi.fn(),
+  orderTypesAllowed: '',
   sessionToken: 'session-token'
 }))
 
@@ -69,7 +70,7 @@ vi.mock('../../ConfigContext', () => ({
   useConfig: () => [{
     loading: true,
     configs: {
-      order_types_allowed: { value: '' }
+      order_types_allowed: { value: mocks.orderTypesAllowed }
     }
   }]
 }))
@@ -91,6 +92,8 @@ vi.mock('../../ToastContext', () => ({
 import { OrderProvider, useOrder, useOrderState, useOrderActions } from '../index'
 // eslint-disable-next-line import/first
 import { PurchaseGiftCard } from '../../../components/GiftCard/PurchaseGiftCard'
+
+import { MultiCartCreate } from '../../../components/MultiCartCreate'
 
 let orderState
 let orderActions
@@ -128,6 +131,69 @@ describe('OrderContext malformed order options', () => {
       content: expect.stringContaining('refresh your carts')
     })
     expect(orderState.loading).toBe(false)
+  })
+})
+
+describe('MultiCart recovery with OrderProvider', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    mocks.orderTypesAllowed = ''
+    mocks.orderOptionsGet.mockReset()
+    mocks.orderOptionsSave.mockReset()
+  })
+
+  it('awaits pickup synchronization before handing the persisted group to checkout', async () => {
+    mocks.orderTypesAllowed = '1|2'
+    vi.stubGlobal('__FIRST_LOAD__', {})
+    const createGroup = vi.fn().mockResolvedValue({ json: async () => ({ error: false, result: { uuid: 'group-1' } }) })
+    vi.stubGlobal('fetch', createGroup)
+    const carts = [
+      { uuid: 'cart-a', valid: true, status: 0, business_id: 1 },
+      { uuid: 'cart-b', valid: true, status: 0, business_id: 2 }
+    ]
+    const malformed = parseApiJsonBody('{')
+    mocks.orderOptionsGet.mockReset()
+      .mockResolvedValueOnce({ status: 200, content: { error: false, result: { type: 2, carts } } })
+      .mockResolvedValueOnce({ status: 200, response: { data: malformed }, content: malformed })
+      .mockResolvedValue({ status: 200, content: { error: false, result: { type: 1, carts } } })
+    let finishSync
+    const pendingSync = new Promise(resolve => { finishSync = resolve })
+    mocks.orderOptionsSave.mockReset()
+      .mockResolvedValueOnce({ status: 503, content: { error: true, result: 'Unavailable' } })
+      .mockReturnValueOnce(pendingSync)
+    const strategy = { getItem: vi.fn().mockResolvedValue(null), setItem: vi.fn(), removeItem: vi.fn() }
+    const onCheckout = vi.fn()
+    let retry
+    const RecoveryUI = ({ onRetryRefresh }) => {
+      retry = onRetryRefresh
+      return null
+    }
+    render(
+      <OrderProvider strategy={strategy}>
+        <OrderProbe />
+        <MultiCartCreate recoverMalformedRefresh UIComponent={RecoveryUI} handleOnRedirectMultiCheckout={onCheckout} />
+      </OrderProvider>
+    )
+    await act(async () => { await orderActions.refreshOrderOptions() })
+    await waitFor(() => expect(retry).toEqual(expect.any(Function)))
+
+    await act(async () => { await retry() })
+    expect(mocks.orderOptionsSave).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 2 }),
+      expect.any(Object)
+    )
+    expect(onCheckout).not.toHaveBeenCalled()
+
+    let retrying
+    await act(async () => { retrying = retry() })
+    expect(mocks.orderOptionsSave).toHaveBeenCalledTimes(2)
+    expect(onCheckout).not.toHaveBeenCalled()
+    await act(async () => {
+      finishSync({ status: 200, content: { error: false, result: { type: 2, carts } } })
+      await retrying
+    })
+    expect(onCheckout).toHaveBeenCalledExactlyOnceWith('group-1')
+    expect(createGroup).toHaveBeenCalledTimes(1)
   })
 })
 

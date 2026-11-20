@@ -80,7 +80,7 @@ export const MultiCartCreate = (props) => {
     retryInFlight.current = true
     setRetryingRefresh(true)
     try {
-      const refreshed = await refreshOrderOptions({ deferMalformedResponse: true, onlyRead: true })
+      const refreshed = await refreshOrderOptions({ deferMalformedResponse: true, recovering: true })
       if (mounted.current && refreshed === true) {
         setRefreshFailedGroup(null)
         handleOnRedirectMultiCheckout?.(refreshFailedGroup)
