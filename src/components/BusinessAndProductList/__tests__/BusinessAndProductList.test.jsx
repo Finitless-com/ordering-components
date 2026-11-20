@@ -1,8 +1,9 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, waitFor } from '@testing-library/react'
-import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
+import { ControllerUI, renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
 import { EventProvider } from '../../../contexts/EventContext'
+import { BusinessAndProductList } from '../index'
 
 const menu = vi.hoisted(() => {
   const h = require('../../../__tests__/helpers/menuListingTestHelpers')
@@ -73,8 +74,6 @@ vi.mock('../../../contexts/ApiContext', () => ({
 vi.mock('../../../contexts/WebsocketContext', () => ({
   useWebsocket: () => ({ getId: () => 'socket-12' })
 }))
-
-import { BusinessAndProductList } from '../index'
 
 describe('BusinessAndProductList', () => {
   const baseProps = {
@@ -411,6 +410,27 @@ describe('BusinessAndProductList', () => {
       const paramsCalls = getProductRequestParamsCalls(5)
       expect(paramsCalls).toHaveLength(1)
       expect(paramsCalls[0].ignore_menu_schedule).toBe(1)
+    })
+
+    it('does not re-request a deep-linked product when a menu reload loses its business', async () => {
+      const available = { id: 5, slug: 'taco-shop', name: 'Taco Shop', open: true, categories: [] }
+      menu.mockBusinessGet.mockResolvedValue({ content: { error: false, result: available } })
+      const props = { ...baseProps, categoryId: 1, productId: 10, isInitialRender: true }
+      const view = renderController(BusinessAndProductList, props)
+      await waitFor(() => expect(lastControllerProps.productModal.product?.id).toBe(10))
+      const productRequests = getProductRequestParamsCalls(5).length
+
+      menu.mockBusinessGet.mockResolvedValue({ content: { error: false, result: null } })
+      menu.defaultOrderState.options.moment = '2026-01-01 10:00:00'
+      view.rerender(<EventProvider><BusinessAndProductList UIComponent={ControllerUI} {...props} /></EventProvider>)
+
+      await waitFor(() => expect(lastControllerProps.businessState.business).toBeNull())
+      expect(getProductRequestParamsCalls(5)).toHaveLength(productRequests)
+      expect(lastControllerProps.productModal.error).toBeNull()
+
+      const product = { businessId: 6, categoryId: 1, id: 10 }
+      view.rerender(<EventProvider><BusinessAndProductList UIComponent={ControllerUI} {...props} product={product} /></EventProvider>)
+      await waitFor(() => expect(getProductRequestParamsCalls(6)).toHaveLength(1))
     })
 
     it('does not add ignore_menu_schedule when the business is open', async () => {
