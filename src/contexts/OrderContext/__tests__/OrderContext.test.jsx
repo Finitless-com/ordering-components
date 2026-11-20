@@ -1,6 +1,7 @@
 import React from 'react'
 import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { parseApiJsonBody } from '../../../utils/parseApiJsonBody'
 
 const mocks = vi.hoisted(() => ({
   emit: vi.fn(),
@@ -98,6 +99,37 @@ const OrderProbe = () => {
   [orderState, orderActions] = useOrder()
   return null
 }
+
+describe('OrderContext malformed order options', () => {
+  const refreshWith = async (status, body) => {
+    const strategy = { getItem: vi.fn().mockResolvedValue(null), removeItem: vi.fn() }
+    const Alert = vi.fn(() => null)
+    const data = parseApiJsonBody(body)
+    mocks.orderOptionsGet.mockResolvedValueOnce({ status, response: { data }, content: data })
+    render(<OrderProvider strategy={strategy} Alert={Alert}><OrderProbe /></OrderProvider>)
+    await act(async () => {
+      await orderActions.refreshOrderOptions()
+    })
+    return { strategy, Alert }
+  }
+
+  it('clears the web session when an authenticated refresh returns 401 with no body', async () => {
+    const { strategy, Alert } = await refreshWith(401, '')
+    expect(strategy.removeItem.mock.calls).toEqual([['token'], ['user'], ['device_code']])
+    expect(Alert.mock.lastCall[0].open).toBe(false)
+  })
+
+  it('explains an invalid 200 response and keeps the response status with the alert', async () => {
+    const { strategy, Alert } = await refreshWith(200, '{')
+    expect(strategy.removeItem).not.toHaveBeenCalled()
+    expect(Alert.mock.lastCall[0]).toMatchObject({
+      open: true,
+      status: 200,
+      content: expect.stringContaining('refresh your carts')
+    })
+    expect(orderState.loading).toBe(false)
+  })
+})
 
 describe('OrderContext offers', () => {
   const strategy = {

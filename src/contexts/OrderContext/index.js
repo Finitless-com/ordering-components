@@ -188,17 +188,10 @@ export const OrderProvider = ({
       }
 
       const res = await ordering.setAccessToken(session.token).orderOptions().get(options)
-      // The SDK casts error results on HTTP 200. Read this sentinel before its
-      // message is replaced by an OrderOption model that the alert cannot show.
-      if (res?.response?.data === INVALID_API_JSON_BODY) {
-        setAlert({ show: true, content: t('CART_REFRESH_RESPONSE_ERROR', 'We couldn’t refresh your carts. Check your cart before placing your order.') })
-        setState(prevState => ({ ...prevState, loading: false }))
-        return
-      }
-
-      const error = res?.content?.error
-      const result = res?.content?.result
       const status = res?.status
+      // Read the sentinel before the SDK casts its result on HTTP 200.
+      const invalidResponse = res?.response?.data === INVALID_API_JSON_BODY
+      const { error, result } = (invalidResponse ? INVALID_API_JSON_BODY : res?.content) || {}
       let hasApiAddressContext = false
       if (!error) {
         const { carts, ...options } = result
@@ -254,6 +247,11 @@ export const OrderProvider = ({
             return
           }
           await logout()
+          return
+        }
+        if (invalidResponse) {
+          setAlert({ show: true, content: t('CART_REFRESH_RESPONSE_ERROR', 'We couldn’t refresh your carts. Check your cart before placing your order.'), status })
+          setState(prevState => ({ ...prevState, loading: false }))
           return
         }
         setAlert({ show: true, content: result, status })
