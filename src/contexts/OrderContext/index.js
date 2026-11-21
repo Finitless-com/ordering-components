@@ -154,17 +154,52 @@ export const OrderProvider = ({
   const timeIntervalProduct = 4000
   const retriesProduct = 4
 
+  const getGuestDeliverySync = () => {
+    const sync = guestDeliverySync.current
+    if (!waitForGuestDeliveryAddress || !session.auth) return null
+    return sync?.token === session.token && sync?.userId === session.user?.id ? sync : null
+  }
+
+  const isCurrentGuestDeliverySync = sync => sync.parent
+    ? guestDeliverySync.current === sync.parent && sync.parent.revision === sync
+    : guestDeliverySync.current === sync && !sync.selection
+
+  const hasGuestDeliveryAddress = options =>
+    [orderTypes.delivery, orderTypes.catering_delivery].includes(Number(options?.type)) && options?.address?.location
+
+  // Reads can be discarded immediately. An already dispatched write must
+  // settle before the newer selection writes to the same account.
+  const writeGuestDelivery = (sync, write) => {
+    const pending = write()
+    sync.write = pending
+    return pending
+  }
+
+  const waitForGuestDeliverySelection = async sync => {
+    let selection
+    let saved
+    do {
+      selection = sync.selection
+      saved = await selection
+    } while (selection !== sync.selection)
+    return saved
+  }
+
   /**
    * Refresh order options and carts from API. A recovery reports success only
    * after required option writes have succeeded.
    */
-  const refreshOrderOptions = async ({ deferMalformedResponse = false, recovering = false, guestDeliveryOptions } = {}) => {
+  const refreshOrderOptions = async ({ deferMalformedResponse = false, recovering = false, guestDeliveryOptions, migration } = {}) => {
+    const sync = getGuestDeliverySync()
+    if (!migration && sync && !sync.finished) return ensureGuestDeliveryAddress()
+    const isCurrent = () => !migration || isCurrentGuestDeliverySync(migration)
     try {
       if (!state.loading) {
         setState(prevState => ({ ...prevState, loading: true }))
       }
       const countryCodeFromLocalStorage = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
+      if (!isCurrent()) return false
       const userCustomerId = customerFromLocalStorage?.id
       const options = {}
       if (userCustomerId) {
@@ -191,6 +226,7 @@ export const OrderProvider = ({
       }
 
       const res = await ordering.setAccessToken(session.token).orderOptions().get(options)
+      if (!isCurrent()) return false
       const status = res?.status
       // Read the sentinel before the SDK casts its result on HTTP 200.
       const invalidResponse = res?.response?.data === INVALID_API_JSON_BODY
@@ -277,6 +313,7 @@ export const OrderProvider = ({
           ]
           const userId = userCustomerId || session.user.id
           const addressesResponse = await ordering.setAccessToken(session.token).users(userId).addresses().where(conditions).get()
+          if (!isCurrent()) return false
           if (guestDeliveryOptions && addressesResponse.content.error) {
             setState(prevState => ({ ...prevState, loading: false }))
             return false
@@ -295,7 +332,9 @@ export const OrderProvider = ({
           })
           if (!address) {
             Object.keys(localOptions.address).forEach(key => localOptions?.address?.[key] === null && delete localOptions?.address?.[key])
-            const { content: { error, result } } = await ordering.setAccessToken(session.token).users(userId).addresses().save(localOptions.address)
+            const save = () => ordering.setAccessToken(session.token).users(userId).addresses().save(localOptions.address)
+            const { content: { error, result } } = await (migration ? writeGuestDelivery(migration, save) : save())
+            if (!isCurrent()) return false
             if (!error) {
               address = result
             } else if (recovering) {
@@ -303,7 +342,9 @@ export const OrderProvider = ({
               return false
             }
           } else if (!guestDeliveryOptions || !address.default) {
-            const response = await ordering.setAccessToken(session.token).users(userId).addresses(address.id).save({ default: true })
+            const save = () => ordering.setAccessToken(session.token).users(userId).addresses(address.id).save({ default: true })
+            const response = await (migration ? writeGuestDelivery(migration, save) : save())
+            if (!isCurrent()) return false
             if (guestDeliveryOptions && response?.content?.error) {
               setState(prevState => ({ ...prevState, loading: false }))
               return false
@@ -324,6 +365,8 @@ export const OrderProvider = ({
         }
         if (localOptions.moment) {
           options.moment = dayjs.utc(localOptions.moment, 'YYYY-MM-DD HH:mm:ss').unix()
+        } else if (guestDeliveryOptions && localOptions.moment === null) {
+          options.moment = null
         }
         if (localOptions?.address_id && !guestDeliveryOptions) {
           options.address_id = localOptions?.address_id
@@ -335,7 +378,8 @@ export const OrderProvider = ({
           options.city_id = localOptions?.city_id
         }
         if (options && Object.keys(options).length > 0) {
-          const synced = await updateOrderOptions(options, { recovering })
+          const synced = await updateOrderOptions(options, { recovering, migration })
+          if (!isCurrent()) return false
           if (recovering && !synced) return false
         } else {
           setState(prevState => ({ ...prevState, loading: false }))
@@ -346,6 +390,7 @@ export const OrderProvider = ({
       }
       if (recovering) return true
     } catch (err) {
+      if (!isCurrent()) return false
       const message = err?.message?.includes('Internal error')
         ? 'INTERNAL_ERROR'
         : !err.message
@@ -360,26 +405,61 @@ export const OrderProvider = ({
   // null means this session has no local delivery address to migrate.
   const ensureGuestDeliveryAddress = ({ retry = false } = {}) => {
     if (!waitForGuestDeliveryAddress || !session.auth || !session.user?.id) return Promise.resolve(null)
-    const current = guestDeliverySync.current
-    if (current && current.token === session.token && current.userId === session.user.id && !(retry && current.failed)) {
+    const current = getGuestDeliverySync()
+    if (current && !(retry && current.failed)) {
+      if (current.selection) return waitForGuestDeliverySelection(current)
       return current.promise
     }
     const sync = { token: session.token, userId: session.user.id, failed: false }
+    guestDeliverySync.current = sync
     sync.promise = (async () => {
       const options = await strategy.getItem('options', true)
-      const isDelivery = [orderTypes.delivery, orderTypes.catering_delivery].includes(Number(options?.type))
-      if (!isDelivery || !options?.address?.location) return null
-      const saved = await refreshOrderOptions({ recovering: true, guestDeliveryOptions: options })
+      if (!isCurrentGuestDeliverySync(sync)) return false
+      if (!hasGuestDeliveryAddress(options)) return null
+      const saved = await refreshOrderOptions({ recovering: true, guestDeliveryOptions: options, migration: sync })
       return saved === true
     })().catch(() => {
-      setState(prevState => ({ ...prevState, loading: false }))
+      if (isCurrentGuestDeliverySync(sync)) setState(prevState => ({ ...prevState, loading: false }))
       return false
     }).then(result => {
+      if (sync.selection) return waitForGuestDeliverySelection(sync)
       sync.failed = result === false
+      sync.finished = !sync.failed
       return result
     })
-    guestDeliverySync.current = sync
     return sync.promise
+  }
+
+  const replaceGuestDeliverySelection = async (sync, changes) => {
+    const previous = sync.selection || sync.write
+    const revision = { parent: sync }
+    sync.revision = revision
+    sync.failed = false
+    const selection = (async () => {
+      await previous?.catch(() => {})
+      // A moment or delivery-type change can leave the guest address selected.
+      // Persist that new selection as a unit so any retry uses the new values.
+      const local = changes.address_id === undefined && await strategy.getItem('options', true)
+      const revised = local && { ...local, type: changes.type ?? local.type }
+      if (hasGuestDeliveryAddress(revised)) {
+        if (changes.moment !== undefined) {
+          revised.moment = changes.moment === null
+            ? null
+            : dayjs.unix(changes.moment).utc().format('YYYY-MM-DD HH:mm:ss')
+        }
+        await strategy.setItem('options', revised, true)
+        if (!isCurrentGuestDeliverySync(revision)) return false
+        const saved = await refreshOrderOptions({ recovering: true, guestDeliveryOptions: revised, migration: revision })
+        if (isCurrentGuestDeliverySync(revision)) sync.failed = saved !== true
+        return saved === true
+      }
+      await strategy.removeItem('options')
+      return updateOrderOptions(changes, { selectionHandled: true })
+    })()
+    sync.selection = selection
+    const saved = await selection
+    if (sync.selection === selection) sync.finished = saved === true
+    return saved
   }
 
   const refreshOrderOptionsWithRetries = async (cart, product, endpointResult) => {
@@ -586,10 +666,17 @@ export const OrderProvider = ({
    * Update order option data
    * @param {object} changes Changes to update order options
    */
-  const updateOrderOptions = async (changes, { recovering = false } = {}) => {
+  const updateOrderOptions = async (changes, { recovering = false, migration, selectionHandled = false } = {}) => {
     if (session.auth) {
+      const sync = getGuestDeliverySync()
+      if (sync && !sync.finished && !recovering && !selectionHandled &&
+        ['address_id', 'type', 'moment'].some(key => changes[key] !== undefined)) {
+        return replaceGuestDeliverySelection(sync, changes)
+      }
+      const isCurrent = () => !migration || isCurrentGuestDeliverySync(migration)
       const countryCodeFromLocalStorage = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
+      if (!isCurrent()) return false
       const userCustomerId = customerFromLocalStorage?.id
       const body = {
         ...changes,
@@ -622,12 +709,15 @@ export const OrderProvider = ({
         if (body?.country_code) {
           delete body?.country_code
         }
-        const { content: { error, result }, status } = await ordering
+        const save = () => ordering
           .setAccessToken(session.token)
           .orderOptions()
           .save(body, options)
+        const { content: { error, result }, status } = await (migration ? writeGuestDelivery(migration, save) : save())
+        if (!isCurrent()) return false
         if (!error) {
           if (recovering && countryCode) await strategy.setItem('country-code', countryCode)
+          if (!isCurrent()) return false
           const { carts, ...options } = result
           setState(prevState => ({
             ...prevState,
@@ -641,6 +731,7 @@ export const OrderProvider = ({
         state.loading = false
         return !error
       } catch (err) {
+        if (!isCurrent()) return false
         const message = err?.message?.includes('Internal error')
           ? 'INTERNAL_ERROR'
           : err.message
