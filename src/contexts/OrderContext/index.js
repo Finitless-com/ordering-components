@@ -32,6 +32,7 @@ import {
 dayjs.extend(utc)
 
 const REFERRAL_MAX_PENDING = 20
+const GUEST_DELIVERY_DEADLINE_MS = 15000
 
 /**
  * Create OrderContext
@@ -167,11 +168,29 @@ export const OrderProvider = ({
   const hasGuestDeliveryAddress = options =>
     [orderTypes.delivery, orderTypes.catering_delivery].includes(Number(options?.type)) && options?.address?.location
 
-  // Reads can be discarded immediately. An already dispatched write must
-  // settle before the newer selection writes to the same account.
-  const writeGuestDelivery = (sync, write) => {
-    const pending = write()
-    sync.write = pending
+  const requestGuestDelivery = (sync, request, write = false) => {
+    if (!sync) return request()
+    const remaining = sync.deadline - Date.now()
+    const deadlineError = () => new Error('Guest delivery migration timed out')
+    if (remaining <= 0) return Promise.reject(deadlineError())
+
+    const cancelToken = {}
+    let timer
+    const timeout = new Promise((resolve, reject) => {
+      timer = globalThis.setTimeout(() => {
+        // The SDK's cancel token aborts the XHR without settling its promise.
+        reject(deadlineError())
+        cancelToken.cancel?.()
+      }, remaining)
+    })
+    const response = Promise.resolve().then(() => {
+      if (!isCurrentGuestDeliverySync(sync)) throw new Error('Guest delivery selection changed')
+      return request({ cancelToken })
+    })
+    const pending = Promise.race([response, timeout]).finally(() => globalThis.clearTimeout(timer))
+    // A newer selection can skip stale reads, but must wait for a dispatched
+    // write to settle or be cancelled before writing to the same account.
+    if (write) sync.write = pending
     return pending
   }
 
@@ -225,7 +244,8 @@ export const OrderProvider = ({
         }
       }
 
-      const res = await ordering.setAccessToken(session.token).orderOptions().get(options)
+      const getOptions = transport => ordering.setAccessToken(session.token).orderOptions().get({ ...options, ...transport })
+      const res = await requestGuestDelivery(migration, getOptions)
       if (!isCurrent()) return false
       const status = res?.status
       // Read the sentinel before the SDK casts its result on HTTP 200.
@@ -312,7 +332,10 @@ export const OrderProvider = ({
             { attribute: 'address', value: localOptions?.address?.address }
           ]
           const userId = userCustomerId || session.user.id
-          const addressesResponse = await ordering.setAccessToken(session.token).users(userId).addresses().where(conditions).get()
+          // Always look up the address first, including retries of an
+          // uncertain POST. A timed-out response may already have been saved.
+          const getAddresses = transport => ordering.setAccessToken(session.token).users(userId).addresses().where(conditions).get(transport)
+          const addressesResponse = await requestGuestDelivery(migration, getAddresses)
           if (!isCurrent()) return false
           if (guestDeliveryOptions && addressesResponse.content.error) {
             setState(prevState => ({ ...prevState, loading: false }))
@@ -332,8 +355,8 @@ export const OrderProvider = ({
           })
           if (!address) {
             Object.keys(localOptions.address).forEach(key => localOptions?.address?.[key] === null && delete localOptions?.address?.[key])
-            const save = () => ordering.setAccessToken(session.token).users(userId).addresses().save(localOptions.address)
-            const { content: { error, result } } = await (migration ? writeGuestDelivery(migration, save) : save())
+            const save = transport => ordering.setAccessToken(session.token).users(userId).addresses().save(localOptions.address, transport)
+            const { content: { error, result } } = await requestGuestDelivery(migration, save, true)
             if (!isCurrent()) return false
             if (!error) {
               address = result
@@ -342,8 +365,8 @@ export const OrderProvider = ({
               return false
             }
           } else if (!guestDeliveryOptions || !address.default) {
-            const save = () => ordering.setAccessToken(session.token).users(userId).addresses(address.id).save({ default: true })
-            const response = await (migration ? writeGuestDelivery(migration, save) : save())
+            const save = transport => ordering.setAccessToken(session.token).users(userId).addresses(address.id).save({ default: true }, transport)
+            const response = await requestGuestDelivery(migration, save, true)
             if (!isCurrent()) return false
             if (guestDeliveryOptions && response?.content?.error) {
               setState(prevState => ({ ...prevState, loading: false }))
@@ -410,7 +433,7 @@ export const OrderProvider = ({
       if (current.selection) return waitForGuestDeliverySelection(current)
       return current.promise
     }
-    const sync = { token: session.token, userId: session.user.id, failed: false }
+    const sync = { token: session.token, userId: session.user.id, failed: false, deadline: Date.now() + GUEST_DELIVERY_DEADLINE_MS }
     guestDeliverySync.current = sync
     sync.promise = (async () => {
       const options = await strategy.getItem('options', true)
@@ -449,6 +472,7 @@ export const OrderProvider = ({
         }
         await strategy.setItem('options', revised, true)
         if (!isCurrentGuestDeliverySync(revision)) return false
+        revision.deadline = Date.now() + GUEST_DELIVERY_DEADLINE_MS
         const saved = await refreshOrderOptions({ recovering: true, guestDeliveryOptions: revised, migration: revision })
         if (isCurrentGuestDeliverySync(revision)) sync.failed = saved !== true
         return saved === true
@@ -709,11 +733,11 @@ export const OrderProvider = ({
         if (body?.country_code) {
           delete body?.country_code
         }
-        const save = () => ordering
+        const save = transport => ordering
           .setAccessToken(session.token)
           .orderOptions()
-          .save(body, options)
-        const { content: { error, result }, status } = await (migration ? writeGuestDelivery(migration, save) : save())
+          .save(body, { ...options, ...transport })
+        const { content: { error, result }, status } = await requestGuestDelivery(migration, save, true)
         if (!isCurrent()) return false
         if (!error) {
           if (recovering && countryCode) await strategy.setItem('country-code', countryCode)
