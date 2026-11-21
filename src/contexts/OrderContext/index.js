@@ -625,8 +625,9 @@ export const OrderProvider = ({
 
   /**
    * Change order moment
+   * The optional result lets a picker keep its draft until persistence completes.
    */
-  const changeMoment = async (moment) => {
+  const changeMoment = async (moment, { awaitResult = false } = {}) => {
     const momentUnix = moment ? moment.getTime() / 1000 : null
     const momentFormatted = momentUnix ? dayjs.unix(momentUnix).utc().format('YYYY-MM-DD HH:mm:ss') : null
 
@@ -635,7 +636,7 @@ export const OrderProvider = ({
       moment: momentFormatted
     }
     if (state.options.moment === momentFormatted) {
-      return
+      return awaitResult ? true : undefined
     }
 
     if (!session.auth) {
@@ -644,9 +645,11 @@ export const OrderProvider = ({
         ...state,
         options
       })
+      if (awaitResult) return true
     }
 
-    updateOrderOptions({ moment: momentUnix })
+    const update = updateOrderOptions({ moment: momentUnix })
+    if (awaitResult) return update
   }
 
   /**

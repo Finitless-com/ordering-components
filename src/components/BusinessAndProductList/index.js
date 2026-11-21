@@ -40,7 +40,8 @@ export const BusinessAndProductList = (props) => {
     onChangeBusinessSelected,
     showMenuWhenClosed,
     onFavoriteError,
-    scopeProductToRoute
+    scopeProductToRoute,
+    trackBusinessMenuMoment
   } = props
 
   const [orderState, { removeProduct, captureReferral }] = useOrder()
@@ -62,6 +63,7 @@ export const BusinessAndProductList = (props) => {
   const [categoriesState, setCategoriesState] = useState({})
   const [orderOptions, setOrderOptions] = useState({})
   const pendingBusinessFetchRef = useRef(false)
+  const businessRequestRef = useRef(0)
   const loadingMoreProductsRef = useRef(false)
   const [productModal, setProductModal] = useState({ product: null, loading: false, error: null })
   const menuBusinessId = businessState.business?.id
@@ -908,12 +910,26 @@ export const BusinessAndProductList = (props) => {
   }, [scopeProductToRoute, scopedProductKey])
 
   const getBusiness = async () => {
+    const requestId = ++businessRequestRef.current
+    const isCurrent = () => !trackBusinessMenuMoment || requestId === businessRequestRef.current
+    const requestedMoment = orderState.options?.moment ?? null
+    const menuLoad = { id: requestId, moment: requestedMoment }
+    const preserveMenuOnError = trackBusinessMenuMoment && requestedMoment && businessState.business?.id && businessState.business.slug === slug
+    const markMenuError = () => setBusinessState(prevState => ({
+      ...prevState,
+      loading: false,
+      menuLoad: { ...menuLoad, status: 'error' }
+    }))
     try {
       if (!slug && isSlugRequired) {
         setBusinessState((prevState) => ({ ...prevState, loading: false }))
         return
       }
-      setBusinessState((prevState) => ({ ...prevState, loading: true }))
+      setBusinessState((prevState) => ({
+        ...prevState,
+        loading: true,
+        ...(trackBusinessMenuMoment ? { menuLoad: { ...menuLoad, status: 'loading' } } : {})
+      }))
       const source = {}
       requestsState.business = source
       const parameters = {
@@ -949,6 +965,7 @@ export const BusinessAndProductList = (props) => {
       }
 
       let { content: { result, error } } = await ordering.businesses(slug).select(businessProps).parameters(parameters).get({ cancelToken: source })
+      if (!isCurrent()) return
 
       if (error && schoolStudentId) {
         const message = (Array.isArray(result) ? result.join(' ') : String(result || '')).toLowerCase()
@@ -957,7 +974,9 @@ export const BusinessAndProductList = (props) => {
           delete parameters.version
           delete parameters.student_id
           const retry = await ordering.businesses(slug).select(businessProps).parameters(parameters).get({ cancelToken: source })
+          if (!isCurrent()) return
           result = retry?.content?.result
+          if (trackBusinessMenuMoment) error = retry?.content?.error
         }
       }
 
@@ -965,9 +984,15 @@ export const BusinessAndProductList = (props) => {
       // no !error check: an error response never carries open === false, so the open check alone is enough, even after a student retry cleared the original error
       if (showMenuWhenClosed && !hasValidMoment && (!slug ? result?.[0] : result)?.open === false) {
         const retry = await ordering.businesses(slug).select(businessProps).parameters({ ...parameters, ignore_menu_schedule: 1 }).get({ cancelToken: source })
+        if (!isCurrent()) return
         if (!retry?.content?.error) {
           result = retry.content.result
         }
+      }
+
+      if (error && preserveMenuOnError) {
+        markMenuError()
+        return
       }
 
       result = !slug ? result[0] : result
@@ -987,7 +1012,8 @@ export const BusinessAndProductList = (props) => {
 
       const data = {
         business: result,
-        loading: false
+        loading: false,
+        ...(trackBusinessMenuMoment && !error ? { menuLoad: { ...menuLoad, status: 'ready' }, error: null } : {})
       }
       onChangeBusinessSelected && onChangeBusinessSelected(result)
       result?.id && captureReferral && captureReferral(result.id)
@@ -998,6 +1024,7 @@ export const BusinessAndProductList = (props) => {
           .select(menusProps)
           .get()
 
+        if (!isCurrent()) return
         data.menus = menus
       }
 
@@ -1005,6 +1032,11 @@ export const BusinessAndProductList = (props) => {
       setBusinessState((prevState) => ({ ...prevState, ...data }))
       setLoadedFirstTime(true)
     } catch (err) {
+      if (!isCurrent()) return
+      if (preserveMenuOnError) {
+        markMenuError()
+        return
+      }
       setBusinessState((prevState) => ({
         ...prevState,
         loading: false,
@@ -1218,6 +1250,7 @@ export const BusinessAndProductList = (props) => {
           filterByMenus={filterByMenus}
           categoryState={categoryState}
           businessState={businessState}
+          reloadBusiness={trackBusinessMenuMoment ? getBusiness : undefined}
           productModal={isProductModalCurrent ? productModal : { product: null, loading: !!scopedProductKey, error: null }}
           openCategories={openCategories.values}
           featuredProducts={featuredProducts}
@@ -1263,5 +1296,6 @@ BusinessAndProductList.propTypes = {
    * When true and there is no valid moment (ASAP), retry the business/lazy products request ignoring the schedule once the backend reports the business as closed
    */
   showMenuWhenClosed: PropTypes.bool,
-  scopeProductToRoute: PropTypes.bool
+  scopeProductToRoute: PropTypes.bool,
+  trackBusinessMenuMoment: PropTypes.bool
 }
