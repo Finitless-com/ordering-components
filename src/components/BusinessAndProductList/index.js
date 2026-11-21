@@ -67,12 +67,15 @@ export const BusinessAndProductList = (props) => {
   const loadingMoreProductsRef = useRef(false)
   const [productModal, setProductModal] = useState({ product: null, loading: false, error: null })
   const menuBusinessId = businessState.business?.id
+  const isNumericSlug = !isNaN(Number(slug))
+  const menuBusinessRouteId = isNumericSlug ? menuBusinessId : businessState.business?.slug
+  const menuMatchesSlug = slug && String(menuBusinessRouteId) === String(slug)
   const hasProductRoute = Boolean(categoryId && productId)
   const scopedBusinessId = hasProductRoute ? menuBusinessId : props.product?.businessId
   const scopedCategoryId = hasProductRoute ? categoryId : props.product?.categoryId
   const scopedProductId = hasProductRoute ? productId : props.product?.id
   const shouldFetchScopedProduct = hasProductRoute
-    ? isInitialRender && (!slug || !businessState.business?.slug || businessState.business.slug === slug)
+    ? isInitialRender && (!slug || menuBusinessRouteId == null || menuMatchesSlug)
     : !orderState.loading
   const scopedProductKey = scopeProductToRoute && shouldFetchScopedProduct && scopedBusinessId && scopedCategoryId && scopedProductId
     ? JSON.stringify([slug, scopedBusinessId, scopedCategoryId, scopedProductId])
@@ -545,7 +548,6 @@ export const BusinessAndProductList = (props) => {
       return
     }
 
-    const isNumericSlug = !isNaN(Number(slug))
     const slugToCompare = isNumericSlug
       ? business?.id ?? businessState?.business?.id
       : business?.slug ?? businessState?.business?.slug
@@ -914,7 +916,7 @@ export const BusinessAndProductList = (props) => {
     const isCurrent = () => !trackBusinessMenuMoment || requestId === businessRequestRef.current
     const requestedMoment = orderState.options?.moment ?? null
     const menuLoad = { id: requestId, moment: requestedMoment }
-    const preserveMenuOnError = trackBusinessMenuMoment && requestedMoment && businessState.business?.id && businessState.business.slug === slug
+    const preserveMenuOnError = trackBusinessMenuMoment && requestedMoment && menuBusinessId && menuMatchesSlug
     const markMenuError = () => setBusinessState(prevState => ({
       ...prevState,
       loading: false,
