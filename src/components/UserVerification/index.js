@@ -1,15 +1,23 @@
 import React, { useState } from 'react'
+import PropTypes from 'prop-types'
 import { useSession } from '../../contexts/SessionContext'
 import { useApi } from '../../contexts/ApiContext'
 import { useConfig } from '../../contexts/ConfigContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+
+const codeOutcomeOf = (action, response = null, ok = false) => ({
+  action,
+  success: ok && response?.error === false,
+  response
+})
 
 /**
  * Component to manage User Verification behavior without UI component
  */
 export const UserVerification = (props) => {
   const {
-    UIComponent
+    UIComponent,
+    includeResponse
   } = props
 
   const [ordering] = useApi()
@@ -17,6 +25,7 @@ export const UserVerification = (props) => {
   const [{ user, token }, { changeUser }] = useSession()
   const [{ configs }] = useConfig()
   const useWhatsappVerification = configs?.whatsapp_otp_login_enabled?.value === '1'
+  const withCodeOutcome = (codeOutcome) => includeResponse ? { codeOutcome } : {}
 
   const [verifyEmailState, setVerifyEmailState] = useState({
     loadingSendCode: false,
@@ -42,7 +51,7 @@ export const UserVerification = (props) => {
    */
   const sendVerifyEmailCode = async (values) => {
     try {
-      setVerifyEmailState({ ...verifyEmailState, loadingSendCode: true })
+      setVerifyEmailState({ ...verifyEmailState, loadingSendCode: true, ...withCodeOutcome(null) })
       const response = await fetch(`${ordering.root}/codes/generate`, {
         method: 'POST',
         headers: {
@@ -59,20 +68,24 @@ export const UserVerification = (props) => {
           email: values?.email
         })
       })
-      const { error, result } = await response.json()
+      const payload = await response.json()
+      const { error, result } = includeResponse ? payload ?? {} : payload
+      const outcome = codeOutcomeOf('send', payload, response.ok)
       setVerifyEmailState({
         ...verifyEmailState,
         loadingSendCode: false,
-        resultSendCode: error ? null : result,
+        resultSendCode: (includeResponse ? !outcome.success : error) ? null : result,
         errorSendCode: error
           ? typeof result === 'string' ? [result] : result
-          : null
+          : null,
+        ...withCodeOutcome(outcome)
       })
     } catch (error) {
       setVerifyEmailState({
         ...verifyEmailState,
         loadingSendCode: false,
-        errorSendCode: [error.message]
+        errorSendCode: [error.message],
+        ...withCodeOutcome(codeOutcomeOf('send'))
       })
     }
   }
@@ -83,7 +96,7 @@ export const UserVerification = (props) => {
    */
   const checkVerifyEmailCode = async (values) => {
     try {
-      setVerifyEmailState({ ...verifyEmailState, loadingCheckCode: true })
+      setVerifyEmailState({ ...verifyEmailState, loadingCheckCode: true, ...withCodeOutcome(null) })
       const response = await fetch(`${ordering.root}/users/${user?.id}/verify`, {
         method: 'POST',
         headers: {
@@ -98,25 +111,30 @@ export const UserVerification = (props) => {
           code: values?.code
         })
       })
-      const { error, result } = await response.json()
+      const payload = await response.json()
+      const { error, result } = includeResponse ? payload ?? {} : payload
+      const outcome = codeOutcomeOf('check', payload, response.ok)
+      const failed = includeResponse ? !outcome.success : error
 
-      if (result?.id && !error) {
+      if (result?.id && !failed) {
         changeUser({ ...user, ...result })
       }
 
       setVerifyEmailState({
         ...verifyEmailState,
         loadingCheckCode: false,
-        resultCheckCode: error ? null : result,
+        resultCheckCode: failed ? null : result,
         errorSendCode: error
           ? typeof result === 'string' ? [result] : result
-          : null
+          : null,
+        ...withCodeOutcome(outcome)
       })
     } catch (error) {
       setVerifyEmailState({
         ...verifyEmailState,
         loadingCheckCode: false,
-        errorCheckCode: [error.message]
+        errorCheckCode: [error.message],
+        ...withCodeOutcome(codeOutcomeOf('check'))
       })
     }
   }
@@ -129,14 +147,16 @@ export const UserVerification = (props) => {
       setVerifyPhoneState({
         ...verifyPhoneState,
         errorCheckCode: null,
-        errorSendCode: null
+        errorSendCode: null,
+        ...withCodeOutcome(null)
       })
       return
     }
     setVerifyEmailState({
       ...verifyEmailState,
       errorCheckCode: null,
-      errorSendCode: null
+      errorSendCode: null,
+      ...withCodeOutcome(null)
     })
   }
 
@@ -149,7 +169,8 @@ export const UserVerification = (props) => {
       setVerifyPhoneState({
         ...verifyPhoneState,
         loadingSendCode: true,
-        errorCheckCode: false
+        errorCheckCode: false,
+        ...withCodeOutcome(null)
       })
       const response = await fetch(`${ordering.root}/codes/generate`, {
         method: 'POST',
@@ -168,20 +189,24 @@ export const UserVerification = (props) => {
           country_phone_code: values?.country_phone_code
         })
       })
-      const { error, result } = await response.json()
+      const payload = await response.json()
+      const { error, result } = includeResponse ? payload ?? {} : payload
+      const outcome = codeOutcomeOf('send', payload, response.ok)
       setVerifyPhoneState({
         ...verifyPhoneState,
         loadingSendCode: false,
-        resultSendCode: error ? null : result,
+        resultSendCode: (includeResponse ? !outcome.success : error) ? null : result,
         errorSendCode: error
           ? typeof result === 'string' ? [result] : result
-          : null
+          : null,
+        ...withCodeOutcome(outcome)
       })
     } catch (error) {
       setVerifyPhoneState({
         ...verifyPhoneState,
         loadingSendCode: false,
-        errorSendCode: [error.message]
+        errorSendCode: [error.message],
+        ...withCodeOutcome(codeOutcomeOf('send'))
       })
     }
   }
@@ -192,7 +217,7 @@ export const UserVerification = (props) => {
    */
   const checkVerifyPhoneCode = async (values) => {
     try {
-      setVerifyPhoneState({ ...verifyPhoneState, loadingCheckCode: true })
+      setVerifyPhoneState({ ...verifyPhoneState, loadingCheckCode: true, ...withCodeOutcome(null) })
       const response = await fetch(`${ordering.root}/users/${user?.id}/verify`, {
         method: 'POST',
         headers: {
@@ -207,23 +232,28 @@ export const UserVerification = (props) => {
           code: values?.code
         })
       })
-      const { error, result } = await response.json()
-      if (result?.id && !error) {
+      const payload = await response.json()
+      const { error, result } = includeResponse ? payload ?? {} : payload
+      const outcome = codeOutcomeOf('check', payload, response.ok)
+      const failed = includeResponse ? !outcome.success : error
+      if (result?.id && !failed) {
         changeUser({ ...user, ...result })
       }
       setVerifyPhoneState({
         ...verifyPhoneState,
         loadingCheckCode: false,
-        resultCheckCode: error ? null : result,
+        resultCheckCode: failed ? null : result,
         errorSendCode: error
           ? typeof result === 'string' ? [result] : result
-          : null
+          : null,
+        ...withCodeOutcome(outcome)
       })
     } catch (error) {
       setVerifyPhoneState({
         ...verifyPhoneState,
         loadingCheckCode: false,
-        errorCheckCode: [error.message]
+        errorCheckCode: [error.message],
+        ...withCodeOutcome(codeOutcomeOf('check'))
       })
     }
   }
@@ -245,4 +275,10 @@ export const UserVerification = (props) => {
       )}
     </>
   )
+}
+
+UserVerification.propTypes = {
+  UIComponent: PropTypes.elementType,
+  /** Expose each channel's latest codeOutcome with the full response and status. */
+  includeResponse: PropTypes.bool
 }

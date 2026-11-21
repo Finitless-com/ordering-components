@@ -29,7 +29,8 @@ export const BusinessController = (props) => {
     UIComponent,
     handleUpdateBusinessList,
     favoriteIds,
-    setFavoriteIds
+    setFavoriteIds,
+    onFavoriteError
   } = props
 
   const [ordering] = useApi()
@@ -172,7 +173,8 @@ export const BusinessController = (props) => {
         loading: false,
         error: [error.message]
       })
-      showToast(ToastType.Error, [error.message])
+      if (onFavoriteError) onFavoriteError(error)
+      else showToast(ToastType.Error, [error.message])
     }
   }
 
@@ -332,6 +334,8 @@ export const BusinessController = (props) => {
 }
 
 BusinessController.propTypes = {
+  /** Optional handler for a favorite request exception. Overrides the default toast. */
+  onFavoriteError: PropTypes.func,
   /**
    * UI Component, this must be containt all graphic elements and use parent props
    */
