@@ -9,6 +9,7 @@ import { useCustomer } from '../CustomerContext'
 import { ToastType, useToastActions } from '../ToastContext'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
+import { INVALID_API_JSON_BODY } from '../../utils/parseApiJsonBody'
 import { parseUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
 import { isUnchangedDriverTip } from './isUnchangedDriverTip'
 import { evictConsumedCart, shouldEvictConsumedCart } from './evictConsumedCart'
@@ -152,9 +153,10 @@ export const OrderProvider = ({
   const retriesProduct = 4
 
   /**
-   * Refresh order options and carts from API
+   * Refresh order options and carts from API. A recovery reports success only
+   * after required option writes have succeeded.
    */
-  const refreshOrderOptions = async () => {
+  const refreshOrderOptions = async ({ deferMalformedResponse = false, recovering = false } = {}) => {
     try {
       if (!state.loading) {
         setState(prevState => ({ ...prevState, loading: true }))
@@ -187,9 +189,10 @@ export const OrderProvider = ({
       }
 
       const res = await ordering.setAccessToken(session.token).orderOptions().get(options)
-      const error = res?.content?.error
-      const result = res?.content?.result
       const status = res?.status
+      // Read the sentinel before the SDK casts its result on HTTP 200.
+      const invalidResponse = res?.response?.data === INVALID_API_JSON_BODY
+      const { error, result } = (invalidResponse ? INVALID_API_JSON_BODY : res?.content) || {}
       let hasApiAddressContext = false
       if (!error) {
         const { carts, ...options } = result
@@ -219,7 +222,8 @@ export const OrderProvider = ({
           const syncParams = {}
           if (shouldSyncPickup) syncParams.type = orderTypes.pickup
           if (shouldSyncCountryCode) syncParams.country_code = options.address.country_code
-          await updateOrderOptions(syncParams)
+          const synced = await updateOrderOptions(syncParams, { recovering })
+          if (recovering && !synced) return false
         } else {
           setState(prevState => ({ ...prevState, loading: false }))
         }
@@ -242,10 +246,17 @@ export const OrderProvider = ({
             await strategy.removeItem('user')
             await strategy.removeItem('device_code')
             window.location.reload()
-            return
+            return { status }
           }
           await logout()
-          return
+          return { status }
+        }
+        if (invalidResponse || recovering) {
+          if (invalidResponse && !deferMalformedResponse && !recovering) {
+            setAlert({ show: true, content: t('CART_REFRESH_RESPONSE_ERROR', 'We couldn’t refresh your carts. Check your cart before placing your order.'), status })
+          }
+          setState(prevState => ({ ...prevState, loading: false }))
+          return { invalidResponse, status }
         }
         setAlert({ show: true, content: result, status })
       }
@@ -274,6 +285,9 @@ export const OrderProvider = ({
             const { content: { error, result } } = await ordering.setAccessToken(session.token).users(userId).addresses().save(localOptions.address)
             if (!error) {
               address = result
+            } else if (recovering) {
+              setState(prevState => ({ ...prevState, loading: false }))
+              return false
             }
           } else {
             await ordering.setAccessToken(session.token).users(userId).addresses(address.id).save({ default: true })
@@ -297,7 +311,8 @@ export const OrderProvider = ({
           options.city_id = localOptions?.city_id
         }
         if (options && Object.keys(options).length > 0) {
-          await updateOrderOptions(options)
+          const synced = await updateOrderOptions(options, { recovering })
+          if (recovering && !synced) return false
         } else {
           setState(prevState => ({ ...prevState, loading: false }))
         }
@@ -305,13 +320,14 @@ export const OrderProvider = ({
       } else {
         setState(prevState => ({ ...prevState, loading: false }))
       }
+      if (recovering) return true
     } catch (err) {
       const message = err?.message?.includes('Internal error')
         ? 'INTERNAL_ERROR'
         : !err.message
             ? t('NETWORK_ERROR', 'Network error')
             : err.message
-      setAlert({ show: true, content: message })
+      if (!recovering) setAlert({ show: true, content: message })
       setState(prevState => ({ ...prevState, loading: false }))
     }
   }
@@ -520,7 +536,7 @@ export const OrderProvider = ({
    * Update order option data
    * @param {object} changes Changes to update order options
    */
-  const updateOrderOptions = async (changes) => {
+  const updateOrderOptions = async (changes, { recovering = false } = {}) => {
     if (session.auth) {
       const countryCodeFromLocalStorage = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
@@ -545,7 +561,7 @@ export const OrderProvider = ({
             ...options.headers,
             'X-Country-Code-X': countryCode
           }
-          await strategy.setItem('country-code', countryCode)
+          if (!recovering) await strategy.setItem('country-code', countryCode)
         }
         if (franchiseId) {
           options.query = {
@@ -561,13 +577,14 @@ export const OrderProvider = ({
           .orderOptions()
           .save(body, options)
         if (!error) {
+          if (recovering && countryCode) await strategy.setItem('country-code', countryCode)
           const { carts, ...options } = result
           setState(prevState => ({
             ...prevState,
             options: { ...prevState.options, ...options },
             carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
           }))
-        } else {
+        } else if (!recovering) {
           setAlert({ show: true, content: result, status })
         }
         setState(prevState => ({ ...prevState, loading: false }))
@@ -577,7 +594,7 @@ export const OrderProvider = ({
         const message = err?.message?.includes('Internal error')
           ? 'INTERNAL_ERROR'
           : err.message
-        setAlert({ show: true, content: message })
+        if (!recovering) setAlert({ show: true, content: message })
         setState(prevState => ({ ...prevState, loading: false }))
         state.loading = false
         return false

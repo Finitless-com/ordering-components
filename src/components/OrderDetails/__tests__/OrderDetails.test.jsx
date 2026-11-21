@@ -101,6 +101,36 @@ describe('OrderDetails', () => {
     expect(lastControllerProps.messages.messages).toHaveLength(1)
   })
 
+  it('does not request chat messages when the caller disables them', async () => {
+    await act(async () => {
+      renderController(OrderDetails, { orderId: 101, order: orderProp, disableMessages: true })
+    })
+    expect(lastControllerProps.order.order.id).toBe(101)
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      'https://api.test/orders/101/messages',
+      expect.anything()
+    )
+  })
+
+  it('leaves chat when disabled and keeps order and driver tracking active', async () => {
+    const { rerender } = render(
+      <OrderDetails UIComponent={ControllerUI} orderId={101} order={orderProp} />
+    )
+    await waitFor(() => expect(orders.mockSocket.on).toHaveBeenCalledWith('message', expect.any(Function)))
+    expect(orders.mockSocket.join).toHaveBeenCalledWith('messages_orders')
+
+    act(() => {
+      rerender(<OrderDetails UIComponent={ControllerUI} orderId={101} order={orderProp} disableMessages />)
+    })
+    expect(orders.mockSocket.leave).toHaveBeenCalledWith('messages_orders')
+    expect(orders.mockSocket.off).toHaveBeenCalledWith('message', expect.any(Function))
+    orders.mockSocket.join.mockClear()
+    orders.mockSocket.on.mockClear()
+    renderController(OrderDetails, { orderId: 101, order: orderProp, disableMessages: true })
+    expect(orders.mockSocket.join.mock.calls).toEqual([['orders']])
+    expect(orders.mockSocket.on.mock.calls.map(([event]) => event)).toEqual(['tracking_driver', 'update_order'])
+  })
+
   it('sends parking spot message to customer', async () => {
     renderController(OrderDetails, { orderId: 101, order: orderProp })
     await act(async () => {

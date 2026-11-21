@@ -24,6 +24,7 @@ export const OrderDetails = (props) => {
     driverAndBusinessId,
     sendCustomMessage,
     isDisabledOrdersRoom,
+    disableMessages,
     isDriverNotification,
     isBusinessApp
   } = props
@@ -148,6 +149,7 @@ export const OrderDetails = (props) => {
    * Method to Load message for first time
    */
   const loadMessages = async () => {
+    if (disableMessages) return
     try {
       setMessages({ ...messages, loading: true })
       const url = (userCustomerId || driverAndBusinessId)
@@ -631,7 +633,7 @@ export const OrderDetails = (props) => {
   // request went to `orders/undefined/messages`.
   useEffect(() => {
     !orderState.loading && orderState?.order?.id && loadMessages()
-  }, [orderState?.order?.id, orderState?.order?.status, orderState.loading])
+  }, [disableMessages, orderState?.order?.id, orderState?.order?.status, orderState.loading])
 
   useEffect(() => {
     if (props.order && !isDriverNotification) {
@@ -754,7 +756,7 @@ export const OrderDetails = (props) => {
   }, [orderState?.loading, socket?.socket, loading, userCustomerId, orderState.order?.driver_id, orderState.order?.external_driver_id, orderState.order?.id, hashKey])
 
   useEffect(() => {
-    if (messages.loading) return
+    if (disableMessages || messages.loading) return
     const handleNewMessage = (message) => {
       const actualChat = messages?.messages?.find(_message => _message?.order_id === message?.order?.id)
       const found = messages.messages.find(_message => _message.id === message.id)
@@ -769,17 +771,16 @@ export const OrderDetails = (props) => {
     return () => {
       socket.off('message', handleNewMessage)
     }
-  }, [messages, socket, orderState.order?.status, userCustomerId])
+  }, [disableMessages, messages, socket, orderState.order?.status, userCustomerId])
 
   useEffect(() => {
-    if (!socket?.socket) return
+    if (disableMessages || !socket?.socket) return
     const messagesOrdersRoom = user?.level === 0 ? 'messages_orders' : `messages_orders_${userCustomerId || user?.id}`
     socket.join(messagesOrdersRoom)
     return () => {
-      // neccesary refactor
-      if (!isDisabledOrdersRoom) socket.leave(messagesOrdersRoom)
+      socket.leave(messagesOrdersRoom)
     }
-  }, [socket?.socket, userCustomerId])
+  }, [disableMessages, socket?.socket, userCustomerId, user?.id, user?.level])
 
   useEffect(() => {
     const handleCustomerReviewed = (review) => {

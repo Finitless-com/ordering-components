@@ -776,7 +776,9 @@ export const BusinessAndProductList = (props) => {
   }
 
   const getProduct = async () => {
-    if ((categoryId && productId && businessState.business.id) || (props.product?.businessId && props.product?.categoryId && props.product?.id)) {
+    const menuBusinessId = businessState.business?.id
+    const businessId = menuBusinessId || props.product?.businessId
+    if ((categoryId && productId && menuBusinessId) || (props.product?.businessId && props.product?.categoryId && props.product?.id)) {
       try {
         setProductModal({
           ...productModal,
@@ -800,7 +802,7 @@ export const BusinessAndProductList = (props) => {
           parameters.ignore_menu_schedule = 1
         }
         let { content: { result, error } } = await ordering
-          .businesses(businessState.business.id || props.product?.businessId)
+          .businesses(businessId)
           .categories(categoryId || props.product?.categoryId)
           .products(productId || props.product?.id)
           .parameters(parameters)
@@ -809,7 +811,7 @@ export const BusinessAndProductList = (props) => {
         // Business open state isn't known yet (e.g. props.product route after guest login): retry once on error, ignoring the schedule
         if (error && showMenuWhenClosed && !hasValidMoment && businessOpen === undefined) {
           const retry = await ordering
-            .businesses(businessState.business.id || props.product?.businessId)
+            .businesses(businessId)
             .categories(categoryId || props.product?.categoryId)
             .products(productId || props.product?.id)
             .parameters({ ...parameters, ignore_menu_schedule: 1 })
@@ -1111,7 +1113,7 @@ export const BusinessAndProductList = (props) => {
    * getBusiness if orderState is loading the first time when is rendered
    */
   useEffect(() => {
-    if (props.product && !orderState.loading && !Object.keys(businessState.business)?.length) {
+    if (props.product && !orderState.loading && !Object.keys(businessState.business ?? {}).length) {
       getBusiness()
     }
   }, [orderState.loading])
