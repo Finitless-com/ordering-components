@@ -38,7 +38,8 @@ export const BusinessAndProductList = (props) => {
     notLoadProducts,
     isSlugRequired,
     onChangeBusinessSelected,
-    showMenuWhenClosed
+    showMenuWhenClosed,
+    onFavoriteError
   } = props
 
   const [orderState, { removeProduct, captureReferral }] = useOrder()
@@ -251,7 +252,8 @@ export const BusinessAndProductList = (props) => {
         showToast(ToastType.Error, t(content.result, 'Error adding favorite'))
       }
     } catch (error) {
-      showToast(ToastType.Error, [error.message])
+      if (onFavoriteError) onFavoriteError(error)
+      else showToast(ToastType.Error, [error.message])
     }
   }
 
@@ -1203,6 +1205,8 @@ export const BusinessAndProductList = (props) => {
 }
 
 BusinessAndProductList.propTypes = {
+  /** Optional handler for a favorite request exception. Overrides the default toast. */
+  onFavoriteError: PropTypes.func,
   /**
    * UI Component, this must be containt all graphic elements and use parent props
    */
