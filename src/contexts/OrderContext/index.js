@@ -77,7 +77,8 @@ export const OrderProvider = ({
   businessSlug,
   userAgent,
   enableCouponsRetries = false,
-  referralEnabled = true
+  referralEnabled = true,
+  waitForGuestDeliveryAddress = false
 }) => {
   const [confirmAlert, setConfirm] = useState({ show: false })
   const [alert, setAlert] = useState({ show: false })
@@ -91,6 +92,7 @@ export const OrderProvider = ({
   const [events] = useEvent()
   const [configState] = useConfig()
   const [session, { logout }] = useSession()
+  const guestDeliverySync = useRef(null)
   const [customerState, { setUserCustomer }] = useCustomer()
   const { showToast } = useToastActions()
 
@@ -156,7 +158,7 @@ export const OrderProvider = ({
    * Refresh order options and carts from API. A recovery reports success only
    * after required option writes have succeeded.
    */
-  const refreshOrderOptions = async ({ deferMalformedResponse = false, recovering = false } = {}) => {
+  const refreshOrderOptions = async ({ deferMalformedResponse = false, recovering = false, guestDeliveryOptions } = {}) => {
     try {
       if (!state.loading) {
         setState(prevState => ({ ...prevState, loading: true }))
@@ -203,20 +205,24 @@ export const OrderProvider = ({
           return
         }
 
-        setState(prevState => {
-          const mergedOptions = { ...prevState.options, ...options }
-          if (shouldForceWorkerPickup(mergedOptions)) {
-            mergedOptions.type = orderTypes.pickup
-          }
-          return {
-            ...prevState,
-            options: mergedOptions,
-            carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
-          }
-        })
+        // The final write returns the options for this guest. Until it
+        // succeeds, keep the displayed address and preorder moment intact.
+        if (!guestDeliveryOptions) {
+          setState(prevState => {
+            const mergedOptions = { ...prevState.options, ...options }
+            if (shouldForceWorkerPickup(mergedOptions)) {
+              mergedOptions.type = orderTypes.pickup
+            }
+            return {
+              ...prevState,
+              options: mergedOptions,
+              carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
+            }
+          })
+        }
 
-        const shouldSyncPickup = shouldForceWorkerPickup(options) && options.type !== orderTypes.pickup
-        const shouldSyncCountryCode = !countryCodeFromLocalStorage && options?.address?.country_code
+        const shouldSyncPickup = !guestDeliveryOptions && shouldForceWorkerPickup(options) && options.type !== orderTypes.pickup
+        const shouldSyncCountryCode = !guestDeliveryOptions && !countryCodeFromLocalStorage && options?.address?.country_code
 
         if (shouldSyncPickup || shouldSyncCountryCode) {
           const syncParams = {}
@@ -224,7 +230,7 @@ export const OrderProvider = ({
           if (shouldSyncCountryCode) syncParams.country_code = options.address.country_code
           const synced = await updateOrderOptions(syncParams, { recovering })
           if (recovering && !synced) return false
-        } else {
+        } else if (!guestDeliveryOptions) {
           setState(prevState => ({ ...prevState, loading: false }))
         }
       }
@@ -260,7 +266,9 @@ export const OrderProvider = ({
         }
         setAlert({ show: true, content: result, status })
       }
-      const localOptions = await strategy.getItem('options', true)
+      const localOptions = guestDeliveryOptions
+        ? { ...guestDeliveryOptions, address: { ...guestDeliveryOptions.address } }
+        : await strategy.getItem('options', true)
       if (localOptions) {
         const options = {}
         if (Object.keys(localOptions?.address || {})?.length > 0) {
@@ -269,6 +277,11 @@ export const OrderProvider = ({
           ]
           const userId = userCustomerId || session.user.id
           const addressesResponse = await ordering.setAccessToken(session.token).users(userId).addresses().where(conditions).get()
+          if (guestDeliveryOptions && addressesResponse.content.error) {
+            setState(prevState => ({ ...prevState, loading: false }))
+            return false
+          }
+          const savedDetail = value => guestDeliveryOptions ? value || null : value
           let address = addressesResponse.content.result.find(address => {
             localOptions.address.internal_number = localOptions.address?.internal_number || null
             localOptions.address.zipcode = localOptions.address?.zipcode || null
@@ -276,9 +289,9 @@ export const OrderProvider = ({
 
             return address?.location?.lat === localOptions?.address?.location.lat &&
               address?.location?.lng === localOptions?.address?.location?.lng &&
-              address?.internal_number === localOptions?.address?.internal_number &&
-              address?.zipcode === localOptions?.address?.zipcode &&
-              address?.address_notes === localOptions?.address?.address_notes
+              savedDetail(address?.internal_number) === localOptions?.address?.internal_number &&
+              savedDetail(address?.zipcode) === localOptions?.address?.zipcode &&
+              savedDetail(address?.address_notes) === localOptions?.address?.address_notes
           })
           if (!address) {
             Object.keys(localOptions.address).forEach(key => localOptions?.address?.[key] === null && delete localOptions?.address?.[key])
@@ -289,8 +302,16 @@ export const OrderProvider = ({
               setState(prevState => ({ ...prevState, loading: false }))
               return false
             }
-          } else {
-            await ordering.setAccessToken(session.token).users(userId).addresses(address.id).save({ default: true })
+          } else if (!guestDeliveryOptions || !address.default) {
+            const response = await ordering.setAccessToken(session.token).users(userId).addresses(address.id).save({ default: true })
+            if (guestDeliveryOptions && response?.content?.error) {
+              setState(prevState => ({ ...prevState, loading: false }))
+              return false
+            }
+          }
+          if (guestDeliveryOptions && !address?.id) {
+            setState(prevState => ({ ...prevState, loading: false }))
+            return false
           }
           address && (options.address_id = address.id)
         }
@@ -304,8 +325,11 @@ export const OrderProvider = ({
         if (localOptions.moment) {
           options.moment = dayjs.utc(localOptions.moment, 'YYYY-MM-DD HH:mm:ss').unix()
         }
-        if (localOptions?.address_id) {
+        if (localOptions?.address_id && !guestDeliveryOptions) {
           options.address_id = localOptions?.address_id
+        }
+        if (guestDeliveryOptions?.address?.country_code) {
+          options.country_code = guestDeliveryOptions.address.country_code
         }
         if (localOptions?.city_id && !hasApiAddressContext) {
           options.city_id = localOptions?.city_id
@@ -330,6 +354,32 @@ export const OrderProvider = ({
       if (!recovering) setAlert({ show: true, content: message })
       setState(prevState => ({ ...prevState, loading: false }))
     }
+  }
+
+  // Login and the first add share the same save and order-options write.
+  // null means this session has no local delivery address to migrate.
+  const ensureGuestDeliveryAddress = ({ retry = false } = {}) => {
+    if (!waitForGuestDeliveryAddress || !session.auth || !session.user?.id) return Promise.resolve(null)
+    const current = guestDeliverySync.current
+    if (current && current.token === session.token && current.userId === session.user.id && !(retry && current.failed)) {
+      return current.promise
+    }
+    const sync = { token: session.token, userId: session.user.id, failed: false }
+    sync.promise = (async () => {
+      const options = await strategy.getItem('options', true)
+      const isDelivery = [orderTypes.delivery, orderTypes.catering_delivery].includes(Number(options?.type))
+      if (!isDelivery || !options?.address?.location) return null
+      const saved = await refreshOrderOptions({ recovering: true, guestDeliveryOptions: options })
+      return saved === true
+    })().catch(() => {
+      setState(prevState => ({ ...prevState, loading: false }))
+      return false
+    }).then(result => {
+      sync.failed = result === false
+      return result
+    })
+    guestDeliverySync.current = sync
+    return sync.promise
   }
 
   const refreshOrderOptionsWithRetries = async (cart, product, endpointResult) => {
@@ -1805,8 +1855,16 @@ export const OrderProvider = ({
   useEffect(() => {
     if (session.loading || languageState.loading || !ordering?.project) return
     if (session.auth) {
-      setState(prevState => (prevState.loading ? prevState : { ...prevState, loading: true }))
-      refreshOrderOptions()
+      if (waitForGuestDeliveryAddress) {
+        ensureGuestDeliveryAddress().then(saved => {
+          if (saved === null) refreshOrderOptions()
+        })
+      } else {
+        setState(prevState => (prevState.loading ? prevState : { ...prevState, loading: true }))
+        refreshOrderOptions()
+      }
+    } else {
+      guestDeliverySync.current = null
     }
   }, [session.auth, session.loading, languageState.loading, ordering?.project, session?.user?.id])
 
@@ -1925,6 +1983,7 @@ export const OrderProvider = ({
 
   const functions = {
     refreshOrderOptions,
+    ensureGuestDeliveryAddress,
     changeAddress,
     changeType,
     changeMoment,
