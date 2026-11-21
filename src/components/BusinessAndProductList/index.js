@@ -39,7 +39,8 @@ export const BusinessAndProductList = (props) => {
     isSlugRequired,
     onChangeBusinessSelected,
     showMenuWhenClosed,
-    onFavoriteError
+    onFavoriteError,
+    scopeProductToRoute
   } = props
 
   const [orderState, { removeProduct, captureReferral }] = useOrder()
@@ -63,6 +64,17 @@ export const BusinessAndProductList = (props) => {
   const pendingBusinessFetchRef = useRef(false)
   const loadingMoreProductsRef = useRef(false)
   const [productModal, setProductModal] = useState({ product: null, loading: false, error: null })
+  const menuBusinessId = businessState.business?.id
+  const hasProductRoute = Boolean(categoryId && productId)
+  const scopedBusinessId = hasProductRoute ? menuBusinessId : props.product?.businessId
+  const scopedCategoryId = hasProductRoute ? categoryId : props.product?.categoryId
+  const scopedProductId = hasProductRoute ? productId : props.product?.id
+  const shouldFetchScopedProduct = hasProductRoute
+    ? isInitialRender && (!slug || !businessState.business?.slug || businessState.business.slug === slug)
+    : !orderState.loading
+  const scopedProductKey = scopeProductToRoute && shouldFetchScopedProduct && scopedBusinessId && scopedCategoryId && scopedProductId
+    ? JSON.stringify([slug, scopedBusinessId, scopedCategoryId, scopedProductId])
+    : null
   const [notFound, setNotFound] = useState(false)
   const [featuredProducts, setFeaturedProducts] = useState(false)
   const [openCategories, setOpenCategories] = useState({ values: [] })
@@ -777,16 +789,16 @@ export const BusinessAndProductList = (props) => {
     }
   }
 
-  const getProduct = async () => {
-    const menuBusinessId = businessState.business?.id
-    const businessId = menuBusinessId || props.product?.businessId
-    if ((categoryId && productId && menuBusinessId) || (props.product?.businessId && props.product?.categoryId && props.product?.id)) {
+  const getProduct = async (request) => {
+    const businessId = request?.businessId ?? (menuBusinessId || props.product?.businessId)
+    const requestedCategory = request?.categoryId ?? (categoryId || props.product?.categoryId)
+    const requestedProduct = request?.productId ?? (productId || props.product?.id)
+    if (request || (categoryId && productId && menuBusinessId) || (props.product?.businessId && props.product?.categoryId && props.product?.id)) {
       try {
-        setProductModal({
-          ...productModal,
-          loading: true
-        })
-        const source = {}
+        if (request) setNotFound(false)
+        const modalState = request ? { routeKey: request.key, product: null, error: null } : productModal
+        setProductModal({ ...modalState, loading: true })
+        const source = request?.source ?? {}
         requestsState.product = source
         const parameters = {
           type: orderState.options?.type || 1,
@@ -805,19 +817,21 @@ export const BusinessAndProductList = (props) => {
         }
         let { content: { result, error } } = await ordering
           .businesses(businessId)
-          .categories(categoryId || props.product?.categoryId)
-          .products(productId || props.product?.id)
+          .categories(requestedCategory)
+          .products(requestedProduct)
           .parameters(parameters)
           .get({ cancelToken: source })
+        if (request?.cancelled) return
 
         // Business open state isn't known yet (e.g. props.product route after guest login): retry once on error, ignoring the schedule
         if (error && showMenuWhenClosed && !hasValidMoment && businessOpen === undefined) {
           const retry = await ordering
             .businesses(businessId)
-            .categories(categoryId || props.product?.categoryId)
-            .products(productId || props.product?.id)
+            .categories(requestedCategory)
+            .products(requestedProduct)
             .parameters({ ...parameters, ignore_menu_schedule: 1 })
             .get({ cancelToken: source })
+          if (request?.cancelled) return
           if (!retry?.content?.error) {
             result = retry.content.result
           }
@@ -838,17 +852,27 @@ export const BusinessAndProductList = (props) => {
             }
           })
         }
-        const product = Array.isArray(result) ? null : result
+        let product = Array.isArray(result) ? null : result
+        if (request && product) {
+          const category = /^\d+$/.test(requestedCategory)
+            ? product.category_id ?? product.category?.id
+            : product.category?.slug
+          const matchesProduct = [product.id, product.slug].some(id => id != null && String(id) === String(requestedProduct))
+          const matchesCategory = category == null || String(category) === String(requestedCategory)
+          const matchesBusiness = product.business_id == null || String(product.business_id) === String(businessId)
+          if (!matchesProduct || !matchesCategory || !matchesBusiness) product = null
+        }
 
-        setNotFound(!result || (Array.isArray(result) && error))
+        setNotFound(request ? !product : !result || (Array.isArray(result) && error))
         setProductModal({
-          ...productModal,
+          ...modalState,
           product,
           loading: false
         })
       } catch (e) {
+        if (request?.cancelled) return
         setProductModal({
-          ...productModal,
+          ...(request ? { routeKey: request.key, product: null } : productModal),
           loading: false,
           error: [e]
         })
@@ -857,10 +881,31 @@ export const BusinessAndProductList = (props) => {
   }
 
   useEffect(() => {
-    if (isInitialRender) {
+    if (!scopeProductToRoute && isInitialRender) {
       getProduct()
     }
-  }, [JSON.stringify(businessState.business?.id), isInitialRender])
+  }, [menuBusinessId, isInitialRender, scopeProductToRoute])
+
+  useEffect(() => {
+    if (!scopeProductToRoute) return
+    if (!scopedProductKey) {
+      setProductModal({ product: null, loading: false, error: null })
+      setNotFound(false)
+      return
+    }
+    const request = {
+      key: scopedProductKey,
+      businessId: scopedBusinessId,
+      categoryId: scopedCategoryId,
+      productId: scopedProductId,
+      source: {}
+    }
+    getProduct(request)
+    return () => {
+      request.cancelled = true
+      request.source.cancel?.()
+    }
+  }, [scopeProductToRoute, scopedProductKey])
 
   const getBusiness = async () => {
     try {
@@ -1124,7 +1169,7 @@ export const BusinessAndProductList = (props) => {
    * getProduct when login after guest
    */
   useEffect(() => {
-    if (props.product?.businessId && props.product?.categoryId && props.product?.id && !orderState.loading) {
+    if (!scopeProductToRoute && props.product?.businessId && props.product?.categoryId && props.product?.id && !orderState.loading) {
       getProduct()
     }
   }, [props.product])
@@ -1159,6 +1204,8 @@ export const BusinessAndProductList = (props) => {
     }
   }, [requestsState.products])
 
+  const isProductModalCurrent = !scopeProductToRoute || (scopedProductKey && productModal.routeKey === scopedProductKey)
+
   return (
     <>
       {UIComponent && (
@@ -1171,7 +1218,7 @@ export const BusinessAndProductList = (props) => {
           filterByMenus={filterByMenus}
           categoryState={categoryState}
           businessState={businessState}
-          productModal={productModal}
+          productModal={isProductModalCurrent ? productModal : { product: null, loading: !!scopedProductKey, error: null }}
           openCategories={openCategories.values}
           featuredProducts={featuredProducts}
           errorQuantityProducts={errorQuantityProducts}
@@ -1192,7 +1239,7 @@ export const BusinessAndProductList = (props) => {
           priceFilterValues={priceFilterValues}
           handleChangePriceFilterValues={handleChangePriceFilterValues}
           handleUpdateProfessionals={handleUpdateProfessionals}
-          notFound={notFound}
+          notFound={isProductModalCurrent && notFound}
           setNotFound={setNotFound}
           updateStoreCategory={updateStoreCategory}
           updateStoreProduct={updateStoreProduct}
@@ -1215,5 +1262,6 @@ BusinessAndProductList.propTypes = {
   /**
    * When true and there is no valid moment (ASAP), retry the business/lazy products request ignoring the schedule once the backend reports the business as closed
    */
-  showMenuWhenClosed: PropTypes.bool
+  showMenuWhenClosed: PropTypes.bool,
+  scopeProductToRoute: PropTypes.bool
 }
