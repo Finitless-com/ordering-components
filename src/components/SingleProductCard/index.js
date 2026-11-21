@@ -12,7 +12,8 @@ export const SingleProductCard = (props) => {
     UIComponent,
     product,
     handleUpdateProducts,
-    isProductId
+    isProductId,
+    onFavoriteError
   } = props
 
   const [ordering] = useApi()
@@ -74,7 +75,8 @@ export const SingleProductCard = (props) => {
         loading: false,
         error: [error.message]
       })
-      showToast(ToastType.Error, [error.message])
+      if (onFavoriteError) onFavoriteError(error)
+      else showToast(ToastType.Error, [error.message])
     }
   }
 
@@ -127,5 +129,7 @@ SingleProductCard.propTypes = {
   /**
    * Businessid, this must be contains an business id for get data from API
    */
-  businessId: PropTypes.number
+  businessId: PropTypes.number,
+  /** Optional handler for a favorite request exception. Overrides the default toast. */
+  onFavoriteError: PropTypes.func
 }
