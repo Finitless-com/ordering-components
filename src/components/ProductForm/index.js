@@ -30,7 +30,8 @@ export const ProductForm = (props) => {
     handleUpdateProfessionals,
     handleChangeProfessional,
     setProductLoading,
-    typeCoupon
+    typeCoupon,
+    onFavoriteError
   } = props
 
   const requestsState = {}
@@ -288,7 +289,8 @@ export const ProductForm = (props) => {
         showToast(ToastType.Error, content.result)
       }
     } catch (error) {
-      showToast(ToastType.Error, [error.message])
+      if (onFavoriteError) onFavoriteError(error)
+      else showToast(ToastType.Error, [error.message])
     }
   }
 
@@ -1140,6 +1142,8 @@ export const ProductForm = (props) => {
 }
 
 ProductForm.propTypes = {
+  /** Optional handler for a favorite request exception. Overrides the default toast. */
+  onFavoriteError: PropTypes.func,
   /**
    * UI Component, this must be containt all graphic elements and use parent props
    */

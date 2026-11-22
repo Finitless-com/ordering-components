@@ -183,6 +183,26 @@ describe('ProductForm', () => {
     )
   })
 
+  it('a favorite request exception goes to onFavoriteError instead of the toast', async () => {
+    const onFavoriteError = vi.fn()
+    renderController(ProductForm, { ...baseProps(), onFavoriteError })
+    await waitFor(() => expect(lastControllerProps.productObject.product).toBeTruthy())
+    const failure = new TypeError('Failed to fetch')
+    global.fetch = vi.fn().mockRejectedValue(failure)
+    await lastControllerProps.handleFavoriteProduct(detail.sampleProduct, true)
+    expect(onFavoriteError).toHaveBeenCalledWith(failure)
+    expect(detail.mockShowToast).not.toHaveBeenCalled()
+  })
+
+  it('without onFavoriteError a favorite request exception keeps the default toast', async () => {
+    renderController(ProductForm, baseProps())
+    await waitFor(() => expect(lastControllerProps.productObject.product).toBeTruthy())
+    global.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    await lastControllerProps.handleFavoriteProduct(detail.sampleProduct, true)
+    expect(detail.mockShowToast).toHaveBeenCalledTimes(1)
+    expect(detail.mockShowToast.mock.calls[0][1]).toEqual(['Failed to fetch'])
+  })
+
   it('updates suboption state and cart totals', async () => {
     renderController(ProductForm, baseProps())
     await waitFor(() => expect(lastControllerProps.productCart.total).toBeGreaterThan(0))
