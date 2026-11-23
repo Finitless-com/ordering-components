@@ -47,7 +47,7 @@ export const StoreProductOptions = (props) => {
   const [productState, setProductState] = useState({ product: null, extras: [], productExtraIds: [], loading: true, error: null })
   const [extraOptionsState, setExtraOptionsState] = useState({})
   const [extraSearch, setExtraSearch] = useState('')
-  const [updatingState, setUpdatingState] = useState({ extras: [], options: [], suboptions: [] })
+  const [updatingState, setUpdatingState] = useState({ extras: [], options: [], suboptions: [], products: [] })
   const requestRef = useRef(null)
   const productKeyRef = useRef(null)
   const extraRequestsRef = useRef({})
@@ -210,6 +210,51 @@ export const StoreProductOptions = (props) => {
     }
   }
 
+  /**
+   * Saves changes of the product itself: `{ enabled }`, `{ snooze_until: 'Y-m-d H:i:s' }` (UTC, in the future)
+   * or `{ enabled: true, snooze_until: '' }` to turn it on and clear its pause. The product of `productState` takes
+   * the saved values. Resolves with the saved fields, or null if it failed (an error toast is shown).
+   */
+  const handleUpdateProduct = async (changes = {}) => {
+    const key = `products:${productId}`
+    if (!businessId || !categoryId || !productId || updatingRef.current.has(key)) return null
+    updatingRef.current.add(key)
+    setUpdating('products', productId, true)
+    const productKey = productKeyRef.current
+    try {
+      const { content: { error, result } } = await ordering.post(
+        `/business/${businessId}/categories/${categoryId}/products/${productId}`,
+        changes,
+        { json: true, accessToken: token }
+      )
+      if (productKeyRef.current !== productKey) return null
+      if (error) {
+        showToast(ToastType.Error, getErrorMessage(result, t('ERROR', 'Error')))
+        return null
+      }
+      const saved = {}
+      Object.keys(changes).forEach(field => {
+        saved[field] = result && typeof result === 'object' && field in result
+          ? result[field]
+          : (changes[field] === '' ? null : changes[field])
+      })
+      setProductState(prev => prev.product ? { ...prev, product: { ...prev.product, ...saved } } : prev)
+      if (typeof saved.enabled === 'boolean') {
+        showToast(ToastType.Success, saved.enabled
+          ? t('ENABLED_PRODUCT', 'Enabled product')
+          : t('DISABLED_PRODUCT', 'Disabled product'))
+      }
+      return saved
+    } catch (err) {
+      if (productKeyRef.current !== productKey) return null
+      showToast(ToastType.Error, err?.message || t('ERROR', 'Error'))
+      return null
+    } finally {
+      updatingRef.current.delete(key)
+      setUpdating('products', productId, false)
+    }
+  }
+
   const handleUpdateOption = (extraId, optionId, enabled) => updateEntity({
     type: 'options',
     id: optionId,
@@ -272,6 +317,7 @@ export const StoreProductOptions = (props) => {
           updatingState={updatingState}
           handleLoadExtraOptions={handleLoadExtraOptions}
           handleChangeProductExtra={handleChangeProductExtra}
+          handleUpdateProduct={handleUpdateProduct}
           handleUpdateOption={handleUpdateOption}
           handleUpdateSuboption={handleUpdateSuboption}
           handleReload={getProduct}

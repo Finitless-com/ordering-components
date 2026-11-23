@@ -263,6 +263,67 @@ describe('OrderListGroups', () => {
     expect(orders.mockOrdersGet).toHaveBeenCalled()
   })
 
+  describe('customer filter', () => {
+    const lastWhere = () => {
+      const calls = orders.mockOrdersGet.mock.calls
+      return calls[calls.length - 1][0].query.where
+    }
+    const customerConditions = (where) => where.filter(w => w.attribute === 'customer')
+    const applyFilter = async (filtered, props = {}) => {
+      renderController(OrderListGroups, { isNetConnected: true, ...props })
+      await waitFor(() => expect(lastControllerProps.ordersGroup.pending.fetched).toBe(true))
+      orders.mockOrdersGet.mockClear()
+      act(() => { lastControllerProps.onFiltered(filtered) })
+      await waitFor(() => expect(orders.mockOrdersGet).toHaveBeenCalled())
+      await waitFor(() => expect(lastControllerProps.ordersFiltered.loading).toBe(false))
+    }
+
+    it('tells the UI the customer name filter exists', async () => {
+      renderController(OrderListGroups, { isNetConnected: true })
+      expect(lastControllerProps.supportsCustomerNameFilter).toBe(true)
+    })
+
+    it('adds a customer condition on name and lastname (ilike, encodeURI off iOS like the email and phone ones)', async () => {
+      await applyFilter({ customer: { name: 'John', lastname: 'Smith Jr' } })
+      expect(customerConditions(lastWhere())).toEqual([{
+        attribute: 'customer',
+        conditions: [
+          { attribute: 'name', value: { condition: 'ilike', value: '%25John%25' } },
+          { attribute: 'lastname', value: { condition: 'ilike', value: '%25Smith%20Jr%25' } }
+        ]
+      }])
+    })
+
+    it('does not url encode on iOS', async () => {
+      await applyFilter({ customer: { name: 'José' } }, { isIos: true })
+      expect(customerConditions(lastWhere())).toEqual([{
+        attribute: 'customer',
+        conditions: [{ attribute: 'name', value: { condition: 'ilike', value: '%José%' } }]
+      }])
+    })
+
+    it('keeps the email and phone condition separate and unchanged', async () => {
+      await applyFilter({ customer: { email: 'a@b.c', phone: '555', name: 'Ann' } })
+      const customers = customerConditions(lastWhere())
+      expect(customers).toHaveLength(2)
+      expect(customers[0].conditions.map(c => c.attribute)).toEqual(['email', 'cellphone'])
+      expect(customers[1].conditions.map(c => c.attribute)).toEqual(['name'])
+    })
+
+    it('ignores a blank name and adds nothing without a name', async () => {
+      await applyFilter({ customer: { name: '   ' } })
+      expect(customerConditions(lastWhere())).toEqual([])
+      await applyFilter({ id: '101' })
+      expect(customerConditions(lastWhere())).toEqual([])
+    })
+
+    it('puts the customer condition before the trailing OR group the list adds', async () => {
+      await applyFilter({ customer: { name: 'Ann' } })
+      const where = lastWhere()
+      expect(where.findIndex(w => w.attribute === 'customer')).toBeLessThan(where.findIndex(w => w.conector === 'OR'))
+    })
+  })
+
   it('rejects logistic assign requests', async () => {
     renderController(OrderListGroups, { isNetConnected: true })
     act(() => {

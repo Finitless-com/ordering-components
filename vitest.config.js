@@ -120,6 +120,7 @@ export default defineConfig({
         'src/components/ProductsList/**/*.{js,jsx}',
         'src/components/ProductsListing/**/*.{js,jsx}',
         'src/components/StoreProductList/**/*.{js,jsx}',
+        'src/components/StoreProductSearch/**/*.{js,jsx}',
         'src/components/BusinessAndProductList/**/*.{js,jsx}',
         'src/components/MenuControl/**/*.{js,jsx}',
         'src/components/ProductComponent/**/*.{js,jsx}',
