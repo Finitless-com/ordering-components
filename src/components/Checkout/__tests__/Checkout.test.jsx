@@ -76,6 +76,28 @@ describe('Checkout', () => {
     expect(cart.mockBusinessGet).toHaveBeenCalled()
   })
 
+  it('retries the initial business lookup with the same checkout parameters', async () => {
+    const error = new Error('Business unavailable')
+    const business = { id: 5, paymethods: [{ paymethod: { id: 1, gateway: 'cash' } }] }
+    cart.mockBusinessGet.mockRejectedValueOnce(error)
+    renderController(Checkout, { businessId: 5, cartState: { cart: { uuid: 'cart-uuid-5' } } })
+    await waitFor(() => expect(lastControllerProps.businessDetails).toEqual({ business: null, loading: false, error }))
+
+    let resolveBusiness
+    cart.mockBusinessGet.mockImplementationOnce(() => new Promise(resolve => { resolveBusiness = resolve }))
+    act(() => { lastControllerProps.retryBusinessDetails() })
+    expect(lastControllerProps.businessDetails.loading).toBe(true)
+    const lookup = cart.mockOrdering.businesses.mock.results[0].value
+    expect(cart.mockOrdering.businesses.mock.calls).toEqual([[5], [5]])
+    expect(lookup.select.mock.calls[1]).toEqual(lookup.select.mock.calls[0])
+    expect(lookup.parameters.mock.calls[1]).toEqual(lookup.parameters.mock.calls[0])
+
+    await act(async () => {
+      resolveBusiness({ content: { error: false, result: business } })
+    })
+    expect(lastControllerProps.businessDetails).toEqual({ business, loading: false, error: null })
+  })
+
   it('updates selected paymethod', async () => {
     renderController(Checkout, { businessId: 5 })
     await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))

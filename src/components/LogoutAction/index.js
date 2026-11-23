@@ -5,6 +5,7 @@ import { useApi } from '../../contexts/ApiContext'
 import { useConfig } from '../../contexts/ConfigContext'
 import { useOrder } from '../../contexts/OrderContext'
 import { useLanguage } from '../../contexts/LanguageContext'
+import { isValidFacebookAppId } from '../FacebookLoginButton'
 
 /**
  * Component to manage logout behavior without UI component
@@ -30,7 +31,7 @@ export const LogoutAction = (props) => {
   const [{ configs }] = useConfig()
 
   useEffect(() => {
-    if (configs?.facebook_id?.value && !isNative) {
+    if (isValidFacebookAppId(configs?.facebook_id?.value) && !isNative) {
       window.fbAsyncInit = () => {
         window.FB.init({
           appId: configs?.facebook_id?.value,

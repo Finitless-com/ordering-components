@@ -1,5 +1,5 @@
 /* eslint-disable camelcase */
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
 import { useOrder } from '../../contexts/OrderContext'
 import { useApi } from '../../contexts/ApiContext'
@@ -75,7 +75,8 @@ export const PaymentOptions = (props) => {
     usePaymenthodSelectedForV2
   } = props
 
-  const fetchPaymethods = isKiosk
+  const suppliedPaymethods = isKiosk ? undefined : paymethods
+  const fetchBusinessPaymethods = isKiosk || (!suppliedPaymethods && businessId && businessId !== -1)
   const [events] = useEvent()
   const [ordering] = useApi()
   const [{ getGiftCardPaymethods }] = useUtils()
@@ -88,7 +89,7 @@ export const PaymentOptions = (props) => {
   const [paymethodData, setPaymethodData] = useState({})
   const [isOpenMethod, setIsOpenMethod] = useState({ paymethod: null })
 
-  const requestsState = {}
+  const listRequest = useRef(0)
 
   const paymethodV2Featured = useMemo(() => {
     const paymethod = paymethodsList?.paymethods?.find(p => usePaymenthodSelectedForV2 ? (p.gateway === paymethodSelected?.gateway) : p.gateway === props.paySelected?.gateway)
@@ -115,32 +116,32 @@ export const PaymentOptions = (props) => {
   }
 
   const parsePaymethods = (paymethods) => {
-    const _paymethods = paymethods &&
-      filterPaymentMethods(paymethods)
-        .filter(credentials => isCustomerMode
-          ? !paymethodsNotAllowed.includes(credentials?.paymethod?.gateway) &&
-          paymethodsCallcenterMode.includes(credentials?.paymethod?.gateway)
-          : ![...paymethodsNotAllowed, stripeLink].includes(credentials?.paymethod?.gateway))
-        .map(credentials => {
-          const paymethod = {
-            ...credentials?.paymethod,
-            sandbox: credentials?.sandbox,
-            credentials: credentials?.data
-          }
-          const resolvedImage = getPaymethodImage(paymethod)
-          return {
-            ...paymethod,
-            image: resolvedImage ?? undefined
-          }
-        })
-    return _paymethods
+    if (!Array.isArray(paymethods)) return []
+    return filterPaymentMethods(paymethods)
+      .filter(credentials => isCustomerMode
+        ? !paymethodsNotAllowed.includes(credentials?.paymethod?.gateway) &&
+        paymethodsCallcenterMode.includes(credentials?.paymethod?.gateway)
+        : ![...paymethodsNotAllowed, stripeLink].includes(credentials?.paymethod?.gateway))
+      .map(credentials => {
+        const paymethod = {
+          ...credentials?.paymethod,
+          sandbox: credentials?.sandbox,
+          credentials: credentials?.data
+        }
+        const resolvedImage = getPaymethodImage(paymethod)
+        return {
+          ...paymethod,
+          image: resolvedImage ?? undefined
+        }
+      })
   }
 
   /**
    * Method to get payment options from API
    */
   const getPaymentOptions = async () => {
-    setPaymethodsList({ ...paymethodsList, loading: true })
+    const request = ++listRequest.current
+    setPaymethodsList({ paymethods: [], loading: true, error: null })
     const propsToFetch = ['id', 'name', 'paymethods']
     const headers = {
       'X-Physical-Device-Code-X': `${device_code}`
@@ -148,18 +149,16 @@ export const PaymentOptions = (props) => {
 
     try {
       const { content: { error, result } } = await ordering.businesses(businessId).select(propsToFetch).get(device_code ? { headers } : {})
-      if (!error) {
-        paymethodsList.paymethods = parsePaymethods(result.paymethods)
-      }
+      if (request !== listRequest.current) return
       setPaymethodsList({
-        ...paymethodsList,
         loading: false,
-        error: error ? result : null,
-        paymethods: error ? [] : parsePaymethods(result.paymethods)
+        error: error ? (result ?? error) : null,
+        paymethods: error ? [] : parsePaymethods(result?.paymethods)
       })
     } catch (error) {
+      if (request !== listRequest.current) return
       setPaymethodsList({
-        ...paymethodsList,
+        paymethods: [],
         loading: false,
         error: [error.message]
       })
@@ -266,41 +265,36 @@ export const PaymentOptions = (props) => {
   }, [paymethodSelected])
 
   useEffect(() => {
-    if (fetchPaymethods) {
+    const source = {}
+    if (fetchBusinessPaymethods) {
       getPaymentOptions()
-      return
-    }
-    if (paymethods) {
+    } else if (suppliedPaymethods) {
       setPaymethodsList({
-        ...paymethodsList,
         loading: isLoading,
-        paymethods: parsePaymethods(paymethods)
+        error: null,
+        paymethods: parsePaymethods(suppliedPaymethods)
       })
-    } else {
-      if (businessId) {
-        if (businessId === -1) {
-          const getPaymethods = async () => {
-            const source = {}
-            requestsState.list = source
-            const paymethod = await getGiftCardPaymethods(token, source)
-            setPaymethodsList({
-              ...paymethodsList,
-              loading: false,
-              paymethods: enrichPaymethodsWithImage(paymethod)
-            })
-          }
-          getPaymethods()
-        } else {
-          getPaymentOptions()
-        }
+    } else if (businessId === -1) {
+      const getPaymethods = async () => {
+        const request = ++listRequest.current
+        setPaymethodsList({ paymethods: [], loading: true, error: null })
+        const paymethods = await getGiftCardPaymethods(token, source)
+        if (request !== listRequest.current) return
+        setPaymethodsList({
+          error: null,
+          loading: false,
+          paymethods: enrichPaymethodsWithImage(paymethods)
+        })
       }
+      getPaymethods()
+    } else {
+      setPaymethodsList({ paymethods: [], loading: true, error: null })
     }
     return () => {
-      if (typeof requestsState?.list?.cancel === 'function') {
-        requestsState?.list?.cancel?.()
-      }
+      listRequest.current++
+      source.cancel?.()
     }
-  }, [isLoading, businessId])
+  }, [isLoading, businessId, suppliedPaymethods, fetchBusinessPaymethods, isCustomerMode, device_code, token])
 
   return (
     <>
@@ -313,6 +307,7 @@ export const PaymentOptions = (props) => {
           paymethodSelected={paymethodSelected}
           paymethodData={paymethodData}
           paymethodV2Featured={paymethodV2Featured}
+          retryPaymethods={fetchBusinessPaymethods ? getPaymentOptions : undefined}
           setPaymethodData={setPaymethodData}
           handlePaymethodClick={handlePaymethodClick}
           handlePaymethodDataChange={handlePaymethodDataChange}

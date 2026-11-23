@@ -48,11 +48,13 @@ vi.mock('../../../contexts/ToastContext', () => ({
   ToastType: { error: 'error', success: 'success' }
 }))
 
+const sessionMock = vi.hoisted(() => ({ token: 'session-tok' }))
+
 vi.mock('../../../contexts/SessionContext', () => ({
   useSession: () => [{
     auth: true,
     user: { id: 8 },
-    token: 'session-tok'
+    token: sessionMock.token
   }, { login: detail.mockLogin }]
 }))
 
@@ -87,7 +89,10 @@ vi.mock('../../../contexts/WebsocketContext', () => ({
 import { SingleProductCard } from '../index'
 
 describe('SingleProductCard', () => {
-  beforeEach(() => detail.reset())
+  beforeEach(() => {
+    detail.reset()
+    sessionMock.token = 'session-tok'
+  })
 
   it('tracks product clicks and delegates handler', async () => {
     const onProductClick = vi.fn()
@@ -103,6 +108,22 @@ describe('SingleProductCard', () => {
         expect.objectContaining({ method: 'POST' })
       )
     })
+  })
+
+  it('does not call tracking_events when there is no token', async () => {
+    sessionMock.token = null
+    const onProductClick = vi.fn()
+    renderController(SingleProductCard, {
+      product: { id: 10, name: 'Burger' },
+      onProductClick
+    })
+    lastControllerProps.onProductClick({ id: 10, name: 'Burger' }, { id: 5 })
+    expect(onProductClick).toHaveBeenCalled()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      'https://api.test/tracking_events',
+      expect.anything()
+    )
   })
 
   it('adds product to favorites and emits event', async () => {

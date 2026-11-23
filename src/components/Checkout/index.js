@@ -49,7 +49,8 @@ export const Checkout = (props) => {
     isCustomerMode,
     isListenOrderUpdate,
     handleOrderRedirect,
-    instructionsOptionsDefault
+    instructionsOptionsDefault,
+    enableCheckoutFieldsRetry
   } = props
 
   const [ordering] = useApi()
@@ -95,6 +96,7 @@ export const Checkout = (props) => {
    * Object to save an object with business information
    */
   const [businessDetails, setBusinessDetails] = useState({ business: null, loading: true, error: null })
+  const businessRequest = useRef(0)
   /**
    * This must be contains an object with info about paymente selected
    */
@@ -104,7 +106,8 @@ export const Checkout = (props) => {
    */
   const [loyaltyPlansState, setLoyaltyPlansState] = useState({ loading: true, error: null, result: [] })
 
-  const [checkoutFieldsState, setCheckoutFieldsState] = useState({ fields: [], loading: false, error: null })
+  const [checkoutFieldsState, setCheckoutFieldsState] = useState({ fields: [], loading: !!enableCheckoutFieldsRetry, error: null })
+  const checkoutFieldsRequest = useRef(0)
 
   const businessId = props.uuid
     ? Object.values(orderState.carts).find(_cart => _cart?.uuid === props.uuid)?.business_id ?? {}
@@ -207,6 +210,8 @@ export const Checkout = (props) => {
   const braintreeIFrameUrl = useMemo(() => `https://paypal-braintree.plugins.orderingplus.com/${ordering.project}/views/card_form/user/${user?.id}/business/${businessDetails?.business?.id}?access_token=${token}&language=${ordering.language}`, [ordering.project, ordering.language, user, businessDetails, token])
 
   const getBusiness = async () => {
+    const request = ++businessRequest.current
+    setBusinessDetails(current => ({ ...current, loading: true }))
     refreshConfigs()
     try {
       const parameters = {
@@ -214,6 +219,7 @@ export const Checkout = (props) => {
         version: 'v2'
       }
       const { content: { result, error } } = await ordering.businesses(businessId).select(propsToFetch).parameters(parameters).get()
+      if (request !== businessRequest.current) return
       if (!error && cartState.cart?.paymethod_id) {
         const paymethodSelected = result?.paymethods?.find(paymethod => paymethod?.paymethod_id === cartState.cart?.paymethod_id)
         if (paymethodSelected?.paymethod?.id) {
@@ -232,17 +238,17 @@ export const Checkout = (props) => {
         }
       }
       setBusinessDetails({
-        ...businessDetails,
         loading: false,
-        business: result,
-        error
+        business: error ? null : result,
+        error: error ? (result ?? error) : null
       })
     } catch (error) {
-      setBusinessDetails({
-        ...businessDetails,
+      if (request !== businessRequest.current) return
+      setBusinessDetails(current => ({
+        ...current,
         loading: false,
         error
-      })
+      }))
     }
   }
   /**
@@ -695,8 +701,13 @@ export const Checkout = (props) => {
   }
 
   const getValidationFieldOrderTypes = async () => {
+    const request = ++checkoutFieldsRequest.current
     try {
-      setCheckoutFieldsState({ ...checkoutFieldsState, loading: true })
+      setCheckoutFieldsState({
+        ...checkoutFieldsState,
+        loading: true,
+        error: enableCheckoutFieldsRetry ? null : checkoutFieldsState.error
+      })
 
       const requestOptions = {
         method: 'GET',
@@ -707,12 +718,19 @@ export const Checkout = (props) => {
       }
       const response = await fetch(`${ordering.root}/validation_field_order_types`, requestOptions)
       const content = await response.json()
-      if (!content?.error) {
+      if (enableCheckoutFieldsRetry && request !== checkoutFieldsRequest.current) return
+      const invalidResponse = enableCheckoutFieldsRetry && (response.ok === false || !Array.isArray(content?.result))
+      if (!content?.error && !invalidResponse) {
         setCheckoutFieldsState({ fields: content?.result, loading: false })
       } else {
-        setCheckoutFieldsState({ ...checkoutFieldsState, loading: false, error: content?.result })
+        setCheckoutFieldsState({
+          ...checkoutFieldsState,
+          loading: false,
+          error: enableCheckoutFieldsRetry ? (content?.result || true) : content?.result
+        })
       }
     } catch (err) {
+      if (enableCheckoutFieldsRetry && request !== checkoutFieldsRequest.current) return
       setCheckoutFieldsState({ ...checkoutFieldsState, loading: false, error: [err.message] })
     }
   }
@@ -779,6 +797,7 @@ export const Checkout = (props) => {
     if (businessId && typeof businessId === 'number') {
       getBusiness()
     }
+    return () => { businessRequest.current++ }
   }, [businessId, orderState.options?.type])
 
   /**
@@ -840,6 +859,7 @@ export const Checkout = (props) => {
       )
     }
     getValidationFieldOrderTypes()
+    return () => { checkoutFieldsRequest.current++ }
   }, [])
 
   return (
@@ -860,6 +880,7 @@ export const Checkout = (props) => {
           orderOptions={orderState.options}
           paymethodSelected={paymethodSelected}
           businessDetails={businessDetails}
+          retryBusinessDetails={getBusiness}
           commentState={commentState}
           placeSpotNumber={placeSpotNumber}
           setPlaceSpotNumber={setPlaceSpotNumber}
@@ -878,6 +899,7 @@ export const Checkout = (props) => {
           handleChangeDeliveryOption={handleChangeDeliveryOption}
           handleConfirmCredomaticPage={handleConfirmCredomaticPage}
           checkoutFieldsState={checkoutFieldsState}
+          {...(enableCheckoutFieldsRetry ? { retryCheckoutFields: getValidationFieldOrderTypes } : {})}
           globalPayIFrameUrl={globalPayIFrameUrl}
           cybersourceIFrameUrl={cybersourceIFrameUrl}
           braintreeIFrameUrl={braintreeIFrameUrl}
@@ -901,7 +923,11 @@ Checkout.propTypes = {
   /**
    * onPlaceOrderClick, function to get click event and return business object after default behavior
    */
-  onPlaceOrderClick: PropTypes.func
+  onPlaceOrderClick: PropTypes.func,
+  /**
+   * Start with checkout fields loading and expose retryCheckoutFields to UIComponent.
+   */
+  enableCheckoutFieldsRetry: PropTypes.bool
   // /**
   //  * handler values from other components
   //  */
