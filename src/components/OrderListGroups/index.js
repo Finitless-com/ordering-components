@@ -1272,16 +1272,28 @@ export const OrderListGroups = (props) => {
     [logisticOrders]
   )
 
+  // The handlers above are rebuilt when `logisticOrders` changes, but the effect below only re-runs
+  // with the socket, the session or the logistic flag. The ref keeps the registered listeners
+  // pointing at the handlers of the latest render, so they never read a stale `logisticOrders`,
+  // `orderLogisticAdded` or `orderLogisticUpdated`.
+  const assignRequestHandlersRef = useRef({})
+  assignRequestHandlersRef.current = {
+    request_register: handleAddAssignRequest,
+    request_update: handleUpdateAssignRequest,
+    request_cancel: handleDeleteAssignRequest
+  }
+
   useEffect(() => {
-    if (isLogisticActivated) {
-      socket.on('request_register', handleAddAssignRequest)
-      socket.on('request_update', handleUpdateAssignRequest)
-      socket.on('request_cancel', handleDeleteAssignRequest)
-    }
+    if (!isLogisticActivated) return
+    // The socket wrapper removes a listener by function reference, so keep the exact references
+    // that were registered and pass them to `off`
+    const registered = Object.keys(assignRequestHandlersRef.current).map((event) => ({
+      event,
+      handler: (order) => assignRequestHandlersRef.current[event]?.(order)
+    }))
+    registered.forEach(({ event, handler }) => socket.on(event, handler))
     return () => {
-      socket.off('request_register')
-      socket.off('request_update')
-      socket.off('request_cancel')
+      registered.forEach(({ event, handler }) => socket.off(event, handler))
     }
   }, [socket, session, isLogisticActivated])
 
