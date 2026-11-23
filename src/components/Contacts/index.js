@@ -383,6 +383,7 @@ export const Contacts = (props) => {
 
     return () => {
       socket.off('message', handleMessage)
+      socket.off('orders_register', handleOrder)
       socket.off('update_order', handleOrder)
     }
   }, [socket, user])

@@ -7,6 +7,14 @@ const RANDOMIZATION_FACTOR = 0.5
 const MANUAL_RECONNECT_BASE_MS = 1000
 const MANUAL_RECONNECT_MAX_MS = 60000
 const STABLE_CONNECTION_MS = 30000
+const SESSION_REJECTED_MESSAGE = 'invalid signature'
+
+/**
+ * True when a `connect_error` means the server rejected the session (the token), as opposed to a
+ * network failure. The wrapper does not schedule its own reconnection for these errors.
+ * @param {Error|{message?: string}} error error received in the `connect_error` event
+ */
+export const isSessionRejectedError = (error) => error?.message === SESSION_REJECTED_MESSAGE
 
 export class Socket {
   constructor ({ url, project, accessToken }) {
@@ -96,7 +104,7 @@ export class Socket {
 
   handleConnectError (error) {
     if (this.closed || this.socket?.active) return
-    if (error?.message === 'invalid signature') return
+    if (isSessionRejectedError(error)) return
     this.scheduleReconnect()
   }
 
