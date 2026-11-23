@@ -79,7 +79,7 @@ vi.mock('socket.io-client', () => {
   return { default: io }
 })
 
-const { Socket } = await import('../socket')
+const { Socket, isSessionRejectedError } = await import('../socket')
 
 const createSocket = () => {
   const socket = new Socket({ url: 'wss://sockets.test', project: 'demo', accessToken: 'token' })
@@ -448,6 +448,14 @@ describe('Socket', () => {
     io.simulateDisconnect()
     io.simulateConnect()
     expect(io.joins()).toEqual(['demo_orders_7'])
+  })
+
+  it('isSessionRejectedError matches only the error the wrapper stops retrying for', () => {
+    expect(isSessionRejectedError(new Error('invalid signature'))).toBe(true)
+    expect(isSessionRejectedError({ message: 'invalid signature' })).toBe(true)
+    expect(isSessionRejectedError(new Error('websocket error'))).toBe(false)
+    expect(isSessionRejectedError(undefined)).toBe(false)
+    expect(isSessionRejectedError(null)).toBe(false)
   })
 
   it('dispose closes the connection once and forgets rooms, pending leaves and queued listeners', () => {
