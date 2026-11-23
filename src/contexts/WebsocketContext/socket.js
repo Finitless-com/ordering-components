@@ -144,6 +144,19 @@ export class Socket {
     this.socket?.close()
   }
 
+  /**
+   * Close the connection and forget everything the wrapper was holding for it: rooms, pending
+   * leaves and listeners queued before the connection. Unlike `close`, which keeps the rooms so
+   * the same wrapper can connect again, this is for a wrapper that will not be used any more
+   * (superseded by another one, or the session it belonged to ended).
+   */
+  dispose () {
+    if (!this.closed) this.close()
+    Object.keys(this.pendingLeaves).forEach((key) => this.clearPendingLeave(key))
+    this.rooms = {}
+    this.queue = []
+  }
+
   join (room) {
     const key = this.roomKey(room)
     this.clearPendingLeave(key)
