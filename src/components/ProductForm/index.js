@@ -30,7 +30,8 @@ export const ProductForm = (props) => {
     handleUpdateProfessionals,
     handleChangeProfessional,
     setProductLoading,
-    typeCoupon
+    typeCoupon,
+    onFavoriteError
   } = props
 
   const requestsState = {}
@@ -288,7 +289,8 @@ export const ProductForm = (props) => {
         showToast(ToastType.Error, content.result)
       }
     } catch (error) {
-      showToast(ToastType.Error, [error.message])
+      if (onFavoriteError) onFavoriteError(error)
+      else showToast(ToastType.Error, [error.message])
     }
   }
 
@@ -306,9 +308,12 @@ export const ProductForm = (props) => {
         version: 'v2',
         type: orderState?.options?.type
       }
-      if (orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')) {
+      const hasValidMoment = orderState.options?.moment && isValidMoment(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss')
+      if (hasValidMoment) {
         const moment = dayjs.utc(orderState.options?.moment, 'YYYY-MM-DD HH:mm:ss').local().unix()
         parameters.timestamp = moment
+      } else if (props.showMenuWhenClosed && props.business?.open === false) {
+        parameters.ignore_menu_schedule = 1
       }
       const { content: { result, error } } = await ordering
         .businesses(props.businessId)
@@ -1137,6 +1142,8 @@ export const ProductForm = (props) => {
 }
 
 ProductForm.propTypes = {
+  /** Optional handler for a favorite request exception. Overrides the default toast. */
+  onFavoriteError: PropTypes.func,
   /**
    * UI Component, this must be containt all graphic elements and use parent props
    */
@@ -1168,11 +1175,20 @@ ProductForm.propTypes = {
   /**
    * Function to save event
    */
-  onSave: PropTypes.func
+  onSave: PropTypes.func,
+  /**
+   * When true and there is no valid moment (ASAP), ask the API to ignore the schedule once `business.open` is known to be false
+   */
+  showMenuWhenClosed: PropTypes.bool,
+  /**
+   * Business state used to check `business.open` when `showMenuWhenClosed` is set
+   */
+  business: PropTypes.object
 }
 
 const defaultProps = {
   productCart: {},
   useOrderContext: true,
-  balance: 0
+  balance: 0,
+  showMenuWhenClosed: false
 }

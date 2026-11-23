@@ -1,6 +1,9 @@
+import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { waitFor, act } from '@testing-library/react'
-import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
+import { waitFor, act, render } from '@testing-library/react'
+import { ControllerUI, renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
+import { EventProvider } from '../../../contexts/EventContext'
+import { PaymentOptions } from '../index'
 
 const pay = vi.hoisted(() => {
   const { createPaymentTestContext } = require('../../../__tests__/helpers/paymentTestHelpers')
@@ -54,8 +57,6 @@ vi.mock('../../../contexts/ApiContext', () => ({
 vi.mock('../../../contexts/WebsocketContext', () => ({
   useWebsocket: () => ({ getId: () => 'socket-15' })
 }))
-
-import { PaymentOptions } from '../index'
 
 describe('PaymentOptions', () => {
   beforeEach(() => pay.reset())
@@ -156,6 +157,61 @@ describe('PaymentOptions', () => {
     })
     expect(pay.mockBusinessGet).toHaveBeenCalled()
     expect(lastControllerProps.paymethodsList.paymethods).toHaveLength(1)
+  })
+
+  it.each([
+    ['omitted', { id: 5 }],
+    ['empty', { id: 5, paymethods: [] }]
+  ])('exposes an empty list when business paymethods are %s', async (_label, result) => {
+    pay.mockBusinessGet.mockResolvedValueOnce({ content: { error: false, result } })
+    renderController(PaymentOptions, { businessId: 5 })
+
+    await waitFor(() => expect(lastControllerProps.paymethodsList).toEqual({
+      paymethods: [], loading: false, error: null
+    }))
+  })
+
+  it('can retry a rejected payment methods request', async () => {
+    pay.mockBusinessGet.mockRejectedValueOnce(new Error('Provider unavailable'))
+    renderController(PaymentOptions, { businessId: 5 })
+
+    await waitFor(() => expect(lastControllerProps.paymethodsList).toEqual({
+      paymethods: [], loading: false, error: ['Provider unavailable']
+    }))
+    await act(async () => {
+      await lastControllerProps.retryPaymethods()
+    })
+    expect(lastControllerProps.paymethodsList).toMatchObject({ loading: false, error: null })
+    expect(lastControllerProps.paymethodsList.paymethods).toHaveLength(1)
+  })
+
+  it('ignores an old business retry after the current business supplies methods', async () => {
+    pay.mockBusinessGet.mockRejectedValueOnce(new Error('Provider unavailable'))
+    const { rerender } = render(<PaymentOptions businessId={6} UIComponent={ControllerUI} />, { wrapper: EventProvider })
+    await waitFor(() => expect(lastControllerProps.paymethodsList.error).toEqual(['Provider unavailable']))
+
+    let resolveOldBusiness
+    pay.mockBusinessGet.mockImplementationOnce(() => new Promise(resolve => { resolveOldBusiness = resolve }))
+    act(() => { lastControllerProps.retryPaymethods() })
+    const card = { id: 2, gateway: 'card_delivery', name: 'Card' }
+    rerender(<PaymentOptions businessId={9} paymethods={[{ paymethod: card }]} UIComponent={ControllerUI} />)
+    await waitFor(() => expect(lastControllerProps.paymethodsList.paymethods).toEqual([expect.objectContaining(card)]))
+
+    await act(async () => {
+      const oldCash = { id: 1, gateway: 'cash', name: 'Cash' }
+      resolveOldBusiness({ content: { error: false, result: { id: 6, paymethods: [{ paymethod: oldCash }] } } })
+    })
+    expect(lastControllerProps.paymethodsList.paymethods).toEqual([expect.objectContaining(card)])
+  })
+
+  it('replaces an error when the same business starts supplying its payment methods', async () => {
+    pay.mockBusinessGet.mockRejectedValueOnce(new Error('Provider unavailable'))
+    const { rerender } = render(<PaymentOptions businessId={6} isLoading={false} UIComponent={ControllerUI} />, { wrapper: EventProvider })
+    await waitFor(() => expect(lastControllerProps.paymethodsList.error).toEqual(['Provider unavailable']))
+
+    rerender(<PaymentOptions businessId={6} isLoading={false} paymethods={[]} UIComponent={ControllerUI} />)
+    await waitFor(() => expect(lastControllerProps.paymethodsList).toEqual({ loading: false, paymethods: [], error: null }))
+    expect(pay.mockBusinessGet).toHaveBeenCalledOnce()
   })
 
   it('opens popup flow for direct payment gateways', async () => {

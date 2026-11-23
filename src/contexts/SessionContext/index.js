@@ -1,7 +1,7 @@
 /* eslint-disable camelcase */
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react'
 import { useApi } from '../ApiContext'
-import { useToast, ToastType } from '../ToastContext'
+import { useToastActions, ToastType } from '../ToastContext'
 import { useLanguage } from '../LanguageContext'
 import { getSessionStorageSyncDecision } from './getSessionStorageSyncDecision'
 /**
@@ -25,7 +25,7 @@ export const SessionProvider = ({ children, strategy, checkInterval = 2000 }) =>
   })
   const stateRef = useRef(state)
   const [ordering] = useApi()
-  const [, { showToast }] = useToast()
+  const { showToast } = useToastActions()
   const [, t] = useLanguage()
 
   // Keep stateRef in sync with state

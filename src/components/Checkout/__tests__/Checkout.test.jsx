@@ -61,6 +61,28 @@ describe('Checkout', () => {
     expect(cart.mockBusinessGet).toHaveBeenCalled()
   })
 
+  it('retries the initial business lookup with the same checkout parameters', async () => {
+    const error = new Error('Business unavailable')
+    const business = { id: 5, paymethods: [{ paymethod: { id: 1, gateway: 'cash' } }] }
+    cart.mockBusinessGet.mockRejectedValueOnce(error)
+    renderController(Checkout, { businessId: 5, cartState: { cart: { uuid: 'cart-uuid-5' } } })
+    await waitFor(() => expect(lastControllerProps.businessDetails).toEqual({ business: null, loading: false, error }))
+
+    let resolveBusiness
+    cart.mockBusinessGet.mockImplementationOnce(() => new Promise(resolve => { resolveBusiness = resolve }))
+    act(() => { lastControllerProps.retryBusinessDetails() })
+    expect(lastControllerProps.businessDetails.loading).toBe(true)
+    const lookup = cart.mockOrdering.businesses.mock.results[0].value
+    expect(cart.mockOrdering.businesses.mock.calls).toEqual([[5], [5]])
+    expect(lookup.select.mock.calls[1]).toEqual(lookup.select.mock.calls[0])
+    expect(lookup.parameters.mock.calls[1]).toEqual(lookup.parameters.mock.calls[0])
+
+    await act(async () => {
+      resolveBusiness({ content: { error: false, result: business } })
+    })
+    expect(lastControllerProps.businessDetails).toEqual({ business, loading: false, error: null })
+  })
+
   it('updates selected paymethod', async () => {
     renderController(Checkout, { businessId: 5 })
     await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
@@ -98,6 +120,30 @@ describe('Checkout', () => {
       paymethod_id: 85,
       paymethod_data: { source_id: 'pm_1' }
     }))
+  })
+
+  it('places a braintree order without Forter fields or a client IP lookup', async () => {
+    const getForterToken = vi.fn(() => 'forter-tok')
+    const getForterMobileUid = vi.fn(() => 'forter-uid')
+    const fetchSpy = vi.spyOn(global, 'fetch')
+    renderController(Checkout, { businessId: 5, getForterToken, getForterMobileUid })
+    await waitFor(() => expect(lastControllerProps.businessDetails.loading).toBe(false))
+    const paymethod = {
+      paymethodId: 31,
+      gateway: 'braintree',
+      paymethod: { id: 31, gateway: 'braintree' },
+      data: { nonce: 'bt-nonce' }
+    }
+    await lastControllerProps.handlerClickPlaceOrder({}, {}, null, null, paymethod)
+    expect(cart.mockPlaceCart).toHaveBeenCalledWith('cart-uuid-5', expect.objectContaining({ paymethod_id: 31 }))
+    const payload = cart.mockPlaceCart.mock.calls[0][1]
+    expect(payload).not.toHaveProperty('forter_token')
+    expect(payload).not.toHaveProperty('forter_mobile_uid')
+    expect(payload).not.toHaveProperty('customer_ip')
+    expect(getForterToken).not.toHaveBeenCalled()
+    expect(getForterMobileUid).not.toHaveBeenCalled()
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('ipify'))).toBe(false)
+    fetchSpy.mockRestore()
   })
 
   it('waits for eat-in spot save before placing', async () => {

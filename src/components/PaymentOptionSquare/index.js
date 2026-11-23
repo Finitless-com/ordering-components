@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import propTypes from 'prop-types'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useSession } from '../../contexts/SessionContext'
@@ -11,7 +11,9 @@ export const PaymentOptionSquare = (props) => {
     onPlaceOrderClick,
     body,
     data,
-    setCreateOrder
+    setCreateOrder,
+    singleFlight,
+    beforePlace
   } = props
 
   const [, t] = useLanguage()
@@ -22,6 +24,15 @@ export const PaymentOptionSquare = (props) => {
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMethod, setIsLoadingMethod] = useState(false)
   const [isLoadingPlace, setIsLoadingPlace] = useState(false)
+  // Opt-in `singleFlight`: one attempt at a time across card, ACH and gift card. The handlers are bound
+  // once to the DOM buttons, so the lock lives in refs (state would be stale inside them)
+  const flightRef = useRef(false)
+  const pendingConfirmRef = useRef(false)
+  const [pendingConfirm, setPendingConfirmState] = useState(false)
+  const setPendingConfirm = (value) => {
+    pendingConfirmRef.current = value
+    setPendingConfirmState(value)
+  }
 
   const [alertState, setAlertState] = useState({ open: false, content: [] })
   const [payments, setPayments] = useState(null)
@@ -38,6 +49,34 @@ export const PaymentOptionSquare = (props) => {
     paymethod_id: body.paymethod_id,
     amount: body.amount,
     delivery_zone_id: body.delivery_zone_id
+  }
+
+  // Takes the lock, synchronously: a second activation while a token is pending finds it taken.
+  // A cart already placed whose confirmation failed (ACH) blocks every new attempt too.
+  const takeFlight = () => {
+    if (!singleFlight) return true
+    if (flightRef.current || pendingConfirmRef.current) return false
+    flightRef.current = true
+    return true
+  }
+
+  // `beforePlace` (singleFlight only) is asked inside the lock, before the token: false stops the attempt
+  const mayPlace = async () => !(singleFlight && beforePlace) || !!(await beforePlace())
+
+  // What an attempt sends: a copy of its own with singleFlight, else the shared object as before
+  const attemptParams = (token) => {
+    if (!singleFlight) {
+      params.paymethod_data = { token }
+      return params
+    }
+    return { ...params, paymethod_data: { token } }
+  }
+
+  // Ends an attempt that did not leave the page busy for good: the loading and the lock go away
+  const endAttempt = () => {
+    if (singleFlight) flightRef.current = false
+    setCreateOrder && setCreateOrder(false)
+    setIsLoadingPlace(false)
   }
 
   useEffect(() => {
@@ -84,14 +123,18 @@ export const PaymentOptionSquare = (props) => {
 
     const eventHandler = async (e) => {
       e.preventDefault()
+      if (!takeFlight()) return
 
       setIsLoadingPlace(true)
       setCreateOrder && setCreateOrder(true)
       try {
+        if (!(await mayPlace())) {
+          endAttempt()
+          return
+        }
         const result = await card.tokenize()
         if (result.status === 'OK') {
-          params.paymethod_data = { token: result.token }
-          const response = await placeCart(body.cartUuid, params)
+          const response = await placeCart(body.cartUuid, attemptParams(result.token))
           if (!response?.error && response?.result) {
             onPlaceOrderClick(null, null, response?.result)
             return
@@ -115,8 +158,7 @@ export const PaymentOptionSquare = (props) => {
           content: e.message
         })
       }
-      setCreateOrder && setCreateOrder(false)
-      setIsLoadingPlace(false)
+      endAttempt()
     }
 
     const cardButton = document.getElementById('card-button')
@@ -130,15 +172,26 @@ export const PaymentOptionSquare = (props) => {
 
     const eventHandler = async (e) => {
       e.preventDefault()
+      if (!takeFlight()) return
+      // singleFlight: the loading starts with the attempt, not after the token
+      if (singleFlight) {
+        setIsLoadingPlace(true)
+        setCreateOrder && setCreateOrder(true)
+      }
       try {
+        if (!(await mayPlace())) {
+          endAttempt()
+          return
+        }
         const result = await ach.tokenize({
           accountHolderName: user?.name
         })
         if (result.status === 'OK') {
-          setIsLoadingPlace(true)
-          setCreateOrder && setCreateOrder(true)
-          params.paymethod_data = { token: result.token }
-          const response = await placeCart(body.cartUuid, params)
+          if (!singleFlight) {
+            setIsLoadingPlace(true)
+            setCreateOrder && setCreateOrder(true)
+          }
+          const response = await placeCart(body.cartUuid, attemptParams(result.token))
           if (!response?.error && response?.result) {
             const resultConfirm = await confirmCart(body.cartUuid)
             if (!resultConfirm?.error && resultConfirm?.result) {
@@ -149,6 +202,12 @@ export const PaymentOptionSquare = (props) => {
               open: true,
               content: resultConfirm
             })
+            // singleFlight: the cart is placed and only its confirmation is missing: it is retried with
+            // retryConfirm, never placed again. Before: the loading stayed on.
+            if (singleFlight) {
+              setPendingConfirm(true)
+              endAttempt()
+            }
             return
           }
           if (response?.result) {
@@ -164,9 +223,9 @@ export const PaymentOptionSquare = (props) => {
           content: e.message
         })
       }
-      setIsLoadingPlace(false)
-      setCreateOrder && setCreateOrder(false)
+      endAttempt()
     }
+
     const achButton = document.getElementById('ach-button')
     achButton.addEventListener('click', eventHandler)
   }
@@ -178,13 +237,17 @@ export const PaymentOptionSquare = (props) => {
     setIsLoadingMethod(false)
     const eventHandler = async (e) => {
       e.preventDefault()
+      if (!takeFlight()) return
       setIsLoadingPlace(true)
       setCreateOrder && setCreateOrder(true)
       try {
+        if (!(await mayPlace())) {
+          endAttempt()
+          return
+        }
         const result = await giftCard.tokenize()
         if (result.status === 'OK') {
-          params.paymethod_data = { token: result.token }
-          const response = await placeCart(body.cartUuid, params)
+          const response = await placeCart(body.cartUuid, attemptParams(result.token))
           if (!response?.error && response?.result) {
             onPlaceOrderClick(null, null, response?.result)
             return
@@ -202,9 +265,9 @@ export const PaymentOptionSquare = (props) => {
           content: e.message
         })
       }
-      setIsLoadingPlace(false)
-      setCreateOrder && setCreateOrder(false)
+      endAttempt()
     }
+
     const giftCardButton = document.getElementById('gift-card-button')
     giftCardButton.addEventListener('click', eventHandler)
   }
@@ -274,6 +337,32 @@ export const PaymentOptionSquare = (props) => {
     googlePayButtonTarget.addEventListener('click', eventHandler)
   }
 
+  // singleFlight: asks again for the confirmation of an ACH cart already placed (never places it again)
+  const retryConfirm = async () => {
+    if (!singleFlight || !pendingConfirmRef.current || flightRef.current) return
+    flightRef.current = true
+    setIsLoadingPlace(true)
+    setCreateOrder && setCreateOrder(true)
+    try {
+      const resultConfirm = await confirmCart(body.cartUuid)
+      if (!resultConfirm?.error && resultConfirm?.result) {
+        setPendingConfirm(false)
+        onPlaceOrderClick(null, null, resultConfirm?.result)
+        return
+      }
+      setAlertState({
+        open: true,
+        content: resultConfirm
+      })
+    } catch (e) {
+      setAlertState({
+        open: true,
+        content: e.message
+      })
+    }
+    endAttempt()
+  }
+
   const handleChangeMethodSelected = (method) => {
     setDigitalWalletPaymethod(null)
     setMethodSelected(method)
@@ -310,6 +399,8 @@ export const PaymentOptionSquare = (props) => {
           setAlertState={setAlertState}
           applePay={applePay}
           isLoadingPlace={isLoadingPlace}
+          pendingConfirm={singleFlight ? pendingConfirm : undefined}
+          retryConfirm={singleFlight ? retryConfirm : undefined}
         />
       )}
     </>

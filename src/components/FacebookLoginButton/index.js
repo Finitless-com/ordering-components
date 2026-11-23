@@ -3,6 +3,13 @@ import PropTypes from 'prop-types'
 import { useApi } from '../../contexts/ApiContext'
 import { useSession } from '../../contexts/SessionContext'
 
+/** Digits-only, non-zero id check; replicates web's `validFacebookPixelId` since this submodule can't import it. */
+export const isValidFacebookAppId = (value) => {
+  if (value == null || value === 0 || value === '') return false
+  const text = String(value).trim()
+  return /^\d+$/.test(text) && text !== '0'
+}
+
 /**
  * Component to manage Facebook login behavior without UI component
  */
@@ -28,6 +35,9 @@ export const FacebookLoginButton = (props) => {
   let wasUnmounted = false
 
   useEffect(() => {
+    if (!isValidFacebookAppId(appId)) {
+      return
+    }
     if (window.document.getElementById('facebook-jssdk')) {
       return
     }

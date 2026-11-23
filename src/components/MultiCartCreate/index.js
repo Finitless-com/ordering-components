@@ -1,14 +1,17 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
 import { useApi } from '../../contexts/ApiContext'
 import { useOrder } from '../../contexts/OrderContext'
 import { useSession } from '../../contexts/SessionContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+import { normalizeCartUuid } from '../../utils/normalizeCartUuid'
+import { getEligibleCartUuids } from './getEligibleCartUuids'
 
 export const MultiCartCreate = (props) => {
   const {
     UIComponent,
     userId,
+    recoverMalformedRefresh,
     handleOnRedirectCheckout,
     handleOnRedirectMultiCheckout
   } = props
@@ -18,44 +21,107 @@ export const MultiCartCreate = (props) => {
   const socket = useWebsocket()
   const [orderState, { refreshOrderOptions }] = useOrder()
 
-  const createMultiCart = async () => {
-    const cartList = Object.values(orderState?.carts).filter(cart => cart?.valid && cart?.status !== 2 && cart?.business_id).map(cart => cart?.uuid)
-    if (cartList?.length === 1) {
-      handleOnRedirectCheckout &&
-      handleOnRedirectCheckout(cartList?.[0])
-    }
+  const [groupCreationFailed, setGroupCreationFailed] = useState(false)
+  const [refreshFailedGroup, setRefreshFailedGroup] = useState(null)
+  const [retryingRefresh, setRetryingRefresh] = useState(false)
+  const [retryRefreshFailed, setRetryRefreshFailed] = useState(false)
+  const retryInFlight = useRef(false)
+  const creationStarted = useRef(false)
+  const mounted = useRef(false)
 
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+
+  const createMultiCart = async (cartList) => {
     const body = { carts: cartList }
     if (userId) body.user_id = userId
 
-    const response = await fetch(`${ordering.root}/cart_groups`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'X-App-X': ordering.appId,
-        'X-INTERNAL-PRODUCT-X': ordering.appInternalName,
-        'X-Socket-Id-X': socket?.getId(),
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    })
-    const { result, error } = await response.json()
-    await refreshOrderOptions()
-    if (!error) {
-      handleOnRedirectMultiCheckout &&
-      handleOnRedirectMultiCheckout(result?.uuid)
+    let uuid
+    try {
+      const response = await fetch(`${ordering.root}/cart_groups`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-App-X': ordering.appId,
+          'X-INTERNAL-PRODUCT-X': ordering.appInternalName,
+          'X-Socket-Id-X': socket?.getId(),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      })
+      const payload = await response.json()
+      if (!payload?.error) uuid = normalizeCartUuid(payload?.result?.uuid)
+    } catch {
+      if (mounted.current) setGroupCreationFailed(true)
+      return
     }
+
+    if (!mounted.current) return
+
+    if (!uuid) {
+      setGroupCreationFailed(true)
+      return
+    }
+
+    const refresh = recoverMalformedRefresh
+      ? await refreshOrderOptions({ deferMalformedResponse: true })
+      : await refreshOrderOptions()
+    if (!mounted.current || refresh?.status === 401) return
+    if (recoverMalformedRefresh && refresh?.invalidResponse) {
+      setRefreshFailedGroup(uuid)
+      return
+    }
+    handleOnRedirectMultiCheckout?.(uuid)
+  }
+
+  const retryRefresh = async () => {
+    if (retryInFlight.current) return
+    retryInFlight.current = true
+    setRetryingRefresh(true)
+    setRetryRefreshFailed(false)
+    let refreshed
+    try {
+      refreshed = await refreshOrderOptions({ deferMalformedResponse: true, recovering: true })
+    } catch {
+      refreshed = false
+    } finally {
+      retryInFlight.current = false
+    }
+    if (!mounted.current) return
+
+    setRetryingRefresh(false)
+    if (refreshed !== true) {
+      setRetryRefreshFailed(true)
+      return
+    }
+    setRefreshFailedGroup(null)
+    handleOnRedirectMultiCheckout?.(refreshFailedGroup)
   }
 
   useEffect(() => {
-    createMultiCart()
-  }, [])
+    if (orderState?.loading || creationStarted.current) return
+    const cartList = getEligibleCartUuids(orderState?.carts)
+    if (!cartList.length) return
+
+    creationStarted.current = true
+    if (cartList.length === 1 && handleOnRedirectCheckout) {
+      handleOnRedirectCheckout(cartList[0])
+      return
+    }
+    createMultiCart(cartList)
+  }, [orderState?.loading, orderState?.carts])
 
   return (
     <>
       {UIComponent && (
         <UIComponent
           {...props}
+          groupCreationFailed={groupCreationFailed}
+          onRetryRefresh={refreshFailedGroup ? retryRefresh : undefined}
+          retryingRefresh={retryingRefresh}
+          retryRefreshFailed={retryRefreshFailed}
         />
       )}
     </>

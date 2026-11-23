@@ -128,6 +128,34 @@ describe('MultiCheckout', () => {
     expect(onPlaceOrderClick).toHaveBeenCalled()
   })
 
+  it('places a braintree multi-cart order without Forter fields or a client IP lookup', async () => {
+    const getForterToken = vi.fn(() => 'forter-tok')
+    const getForterMobileUid = vi.fn(() => 'forter-uid')
+    renderController(MultiCheckout, {
+      cartUuid: 'group-uuid-1',
+      onPlaceOrderClick: vi.fn(),
+      getForterToken,
+      getForterMobileUid
+    })
+    await waitFor(() => expect(lastControllerProps.cartGroup.loading).toBe(false))
+    lastControllerProps.handleSelectPaymethod({ paymethod: { id: 31, gateway: 'braintree' }, paymethod_data: { nonce: 'bt-nonce' } })
+    await waitFor(() => expect(lastControllerProps.paymethodSelected.paymethod?.id).toBe(31))
+    const fetchSpy = vi.spyOn(global, 'fetch')
+    await lastControllerProps.handleGroupPlaceOrder()
+    expect(cart.mockPlaceMultiCarts).toHaveBeenCalledWith(
+      expect.objectContaining({ paymethod_id: 31 }),
+      'group-uuid-1'
+    )
+    const payload = cart.mockPlaceMultiCarts.mock.calls[0][0]
+    expect(payload).not.toHaveProperty('forter_token')
+    expect(payload).not.toHaveProperty('forter_mobile_uid')
+    expect(payload).not.toHaveProperty('customer_ip')
+    expect(getForterToken).not.toHaveBeenCalled()
+    expect(getForterMobileUid).not.toHaveBeenCalled()
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('ipify'))).toBe(false)
+    fetchSpy.mockRestore()
+  })
+
   it('places multi-cart with remaining group balance', async () => {
     const originalFetch = global.fetch
     global.fetch = vi.fn(async (url, options = {}) => {

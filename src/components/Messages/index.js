@@ -11,7 +11,8 @@ export const Messages = (props) => {
     customHandleSend,
     messages,
     setMessages,
-    notificationApp
+    notificationApp,
+    includeResponse
   } = props
 
   const [ordering] = useApi()
@@ -68,8 +69,10 @@ export const Messages = (props) => {
         headers,
         body: JSON.stringify(body)
       })
-      const { error, result } = await response.json()
-      if (!error) {
+      const payload = await response.json()
+      const { error, result } = includeResponse ? payload ?? {} : payload
+      const success = includeResponse ? response.ok && error === false && result?.id != null : !error
+      if (success) {
         setMessages({
           ...messages,
           messages: [
@@ -78,9 +81,17 @@ export const Messages = (props) => {
           ]
         })
       }
-      setSendMessages({ loading: false, error: error ? result : null })
+      setSendMessages({
+        loading: false,
+        error: error ? result : null,
+        ...(includeResponse && { outcome: { success, response: payload } })
+      })
     } catch (error) {
-      setSendMessages({ loading: false, error: [error.message] })
+      setSendMessages({
+        loading: false,
+        error: [error.message],
+        ...(includeResponse && { outcome: { success: false, response: null } })
+      })
     }
   }
 
@@ -136,5 +147,7 @@ Messages.propTypes = {
    * @param {object} message
    * handleCustomClick, function to get click event and return message without default behavior
    */
-  customHandleSend: PropTypes.func
+  customHandleSend: PropTypes.func,
+  /** Expose sendMessage.outcome with the full response and delivery status. */
+  includeResponse: PropTypes.bool
 }

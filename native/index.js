@@ -86,6 +86,8 @@ import { SingleOrderCard } from '../src/components/SingleOrderCard'
 import { SingleProductCard } from '../src/components/SingleProductCard'
 import { SingleProfessionalCard } from '../src/components/SingleProfessionalCard'
 import { StoreProductList } from '../src/components/StoreProductList'
+import { StoreProductSearch } from '../src/components/StoreProductSearch'
+import { isProductUnavailable } from '../src/components/StoreProductSearch/utils'
 import { StoreProductOptions } from '../src/components/StoreProductOptions'
 import { StripeConnectAccount } from '../src/components/StripeConnectAccount'
 import { StripeElementsForm } from '../src/components/StripeElementsForm'
@@ -105,13 +107,13 @@ import { SiteContext, SiteProvider, useSite } from '../src/contexts/SiteContext'
 import { CustomerContext, CustomerProvider, useCustomer } from '../src/contexts/CustomerContext'
 import { EventContext, EventProvider, useEvent } from '../src/contexts/EventContext'
 import { LanguageContext, LanguageProvider, useLanguage } from '../src/contexts/LanguageContext'
-import { OrderContext, OrderProvider, useOrder } from '../src/contexts/OrderContext'
+import { OrderContext, OrderProvider, useOrder, useOrderState, useOrderActions } from '../src/contexts/OrderContext'
 import { SessionContext, SessionProvider, useSession } from '../src/contexts/SessionContext'
 import { UtilsContext, UtilsProviders, useUtils } from '../src/contexts/UtilsContext'
 import { ValidationFieldsContext, useValidationFields, ValidationFieldsProvider } from '../src/contexts/ValidationsFieldsContext'
 import { WebsocketContext, WebsocketProvider, useWebsocket } from '../src/contexts/WebsocketContext'
 import { OrderingContext, OrderingProvider } from './src/contexts/OrderingContext'
-import { ToastType, ToastContext, ToastProvider, useToast } from '../src/contexts/ToastContext'
+import { ToastType, ToastContext, ToastProvider, useToast, useToastActions } from '../src/contexts/ToastContext'
 import { OrderingThemeContext, OrderingThemeProvider, useOrderingTheme } from '../src/contexts/OrderingThemeContext'
 import { createMergedTheme } from '../src/utils/themeUtils'
 import {
@@ -218,6 +220,8 @@ export {
   SingleProductCard,
   SingleProfessionalCard,
   StoreProductList,
+  StoreProductSearch,
+  isProductUnavailable,
   StoreProductOptions,
   StripeConnectAccount,
   StripeElementsForm,
@@ -253,6 +257,8 @@ export {
   OrderContext,
   OrderProvider,
   useOrder,
+  useOrderState,
+  useOrderActions,
   OrderingContext,
   OrderingProvider,
   SessionContext,
@@ -271,6 +277,7 @@ export {
   ToastContext,
   ToastProvider,
   useToast,
+  useToastActions,
   OrderingThemeContext,
   OrderingThemeProvider,
   useOrderingTheme,

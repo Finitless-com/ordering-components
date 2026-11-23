@@ -197,6 +197,16 @@ describe('themeUtils', () => {
       expect(merged.colors.activeContrast).toBe('#444')
     })
 
+    it('maps baked primary colors when the app has no API theme', () => {
+      const fromNull = createMergedTheme(baseTheme, null, { isApp: true })
+      const fromEmpty = createMergedTheme(baseTheme, {}, { isApp: true })
+
+      expect(fromNull.colors.active).toBe('#111')
+      expect(fromNull.colors.activeContrast).toBe('#444')
+      expect(fromEmpty.colors.active).toBe('#111')
+      expect(fromEmpty.colors.activeContrast).toBe('#444')
+    })
+
     it('falls back to base theme images when API paths are missing', () => {
       const sparseTheme = {
         theme: {

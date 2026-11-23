@@ -101,6 +101,36 @@ describe('OrderDetails', () => {
     expect(lastControllerProps.messages.messages).toHaveLength(1)
   })
 
+  it('does not request chat messages when the caller disables them', async () => {
+    await act(async () => {
+      renderController(OrderDetails, { orderId: 101, order: orderProp, disableMessages: true })
+    })
+    expect(lastControllerProps.order.order.id).toBe(101)
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      'https://api.test/orders/101/messages',
+      expect.anything()
+    )
+  })
+
+  it('leaves chat when disabled and keeps order and driver tracking active', async () => {
+    const { rerender } = render(
+      <OrderDetails UIComponent={ControllerUI} orderId={101} order={orderProp} />
+    )
+    await waitFor(() => expect(orders.mockSocket.on).toHaveBeenCalledWith('message', expect.any(Function)))
+    expect(orders.mockSocket.join).toHaveBeenCalledWith('messages_orders')
+
+    act(() => {
+      rerender(<OrderDetails UIComponent={ControllerUI} orderId={101} order={orderProp} disableMessages />)
+    })
+    expect(orders.mockSocket.leave).toHaveBeenCalledWith('messages_orders')
+    expect(orders.mockSocket.off).toHaveBeenCalledWith('message', expect.any(Function))
+    orders.mockSocket.join.mockClear()
+    orders.mockSocket.on.mockClear()
+    renderController(OrderDetails, { orderId: 101, order: orderProp, disableMessages: true })
+    expect(orders.mockSocket.join.mock.calls).toEqual([['orders']])
+    expect(orders.mockSocket.on.mock.calls.map(([event]) => event)).toEqual(['tracking_driver', 'update_order'])
+  })
+
   it('sends parking spot message to customer', async () => {
     renderController(OrderDetails, { orderId: 101, order: orderProp })
     await act(async () => {
@@ -181,6 +211,26 @@ describe('OrderDetails', () => {
     expect(lastControllerProps.order.order.id).toBe(101)
     expect(orders.mockOrderGet).toHaveBeenCalled()
     expect(orders.mockBusinessGet).toHaveBeenCalled()
+  })
+
+  it('does not ask for messages while there is no order (it could not load)', async () => {
+    orders.mockOrderGet.mockResolvedValue({ content: { error: true, result: ['ERROR_ORDER_FIND'] } })
+    renderController(OrderDetails, { orderId: 999 })
+    await waitFor(() => {
+      expect(lastControllerProps.order.loading).toBe(false)
+    })
+    expect(lastControllerProps.order.error).toEqual(['ERROR_ORDER_FIND'])
+    const messageCalls = global.fetch.mock.calls.filter(([url]) => String(url).includes('/messages'))
+    expect(messageCalls).toEqual([])
+  })
+
+  it('asks for the messages of the order once it has loaded', async () => {
+    renderController(OrderDetails, { orderId: 101 })
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith('https://api.test/orders/101/messages', expect.anything())
+    })
+    const urls = global.fetch.mock.calls.map(([url]) => String(url))
+    expect(urls.some(url => url.includes('undefined'))).toBe(false)
   })
 
   it('cancels the previous order GET when orderId changes and ignores a late response', async () => {
@@ -343,6 +393,98 @@ describe('OrderDetails', () => {
       expect(lastControllerProps.loyaltyPlansState.loading).toBe(false)
     })
     expect(lastControllerProps.loyaltyPlansState.result).toHaveLength(1)
+  })
+
+  describe('clearErrorOnAction (opt-in)', () => {
+    const failStatus = () => orders.mockOrderSave.mockResolvedValueOnce({
+      content: { error: true, result: ['not allowed'], error_codes: ['order.other'], retry_after: 5 }
+    })
+
+    it('keeps the error of a failed status change after a successful retry by default', async () => {
+      failStatus()
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder })
+      await act(async () => { await lastControllerProps.handleChangeOrderStatus(7) })
+      await waitFor(() => expect(lastControllerProps.order.error).toEqual(['not allowed']))
+      orders.mockOrderSave.mockResolvedValueOnce({ content: { error: false, result: { id: 101, status: 7 } } })
+      await act(async () => { await lastControllerProps.handleChangeOrderStatus(7) })
+      expect(lastControllerProps.order.error).toEqual(['not allowed'])
+    })
+
+    it('clears the error when a new status change starts and when it succeeds', async () => {
+      failStatus()
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder, clearErrorOnAction: true })
+      await act(async () => { await lastControllerProps.handleChangeOrderStatus(7) })
+      await waitFor(() => expect(lastControllerProps.order.error).toEqual(['not allowed']))
+      expect(lastControllerProps.order.errorCodes).toEqual(['order.other'])
+      expect(lastControllerProps.order.retryAfter).toBe(5)
+
+      let resolveSave
+      orders.mockOrderSave.mockReturnValueOnce(new Promise(resolve => { resolveSave = resolve }))
+      let pending
+      act(() => { pending = lastControllerProps.handleChangeOrderStatus(7) })
+      await waitFor(() => expect(lastControllerProps.order.loading).toBe(true))
+      expect(lastControllerProps.order.error).toBeNull()
+      await act(async () => {
+        resolveSave({ content: { error: false, result: { id: 101, status: 7 } } })
+        await pending
+      })
+      expect(lastControllerProps.order.error).toBeNull()
+      expect(lastControllerProps.order.errorCodes).toBeNull()
+      expect(lastControllerProps.order.retryAfter).toBeNull()
+      expect(lastControllerProps.order.order.status).toBe(7)
+    })
+
+    it('replaces the error with the new one when the retry fails again', async () => {
+      failStatus()
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder, clearErrorOnAction: true })
+      await act(async () => { await lastControllerProps.handleChangeOrderStatus(7) })
+      orders.mockOrderSave.mockResolvedValueOnce({ content: { error: true, result: ['still blocked'] } })
+      await act(async () => { await lastControllerProps.handleChangeOrderStatus(7) })
+      await waitFor(() => expect(lastControllerProps.order.error).toEqual(['still blocked']))
+    })
+
+    it('clears the error when a thrown request is retried', async () => {
+      orders.mockOrderSave.mockRejectedValueOnce(new Error('offline'))
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder, clearErrorOnAction: true })
+      await act(async () => { await lastControllerProps.handleChangeOrderStatus(7) })
+      await waitFor(() => expect(lastControllerProps.order.error).toEqual(['offline']))
+      orders.mockOrderSave.mockResolvedValueOnce({ content: { error: false, result: { id: 101, status: 7 } } })
+      await act(async () => { await lastControllerProps.handleChangeOrderStatus(7) })
+      expect(lastControllerProps.order.error).toBeNull()
+    })
+
+    it('clears the error of a failed driver assignment on retry and does not merge the error list into the order', async () => {
+      orders.mockOrderSave.mockResolvedValueOnce({ content: { error: true, result: ['driver busy'] } })
+      renderController(OrderDetails, { orderId: 101, order: { ...orders.sampleOrder }, clearErrorOnAction: true })
+      await act(async () => { await lastControllerProps.handleAssignDriver(4) })
+      await waitFor(() => expect(lastControllerProps.order.error).toEqual(['driver busy']))
+      expect(lastControllerProps.order.order[0]).toBeUndefined()
+      orders.mockOrderSave.mockResolvedValueOnce({ content: { error: false, result: { id: 101, driver_id: 4 } } })
+      await act(async () => { await lastControllerProps.handleAssignDriver(4) })
+      expect(lastControllerProps.order.error).toBeNull()
+      expect(lastControllerProps.order.order.driver_id).toBe(4)
+    })
+
+    it('keeps the old driver assignment behaviour without the prop (error list merged into the order)', async () => {
+      orders.mockOrderSave.mockResolvedValueOnce({ content: { error: true, result: ['driver busy'] } })
+      renderController(OrderDetails, { orderId: 101, order: { ...orders.sampleOrder } })
+      await act(async () => { await lastControllerProps.handleAssignDriver(4) })
+      await waitFor(() => expect(lastControllerProps.order.error).toEqual(['driver busy']))
+      expect(lastControllerProps.order.order[0]).toBe('driver busy')
+    })
+
+    it('exposes clearError, which only resets the error fields', async () => {
+      failStatus()
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder })
+      await act(async () => { await lastControllerProps.handleChangeOrderStatus(7) })
+      await waitFor(() => expect(lastControllerProps.order.error).toEqual(['not allowed']))
+      act(() => lastControllerProps.clearError())
+      expect(lastControllerProps.order.error).toBeNull()
+      expect(lastControllerProps.order.errorCodes).toBeNull()
+      expect(lastControllerProps.order.retryAfter).toBeNull()
+      expect(lastControllerProps.order.order.id).toBe(101)
+      expect(lastControllerProps.order.loading).toBe(false)
+    })
   })
 
   describe('order status regression', () => {

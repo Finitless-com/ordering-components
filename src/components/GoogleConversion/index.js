@@ -6,6 +6,13 @@ const RWG_TOKEN_STORAGE_KEY = 'google_rwg_token'
 const REDIRECT_BUSINESS_ID_KEY = 'google_rwg_redirect_business_id'
 const INTEGRATION_BASE_URL = 'https://google-redirect.plugins.orderingplus.com'
 
+/**
+ * @deprecated Replaced by ORD-2402: OrderContext keeps the site's `rwg_token`
+ * for 30 days (`captureReferral`) and sends it on place as `referral.click_id`,
+ * and the API reports the conversion to Google (order_referrals,
+ * ReportOrderReferral). Do not mount it together with that flow: every order
+ * would be reported twice. Kept only for consumers that still mount it.
+ */
 export const GoogleConversion = (props) => {
   const { projectCode, children } = props
 

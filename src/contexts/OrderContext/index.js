@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react'
+import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react'
 import { useSession } from '../SessionContext'
 import { useApi } from '../ApiContext'
 import { useWebsocket } from '../WebsocketContext'
@@ -6,9 +6,10 @@ import { useLanguage } from '../LanguageContext'
 import { useEvent } from '../EventContext'
 import { useConfig } from '../ConfigContext'
 import { useCustomer } from '../CustomerContext'
-import { ToastType, useToast } from '../ToastContext'
+import { ToastType, useToastActions } from '../ToastContext'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
+import { INVALID_API_JSON_BODY } from '../../utils/parseApiJsonBody'
 import { parseUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
 import { isUnchangedDriverTip } from './isUnchangedDriverTip'
 import { evictConsumedCart, shouldEvictConsumedCart } from './evictConsumedCart'
@@ -17,14 +18,50 @@ import {
   mergeCartsByUpdatedAt,
   resolveOrderOptionsCarts
 } from './mergeCartsByUpdatedAt'
+import {
+  CLICK_ID_STORAGE_KEY,
+  REFERRAL_STORAGE_KEY,
+  captureVisit,
+  clickIdForPlace,
+  clickIdToKeep,
+  isRepeatedNavigation,
+  referralForPlace,
+  registerVisit
+} from '../../utils/referral'
 
 dayjs.extend(utc)
+
+const REFERRAL_MAX_PENDING = 20
+const GUEST_DELIVERY_DEADLINE_MS = 15000
 
 /**
  * Create OrderContext
  * This context will manage the current order with options internally and provide an easy interface
  */
+/**
+ * The carts without one of them, as a new object: the order's carts are never
+ * changed in place, so who reads the order without the copy (useOrderState)
+ * sees every change.
+ */
+const withoutCart = (carts, key) => {
+  const next = { ...carts }
+  delete next[key]
+  return next
+}
+
 export const OrderContext = createContext()
+
+/**
+ * The order's state as it is (no copy), with a new identity only when it
+ * changes. `useOrder()` hands a deep copy on every render of the provider, so
+ * every consumer renders again on any of its renders (a toast, a socket event,
+ * a session update); `useOrderState()` renders again only when the order does.
+ * Read only: never modify what it returns.
+ */
+export const OrderStateContext = createContext()
+
+/** The order's actions, stable for the provider's life; each runs its latest version. */
+export const OrderActionsContext = createContext()
 
 /**
  * Custom provider to order manager
@@ -40,18 +77,25 @@ export const OrderProvider = ({
   isDisabledDefaultOpts,
   businessSlug,
   userAgent,
-  enableCouponsRetries = false
+  enableCouponsRetries = false,
+  referralEnabled = true,
+  waitForGuestDeliveryAddress = false
 }) => {
   const [confirmAlert, setConfirm] = useState({ show: false })
   const [alert, setAlert] = useState({ show: false })
+  // Off by default: keeps the project's `unaddressed_order_types_allowed` rule for pickup.
+  const [pickupWithoutAddress, setPickupWithoutAddressState] = useState(false)
+  // Off by default ([]): order types the consumer adds to the project's unaddressed ones.
+  const [extraUnaddressedOrderTypes, setExtraUnaddressedOrderTypesState] = useState([])
   const [ordering] = useApi()
   const socket = useWebsocket()
   const [languageState, t] = useLanguage()
   const [events] = useEvent()
   const [configState] = useConfig()
   const [session, { logout }] = useSession()
+  const guestDeliverySync = useRef(null)
   const [customerState, { setUserCustomer }] = useCustomer()
-  const [, { showToast }] = useToast()
+  const { showToast } = useToastActions()
 
   const configTypes = configState?.configs?.order_types_allowed?.value.split('|').map(value => Number(value)) || []
 
@@ -99,19 +143,82 @@ export const OrderProvider = ({
   })
 
   const intervalRetriesRef = useRef(null)
+  // The URL's UTM visit this page load already captured, and the queue of captures.
+  const referralCapture = useRef({ landing: null, queue: Promise.resolve() })
+  // Read at execution time (queued closures and the stable actions outlive a render),
+  // so it is kept in a ref instead of captured by the functions below.
+  const referralEnabledRef = useRef(referralEnabled)
+  referralEnabledRef.current = referralEnabled
+  // What the URL carried while attribution was off. Memory only, never storage:
+  // it is captured with its own time once the site allows it.
+  const pendingReferrals = useRef([])
   const timeIntervalProduct = 4000
   const retriesProduct = 4
 
+  const getGuestDeliverySync = () => {
+    const sync = guestDeliverySync.current
+    if (!waitForGuestDeliveryAddress || !session.auth) return null
+    return sync?.token === session.token && sync?.userId === session.user?.id ? sync : null
+  }
+
+  const isCurrentGuestDeliverySync = sync => sync.parent
+    ? guestDeliverySync.current === sync.parent && sync.parent.revision === sync
+    : guestDeliverySync.current === sync && !sync.selection
+
+  const hasGuestDeliveryAddress = options =>
+    [orderTypes.delivery, orderTypes.catering_delivery].includes(Number(options?.type)) && options?.address?.location
+
+  const requestGuestDelivery = (sync, request, write = false) => {
+    if (!sync) return request()
+    const remaining = sync.deadline - Date.now()
+    const deadlineError = () => new Error('Guest delivery migration timed out')
+    if (remaining <= 0) return Promise.reject(deadlineError())
+
+    const cancelToken = {}
+    let timer
+    const timeout = new Promise((resolve, reject) => {
+      timer = globalThis.setTimeout(() => {
+        // The SDK's cancel token aborts the XHR without settling its promise.
+        reject(deadlineError())
+        cancelToken.cancel?.()
+      }, remaining)
+    })
+    const response = Promise.resolve().then(() => {
+      if (!isCurrentGuestDeliverySync(sync)) throw new Error('Guest delivery selection changed')
+      return request({ cancelToken })
+    })
+    const pending = Promise.race([response, timeout]).finally(() => globalThis.clearTimeout(timer))
+    // A newer selection can skip stale reads, but must wait for a dispatched
+    // write to settle or be cancelled before writing to the same account.
+    if (write) sync.write = pending
+    return pending
+  }
+
+  const waitForGuestDeliverySelection = async sync => {
+    let selection
+    let saved
+    do {
+      selection = sync.selection
+      saved = await selection
+    } while (selection !== sync.selection)
+    return saved
+  }
+
   /**
-   * Refresh order options and carts from API
+   * Refresh order options and carts from API. A recovery reports success only
+   * after required option writes have succeeded.
    */
-  const refreshOrderOptions = async () => {
+  const refreshOrderOptions = async ({ deferMalformedResponse = false, recovering = false, guestDeliveryOptions, migration } = {}) => {
+    const sync = getGuestDeliverySync()
+    if (!migration && sync && !sync.finished) return ensureGuestDeliveryAddress()
+    const isCurrent = () => !migration || isCurrentGuestDeliverySync(migration)
     try {
       if (!state.loading) {
         setState(prevState => ({ ...prevState, loading: true }))
       }
       const countryCodeFromLocalStorage = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
+      if (!isCurrent()) return false
       const userCustomerId = customerFromLocalStorage?.id
       const options = {}
       if (userCustomerId) {
@@ -137,10 +244,13 @@ export const OrderProvider = ({
         }
       }
 
-      const res = await ordering.setAccessToken(session.token).orderOptions().get(options)
-      const error = res?.content?.error
-      const result = res?.content?.result
+      const getOptions = transport => ordering.setAccessToken(session.token).orderOptions().get({ ...options, ...transport })
+      const res = await requestGuestDelivery(migration, getOptions)
+      if (!isCurrent()) return false
       const status = res?.status
+      // Read the sentinel before the SDK casts its result on HTTP 200.
+      const invalidResponse = res?.response?.data === INVALID_API_JSON_BODY
+      const { error, result } = (invalidResponse ? INVALID_API_JSON_BODY : res?.content) || {}
       let hasApiAddressContext = false
       if (!error) {
         const { carts, ...options } = result
@@ -151,27 +261,32 @@ export const OrderProvider = ({
           return
         }
 
-        setState(prevState => {
-          const mergedOptions = { ...prevState.options, ...options }
-          if (shouldForceWorkerPickup(mergedOptions)) {
-            mergedOptions.type = orderTypes.pickup
-          }
-          return {
-            ...prevState,
-            options: mergedOptions,
-            carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
-          }
-        })
+        // The final write returns the options for this guest. Until it
+        // succeeds, keep the displayed address and preorder moment intact.
+        if (!guestDeliveryOptions) {
+          setState(prevState => {
+            const mergedOptions = { ...prevState.options, ...options }
+            if (shouldForceWorkerPickup(mergedOptions)) {
+              mergedOptions.type = orderTypes.pickup
+            }
+            return {
+              ...prevState,
+              options: mergedOptions,
+              carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
+            }
+          })
+        }
 
-        const shouldSyncPickup = shouldForceWorkerPickup(options) && options.type !== orderTypes.pickup
-        const shouldSyncCountryCode = !countryCodeFromLocalStorage && options?.address?.country_code
+        const shouldSyncPickup = !guestDeliveryOptions && shouldForceWorkerPickup(options) && options.type !== orderTypes.pickup
+        const shouldSyncCountryCode = !guestDeliveryOptions && !countryCodeFromLocalStorage && options?.address?.country_code
 
         if (shouldSyncPickup || shouldSyncCountryCode) {
           const syncParams = {}
           if (shouldSyncPickup) syncParams.type = orderTypes.pickup
           if (shouldSyncCountryCode) syncParams.country_code = options.address.country_code
-          await updateOrderOptions(syncParams)
-        } else {
+          const synced = await updateOrderOptions(syncParams, { recovering })
+          if (recovering && !synced) return false
+        } else if (!guestDeliveryOptions) {
           setState(prevState => ({ ...prevState, loading: false }))
         }
       }
@@ -193,14 +308,23 @@ export const OrderProvider = ({
             await strategy.removeItem('user')
             await strategy.removeItem('device_code')
             window.location.reload()
-            return
+            return { status }
           }
           await logout()
-          return
+          return { status }
+        }
+        if (invalidResponse || recovering) {
+          if (invalidResponse && !deferMalformedResponse && !recovering) {
+            setAlert({ show: true, content: t('CART_REFRESH_RESPONSE_ERROR', 'We couldn’t refresh your carts. Check your cart before placing your order.'), status })
+          }
+          setState(prevState => ({ ...prevState, loading: false }))
+          return { invalidResponse, status }
         }
         setAlert({ show: true, content: result, status })
       }
-      const localOptions = await strategy.getItem('options', true)
+      const localOptions = guestDeliveryOptions
+        ? { ...guestDeliveryOptions, address: { ...guestDeliveryOptions.address } }
+        : await strategy.getItem('options', true)
       if (localOptions) {
         const options = {}
         if (Object.keys(localOptions?.address || {})?.length > 0) {
@@ -208,7 +332,16 @@ export const OrderProvider = ({
             { attribute: 'address', value: localOptions?.address?.address }
           ]
           const userId = userCustomerId || session.user.id
-          const addressesResponse = await ordering.setAccessToken(session.token).users(userId).addresses().where(conditions).get()
+          // Always look up the address first, including retries of an
+          // uncertain POST. A timed-out response may already have been saved.
+          const getAddresses = transport => ordering.setAccessToken(session.token).users(userId).addresses().where(conditions).get(transport)
+          const addressesResponse = await requestGuestDelivery(migration, getAddresses)
+          if (!isCurrent()) return false
+          if (guestDeliveryOptions && addressesResponse.content.error) {
+            setState(prevState => ({ ...prevState, loading: false }))
+            return false
+          }
+          const savedDetail = value => guestDeliveryOptions ? value || null : value
           let address = addressesResponse.content.result.find(address => {
             localOptions.address.internal_number = localOptions.address?.internal_number || null
             localOptions.address.zipcode = localOptions.address?.zipcode || null
@@ -216,18 +349,33 @@ export const OrderProvider = ({
 
             return address?.location?.lat === localOptions?.address?.location.lat &&
               address?.location?.lng === localOptions?.address?.location?.lng &&
-              address?.internal_number === localOptions?.address?.internal_number &&
-              address?.zipcode === localOptions?.address?.zipcode &&
-              address?.address_notes === localOptions?.address?.address_notes
+              savedDetail(address?.internal_number) === localOptions?.address?.internal_number &&
+              savedDetail(address?.zipcode) === localOptions?.address?.zipcode &&
+              savedDetail(address?.address_notes) === localOptions?.address?.address_notes
           })
           if (!address) {
             Object.keys(localOptions.address).forEach(key => localOptions?.address?.[key] === null && delete localOptions?.address?.[key])
-            const { content: { error, result } } = await ordering.setAccessToken(session.token).users(userId).addresses().save(localOptions.address)
+            const save = transport => ordering.setAccessToken(session.token).users(userId).addresses().save(localOptions.address, transport)
+            const { content: { error, result } } = await requestGuestDelivery(migration, save, true)
+            if (!isCurrent()) return false
             if (!error) {
               address = result
+            } else if (recovering) {
+              setState(prevState => ({ ...prevState, loading: false }))
+              return false
             }
-          } else {
-            await ordering.setAccessToken(session.token).users(userId).addresses(address.id).save({ default: true })
+          } else if (!guestDeliveryOptions || !address.default) {
+            const save = transport => ordering.setAccessToken(session.token).users(userId).addresses(address.id).save({ default: true }, transport)
+            const response = await requestGuestDelivery(migration, save, true)
+            if (!isCurrent()) return false
+            if (guestDeliveryOptions && response?.content?.error) {
+              setState(prevState => ({ ...prevState, loading: false }))
+              return false
+            }
+          }
+          if (guestDeliveryOptions && !address?.id) {
+            setState(prevState => ({ ...prevState, loading: false }))
+            return false
           }
           address && (options.address_id = address.id)
         }
@@ -240,15 +388,22 @@ export const OrderProvider = ({
         }
         if (localOptions.moment) {
           options.moment = dayjs.utc(localOptions.moment, 'YYYY-MM-DD HH:mm:ss').unix()
+        } else if (guestDeliveryOptions && localOptions.moment === null) {
+          options.moment = null
         }
-        if (localOptions?.address_id) {
+        if (localOptions?.address_id && !guestDeliveryOptions) {
           options.address_id = localOptions?.address_id
+        }
+        if (guestDeliveryOptions?.address?.country_code) {
+          options.country_code = guestDeliveryOptions.address.country_code
         }
         if (localOptions?.city_id && !hasApiAddressContext) {
           options.city_id = localOptions?.city_id
         }
         if (options && Object.keys(options).length > 0) {
-          await updateOrderOptions(options)
+          const synced = await updateOrderOptions(options, { recovering, migration })
+          if (!isCurrent()) return false
+          if (recovering && !synced) return false
         } else {
           setState(prevState => ({ ...prevState, loading: false }))
         }
@@ -256,15 +411,79 @@ export const OrderProvider = ({
       } else {
         setState(prevState => ({ ...prevState, loading: false }))
       }
+      if (recovering) return true
     } catch (err) {
+      if (!isCurrent()) return false
       const message = err?.message?.includes('Internal error')
         ? 'INTERNAL_ERROR'
         : !err.message
             ? t('NETWORK_ERROR', 'Network error')
             : err.message
-      setAlert({ show: true, content: message })
+      if (!recovering) setAlert({ show: true, content: message })
       setState(prevState => ({ ...prevState, loading: false }))
     }
+  }
+
+  // Login and the first add share the same save and order-options write.
+  // null means this session has no local delivery address to migrate.
+  const ensureGuestDeliveryAddress = ({ retry = false } = {}) => {
+    if (!waitForGuestDeliveryAddress || !session.auth || !session.user?.id) return Promise.resolve(null)
+    const current = getGuestDeliverySync()
+    if (current && !(retry && current.failed)) {
+      if (current.selection) return waitForGuestDeliverySelection(current)
+      return current.promise
+    }
+    const sync = { token: session.token, userId: session.user.id, failed: false, deadline: Date.now() + GUEST_DELIVERY_DEADLINE_MS }
+    guestDeliverySync.current = sync
+    sync.promise = (async () => {
+      const options = await strategy.getItem('options', true)
+      if (!isCurrentGuestDeliverySync(sync)) return false
+      if (!hasGuestDeliveryAddress(options)) return null
+      const saved = await refreshOrderOptions({ recovering: true, guestDeliveryOptions: options, migration: sync })
+      return saved === true
+    })().catch(() => {
+      if (isCurrentGuestDeliverySync(sync)) setState(prevState => ({ ...prevState, loading: false }))
+      return false
+    }).then(result => {
+      if (sync.selection) return waitForGuestDeliverySelection(sync)
+      sync.failed = result === false
+      sync.finished = !sync.failed
+      return result
+    })
+    return sync.promise
+  }
+
+  const replaceGuestDeliverySelection = async (sync, changes) => {
+    const previous = sync.selection || sync.write
+    const revision = { parent: sync }
+    sync.revision = revision
+    sync.failed = false
+    const selection = (async () => {
+      await previous?.catch(() => {})
+      // A moment or delivery-type change can leave the guest address selected.
+      // Persist that new selection as a unit so any retry uses the new values.
+      const local = changes.address_id === undefined && await strategy.getItem('options', true)
+      const revised = local && { ...local, type: changes.type ?? local.type }
+      if (hasGuestDeliveryAddress(revised)) {
+        if (changes.moment !== undefined) {
+          revised.moment = changes.moment === null
+            ? null
+            : dayjs.unix(changes.moment).utc().format('YYYY-MM-DD HH:mm:ss')
+        }
+        await strategy.setItem('options', revised, true)
+        if (!isCurrentGuestDeliverySync(revision)) return false
+        revision.deadline = Date.now() + GUEST_DELIVERY_DEADLINE_MS
+        const saved = await refreshOrderOptions({ recovering: true, guestDeliveryOptions: revised, migration: revision })
+        if (isCurrentGuestDeliverySync(revision)) sync.failed = saved !== true
+        return saved === true
+      }
+      await strategy.removeItem('options')
+      return updateOrderOptions(changes, { selectionHandled: true })
+    })()
+    sync.selection = selection
+    const saved = await selection
+    if (sync.selection === selection) sync.finished = saved === true
+    return saved
   }
 
   const refreshOrderOptionsWithRetries = async (cart, product, endpointResult) => {
@@ -406,8 +625,9 @@ export const OrderProvider = ({
 
   /**
    * Change order moment
+   * The optional result lets a picker keep its draft until persistence completes.
    */
-  const changeMoment = async (moment) => {
+  const changeMoment = async (moment, { awaitResult = false } = {}) => {
     const momentUnix = moment ? moment.getTime() / 1000 : null
     const momentFormatted = momentUnix ? dayjs.unix(momentUnix).utc().format('YYYY-MM-DD HH:mm:ss') : null
 
@@ -416,7 +636,7 @@ export const OrderProvider = ({
       moment: momentFormatted
     }
     if (state.options.moment === momentFormatted) {
-      return
+      return awaitResult ? true : undefined
     }
 
     if (!session.auth) {
@@ -425,9 +645,11 @@ export const OrderProvider = ({
         ...state,
         options
       })
+      if (awaitResult) return true
     }
 
-    updateOrderOptions({ moment: momentUnix })
+    const update = updateOrderOptions({ moment: momentUnix })
+    if (awaitResult) return update
   }
 
   /**
@@ -471,10 +693,17 @@ export const OrderProvider = ({
    * Update order option data
    * @param {object} changes Changes to update order options
    */
-  const updateOrderOptions = async (changes) => {
+  const updateOrderOptions = async (changes, { recovering = false, migration, selectionHandled = false } = {}) => {
     if (session.auth) {
+      const sync = getGuestDeliverySync()
+      if (sync && !sync.finished && !recovering && !selectionHandled &&
+        ['address_id', 'type', 'moment'].some(key => changes[key] !== undefined)) {
+        return replaceGuestDeliverySelection(sync, changes)
+      }
+      const isCurrent = () => !migration || isCurrentGuestDeliverySync(migration)
       const countryCodeFromLocalStorage = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
+      if (!isCurrent()) return false
       const userCustomerId = customerFromLocalStorage?.id
       const body = {
         ...changes,
@@ -496,7 +725,7 @@ export const OrderProvider = ({
             ...options.headers,
             'X-Country-Code-X': countryCode
           }
-          await strategy.setItem('country-code', countryCode)
+          if (!recovering) await strategy.setItem('country-code', countryCode)
         }
         if (franchiseId) {
           options.query = {
@@ -507,33 +736,59 @@ export const OrderProvider = ({
         if (body?.country_code) {
           delete body?.country_code
         }
-        const { content: { error, result }, status } = await ordering
+        const save = transport => ordering
           .setAccessToken(session.token)
           .orderOptions()
-          .save(body, options)
+          .save(body, { ...options, ...transport })
+        const { content: { error, result }, status } = await requestGuestDelivery(migration, save, true)
+        if (!isCurrent()) return false
         if (!error) {
+          if (recovering && countryCode) await strategy.setItem('country-code', countryCode)
+          if (!isCurrent()) return false
           const { carts, ...options } = result
           setState(prevState => ({
             ...prevState,
             options: { ...prevState.options, ...options },
             carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
           }))
-        } else {
+        } else if (!recovering) {
           setAlert({ show: true, content: result, status })
         }
         setState(prevState => ({ ...prevState, loading: false }))
         state.loading = false
         return !error
       } catch (err) {
+        if (!isCurrent()) return false
         const message = err?.message?.includes('Internal error')
           ? 'INTERNAL_ERROR'
           : err.message
-        setAlert({ show: true, content: message })
+        if (!recovering) setAlert({ show: true, content: message })
         setState(prevState => ({ ...prevState, loading: false }))
         state.loading = false
         return false
       }
     }
+  }
+
+  /**
+   * Lets a pickup order proceed without an address. The web marketplace turns
+   * this on for a store opened directly by link, or a one-store site; off by
+   * default, which keeps the project's `unaddressed_order_types_allowed` rule.
+   * @param {boolean} enabled
+   */
+  const setPickupWithoutAddress = (enabled) => {
+    setPickupWithoutAddressState(!!enabled)
+  }
+
+  /**
+   * Order types that never need the customer's address, on top of the
+   * project's `unaddressed_order_types_allowed`. The web marketplace sets
+   * every type but delivery and catering delivery; empty by default, which
+   * keeps the project's rule.
+   * @param {number[]} types
+   */
+  const setExtraUnaddressedOrderTypes = (types) => {
+    setExtraUnaddressedOrderTypesState(Array.isArray(types) ? types.map(Number).filter(Number.isFinite) : [])
   }
 
   /**
@@ -552,6 +807,10 @@ export const OrderProvider = ({
       const unaddressedTypes = parseUnaddressedOrderTypes(
         configState?.configs?.unaddressed_order_types_allowed?.value
       )
+      if (pickupWithoutAddress && !unaddressedTypes.includes(orderTypes.pickup)) {
+        unaddressedTypes.push(orderTypes.pickup)
+      }
+      unaddressedTypes.push(...extraUnaddressedOrderTypes)
       if (shouldRequireOrderAddress(state.options?.type, state.options, unaddressedTypes)) {
         events.emit('require_order_address', { orderType: state.options?.type })
         return false
@@ -757,7 +1016,7 @@ export const OrderProvider = ({
       })
       const { error, result } = await response.json()
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
       } else {
         setAlert({ show: true, content: result, status: response?.status })
       }
@@ -826,7 +1085,7 @@ export const OrderProvider = ({
       })
       const { result, error } = await response.json()
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
         events.emit('cart_added', result)
         setState({ ...state, loading: false })
       } else {
@@ -874,7 +1133,7 @@ export const OrderProvider = ({
         })
       const result = content
       if (!result.error) {
-        state.carts[`businessId:${result.result.business_id}`] = result.result
+        state.carts = { ...state.carts, [`businessId:${result.result.business_id}`]: result.result }
         events.emit('cart_updated', result.result)
       } else {
         setAlert({ show: true, content: result.result, status })
@@ -1022,7 +1281,7 @@ export const OrderProvider = ({
         }
       })
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
         events.emit('cart_updated', result)
       } else {
         setAlert({ show: true, content: result, status })
@@ -1107,6 +1366,125 @@ export const OrderProvider = ({
   }
 
   /**
+   * Remember the UTM parameters the current URL carries (ORD-1992). Web only.
+   * Called when the site loads, and with `businessId` when the store that URL
+   * opened finishes loading: that makes it a visit to that store. A URL
+   * without `utm_source` keeps what was remembered (last non-direct click).
+   *
+   * Calls run one after another: each one reads the stored visits, changes
+   * them and writes them back.
+   */
+  const captureReferral = (businessId) => {
+    if (typeof window === 'undefined' || !window.location) return referralCapture.current.queue
+    if (!referralEnabledRef.current) {
+      const search = window.location.search
+      // A store that reloads reports itself again: the first report keeps its time.
+      const known = pendingReferrals.current.some(pending => pending.search === search && pending.businessId === businessId)
+      if (search && !known) {
+        pendingReferrals.current = [
+          ...pendingReferrals.current,
+          { search, businessId, at: Date.now(), repeated: isRepeatedNavigation(window.performance) }
+        ].slice(-REFERRAL_MAX_PENDING)
+      }
+      return referralCapture.current.queue
+    }
+    return enqueueReferral(() => ({
+      search: window.location.search,
+      businessId,
+      repeated: isRepeatedNavigation(window.performance)
+    }))
+  }
+
+  /**
+   * Remember a visit from explicit values instead of a URL, for apps with no
+   * URL (React Native: the data of a marketing push notification the user
+   * opened) and for the web alike. Returns the capture queue promise.
+   *
+   * `{ source, medium, campaign }` are the `utm_*` values; `source` is
+   * required and an unusable one records nothing. `businessId` makes it a
+   * visit to that store, like `captureReferral(businessId)`.
+   *
+   * It goes through the same machinery as a URL visit: same storage, same
+   * normalization, 30 days, 20 visits, same queue, and the same consent: while
+   * `referralEnabled` is false it is held in memory with its time and stored
+   * when attribution turns on; if it never does, nothing is stored.
+   *
+   * Each call is a click the user made, so it is always a new visit dated now
+   * and the newest one wins on place. Calling it again with the same
+   * combination (and the same store) does not add a second entry: it
+   * replaces the previous one, so its date is the newest click. It never
+   * touches the page-load memory `captureReferral` relies on.
+   */
+  const registerReferral = ({ source, medium, campaign } = {}, businessId) => {
+    const register = { source, medium, campaign }
+    if (!referralEnabledRef.current) {
+      pendingReferrals.current = [
+        ...pendingReferrals.current,
+        { register, businessId, at: Date.now() }
+      ].slice(-REFERRAL_MAX_PENDING)
+      return referralCapture.current.queue
+    }
+    return enqueueReferral(() => ({ register, businessId }))
+  }
+
+  /**
+   * Queues one capture. `read` runs when its turn comes (the URL can change
+   * while earlier captures finish) and may carry the time of the visit.
+   */
+  const enqueueReferral = (read) => {
+    referralCapture.current.queue = referralCapture.current.queue.then(async () => {
+      // Checked again here: the site may have turned attribution off while this waited.
+      if (!referralEnabledRef.current) return
+      const { search, businessId, repeated, now, register } = read()
+      if (register) {
+        try {
+          const registered = registerVisit(await strategy.getItem(REFERRAL_STORAGE_KEY, true), { ...register, businessId, now })
+          if (registered) await strategy.setItem(REFERRAL_STORAGE_KEY, registered.stored, true)
+        } catch (e) {}
+        return
+      }
+      if (!search) return
+      try {
+        const captured = captureVisit(await strategy.getItem(REFERRAL_STORAGE_KEY, true), {
+          search,
+          businessId,
+          landing: referralCapture.current.landing,
+          repeated,
+          now
+        })
+        if (captured) {
+          referralCapture.current.landing = captured.landing
+          await strategy.setItem(REFERRAL_STORAGE_KEY, captured.stored, true)
+        }
+      } catch (e) {}
+      try {
+        // Google's rwg_token (ORD-2402): one per site, a new one replaces it.
+        const clickId = clickIdToKeep(await strategy.getItem(CLICK_ID_STORAGE_KEY, true), search, businessId, now)
+        if (clickId) await strategy.setItem(CLICK_ID_STORAGE_KEY, clickId, true)
+      } catch (e) {}
+    })
+    return referralCapture.current.queue
+  }
+
+  /**
+   * Adds the remembered `referral` (the UTM visit, ORD-1992) and the site's
+   * click id (ORD-2402) to a place body; never blocks the place.
+   * `businessIds` are the stores being placed. An order placed for a customer
+   * (`onBehalf`, the call center) is not a result of the agent's own visit
+   * and gets neither.
+   */
+  const withReferral = async (body, { businessIds = [], onBehalf = false } = {}) => {
+    if (body.referral || onBehalf || !referralEnabledRef.current) return body
+    try {
+      const referral = referralForPlace(await strategy.getItem(REFERRAL_STORAGE_KEY, true), businessIds)
+      const clickId = clickIdForPlace(await strategy.getItem(CLICK_ID_STORAGE_KEY, true))
+      return referral || clickId ? { ...body, referral: { ...referral, ...clickId } } : body
+    } catch (e) {
+      return body
+    }
+  }
+
+  /**
    * Place cart
    */
   const placeCart = async (cardId, data) => {
@@ -1115,10 +1493,13 @@ export const OrderProvider = ({
       const countryCode = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
       const userCustomerId = customerFromLocalStorage?.id
-      const body = {
+      const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
-      }
+      }, {
+        businessIds: Object.values(state.carts ?? {}).filter(cart => cart?.uuid === cardId).map(cart => cart.business_id),
+        onBehalf: !!userCustomerId
+      })
       let headers = {
         'X-Socket-Id-X': socket?.getId(),
         'X-Country-Code-X': countryCode,
@@ -1130,10 +1511,10 @@ export const OrderProvider = ({
       const { content: { error, result }, status } = await ordering.setAccessToken(session.token).carts(cardId).place(body, { headers })
       if (!error) {
         if (result.status !== 1) {
-          state.carts[`businessId:${result.business_id}`] = result
+          state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
           events.emit('cart_updated', result)
         } else {
-          delete state.carts[`businessId:${result.business_id}`]
+          state.carts = withoutCart(state.carts, `businessId:${result.business_id}`)
           const orderObject = {
             id: result.order.uuid,
             business: { name: result.business.name },
@@ -1182,10 +1563,13 @@ export const OrderProvider = ({
       const countryCode = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
       const userCustomerId = customerFromLocalStorage?.id
-      const body = {
+      const body = await withReferral({
         ...data,
         user_id: userCustomerId || session.user.id
-      }
+      }, {
+        businessIds: Object.values(state.carts ?? {}).filter(cart => cart?.cart_group_id).map(cart => cart.business_id),
+        onBehalf: !!userCustomerId
+      })
       const requestOptions = {
         method: 'POST',
         headers: {
@@ -1203,7 +1587,7 @@ export const OrderProvider = ({
       const { error, result } = await response.json()
       if (!error) {
         result.carts.forEach(cart => {
-          delete state.carts[`businessId:${cart.business_id}`]
+          state.carts = withoutCart(state.carts, `businessId:${cart.business_id}`)
           const orderObject = {
             id: cart.uuid,
             business: { name: cart.business.name },
@@ -1331,10 +1715,10 @@ export const OrderProvider = ({
       if (!error && result?.carts) {
         result.carts.forEach(cart => {
           if (result.status !== 'completed') {
-            state.carts[`businessId:${cart.business_id}`] = result.carts.find(_cart => _cart?.business_id === cart?.business_id)
+            state.carts = { ...state.carts, [`businessId:${cart.business_id}`]: result.carts.find(_cart => _cart?.business_id === cart?.business_id) }
             events.emit('cart_updated', result)
           } else {
-            delete state.carts[`businessId:${cart.business_id}`]
+            state.carts = withoutCart(state.carts, `businessId:${cart.business_id}`)
           }
         })
       }
@@ -1372,7 +1756,7 @@ export const OrderProvider = ({
       }
       const { content: { error, result }, status } = await ordering.setAccessToken(session.token).orders(orderId).reorder(options)
       if (!error) {
-        state.carts[`businessId:${result.business_id}`] = result
+        state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
         events.emit('cart_added', result)
       } else if (!offAlert) {
         setAlert({ show: true, content: result, status })
@@ -1553,6 +1937,7 @@ export const OrderProvider = ({
   }
 
   const handleLogEvent = async (events) => {
+    if (!session.token) return
     try {
       const countryCode = await strategy.getItem('country-code')
       const headers = {
@@ -1574,10 +1959,30 @@ export const OrderProvider = ({
   }
 
   useEffect(() => {
+    captureReferral()
+  }, [])
+
+  useEffect(() => {
+    if (!referralEnabled || !pendingReferrals.current.length) return
+    const pending = pendingReferrals.current
+    pendingReferrals.current = []
+    // Dated with the visit, not with the consent.
+    pending.forEach(({ at, ...visit }) => enqueueReferral(() => ({ ...visit, now: at })))
+  }, [referralEnabled])
+
+  useEffect(() => {
     if (session.loading || languageState.loading || !ordering?.project) return
     if (session.auth) {
-      setState(prevState => (prevState.loading ? prevState : { ...prevState, loading: true }))
-      refreshOrderOptions()
+      if (waitForGuestDeliveryAddress) {
+        ensureGuestDeliveryAddress().then(saved => {
+          if (saved === null) refreshOrderOptions()
+        })
+      } else {
+        setState(prevState => (prevState.loading ? prevState : { ...prevState, loading: true }))
+        refreshOrderOptions()
+      }
+    } else {
+      guestDeliverySync.current = null
     }
   }, [session.auth, session.loading, languageState.loading, ordering?.project, session?.user?.id])
 
@@ -1677,7 +2082,9 @@ export const OrderProvider = ({
       socket.off('carts_update', handleCartUpdate)
       socket.off('order_options_update', handleOrderOptionUpdate)
     }
-  }, [state.carts, state.options, state.loading, socket])
+    // The handlers read the state through setState(prev => …): subscribing again on every
+    // cart or option change was not needed.
+  }, [socket, isDisableToast, t, showToast])
 
   /**
    * Join to carts room
@@ -1694,9 +2101,11 @@ export const OrderProvider = ({
 
   const functions = {
     refreshOrderOptions,
+    ensureGuestDeliveryAddress,
     changeAddress,
     changeType,
     changeMoment,
+    updateOrderOptions,
     addProduct,
     removeProduct,
     updateProduct,
@@ -1714,6 +2123,8 @@ export const OrderProvider = ({
     setUserCustomerOptions,
     setStateValues,
     placeMultiCarts,
+    captureReferral,
+    registerReferral,
     getLastOrderHasNoReview,
     changeCityFilter,
     clearOrderAddress,
@@ -1723,28 +2134,64 @@ export const OrderProvider = ({
     handleOrderStateLoading,
     createReservation,
     handleLogEvent,
-    clearTimeout
+    clearTimeout,
+    setPickupWithoutAddress,
+    setExtraUnaddressedOrderTypes
   }
 
-  const copyState = JSON.parse(JSON.stringify(state))
+  const copyState = { ...JSON.parse(JSON.stringify(state)), pickupWithoutAddress }
+
+  const latestFunctions = useRef(functions)
+  latestFunctions.current = functions
+  const stableActions = useMemo(() => {
+    const actions = {}
+    Object.keys(latestFunctions.current).forEach((name) => {
+      actions[name] = (...args) => latestFunctions.current[name](...args)
+    })
+    return actions
+  }, [])
 
   return (
-    <OrderContext.Provider value={[copyState, functions]}>
-      {
-        Alert && (
-          <Alert
-            open={alert.show}
-            title={alert.title || t('ERROR', 'Error')}
-            onAccept={() => setAlert({ show: false })}
-            onClose={() => setAlert({ show: false })}
-            content={alert.content}
-            status={alert.status}
-          />
-        )
-      }
-      {children}
-    </OrderContext.Provider>
+    <OrderActionsContext.Provider value={stableActions}>
+      <OrderStateContext.Provider value={state}>
+        <OrderContext.Provider value={[copyState, functions]}>
+          {
+            Alert && (
+              <Alert
+                open={alert.show}
+                title={alert.title || t('ERROR', 'Error')}
+                onAccept={() => setAlert({ show: false })}
+                onClose={() => setAlert({ show: false })}
+                content={alert.content}
+                status={alert.status}
+              />
+            )
+          }
+          {children}
+        </OrderContext.Provider>
+      </OrderStateContext.Provider>
+    </OrderActionsContext.Provider>
   )
+}
+
+/** The order's state without the copy, rendering again only when it changes (read only). */
+export const useOrderState = () => {
+  const state = useContext(OrderStateContext)
+  if (!state) {
+    console.warn('Must use OrderProvider to wrappe the app.')
+    return {}
+  }
+  return state
+}
+
+/** The order's actions, stable for the provider's life. */
+export const useOrderActions = () => {
+  const actions = useContext(OrderActionsContext)
+  if (!actions) {
+    console.warn('Must use OrderProvider to wrappe the app.')
+    return {}
+  }
+  return actions
 }
 
 /**
@@ -1777,7 +2224,9 @@ export const useOrder = () => {
     changePaymethod: warningMessage,
     setStateValues: warningMessage,
     getLastOrderHasNoReview: warningMessage,
-    clearOrderAddress: warningMessage
+    clearOrderAddress: warningMessage,
+    captureReferral: () => {},
+    registerReferral: () => {}
   }
   return orderManager || [{}, functionsPlaceholders]
 }

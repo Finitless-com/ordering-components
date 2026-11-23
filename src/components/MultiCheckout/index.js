@@ -16,8 +16,6 @@ import { getPlaceAmount } from '../../utils/placeAmount'
 
 const returnMethods = ['epayco']
 
-const forterGateways = ['braintree', 'paypal_braintree', 'google_pay_braintree', 'apple_pay_braintree']
-
 export const MultiCheckout = (props) => {
   const {
     UIComponent,
@@ -101,23 +99,6 @@ export const MultiCheckout = (props) => {
         wallet_id: paymethodSelected.wallet_id,
         wallet_data: paymethodSelected.wallet_data
       }
-    }
-    if (forterGateways.includes(paymethodSelected?.paymethod?.gateway)) {
-      const forterToken = typeof props.getForterToken === 'function' ? props.getForterToken() : null
-      if (forterToken) {
-        payload.forter_token = forterToken
-      }
-      const forterMobileUid = typeof props.getForterMobileUid === 'function' ? props.getForterMobileUid() : null
-      if (forterMobileUid) {
-        payload.forter_mobile_uid = forterMobileUid
-      }
-      try {
-        const ipRes = await fetch('https://api.ipify.org?format=json')
-        const ipData = await ipRes.json()
-        if (ipData?.ip) {
-          payload.customer_ip = ipData.ip
-        }
-      } catch {}
     }
     setPlacing(true)
     const { error, result } = await placeMultiCarts(payload, cartUuid)

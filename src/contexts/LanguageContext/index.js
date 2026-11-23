@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect } from 'react'
+import React, { createContext, useState, useContext, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useApi } from '../ApiContext'
 
 /**
@@ -162,9 +162,11 @@ export const LanguageProvider = ({ settings, children, strategy, restOfProps }) 
     document.documentElement.lang = normalizeHtmlLang(state?.language?.code)
   }, [state?.language?.code])
 
-  const t = (key, fallback = null) => {
+  // `t` changes only with the dictionary (and the app's prefix): a new one on every
+  // render broke the memoization of everything that receives it.
+  const appInternalName = restOfProps.app_internal_name ?? null
+  const t = useCallback((key, fallback = null) => {
     let originalKey = key
-    const appInternalName = restOfProps.app_internal_name ?? null
     if (appInternalName !== null) {
       const prefix = `${appInternalName.toUpperCase()}_`
       if (!key?.startsWith || !key?.substring) return fallback ?? key
@@ -177,10 +179,22 @@ export const LanguageProvider = ({ settings, children, strategy, restOfProps }) 
     const textValue = state?.dictionary?.[key] ?? state?.dictionary?.[originalKey] ?? fallback ?? key
 
     return textValue
-  }
+  }, [state?.dictionary, appInternalName])
+
+  // The actions keep one identity and always run their latest version.
+  const latest = useRef({})
+  latest.current = { setLanguage, refreshTranslations, loadDefaultLanguage }
+  const stableSetLanguage = useCallback((...args) => latest.current.setLanguage(...args), [])
+  const stableRefreshTranslations = useCallback((...args) => latest.current.refreshTranslations(...args), [])
+  const stableLoadDefaultLanguage = useCallback((...args) => latest.current.loadDefaultLanguage(...args), [])
+
+  const value = useMemo(
+    () => [state, t, stableSetLanguage, stableRefreshTranslations, stableLoadDefaultLanguage],
+    [state, t, stableSetLanguage, stableRefreshTranslations, stableLoadDefaultLanguage]
+  )
 
   return (
-    <LanguageContext.Provider value={[state, t, setLanguage, refreshTranslations, loadDefaultLanguage]}>
+    <LanguageContext.Provider value={value}>
       {children}
     </LanguageContext.Provider>
   )
