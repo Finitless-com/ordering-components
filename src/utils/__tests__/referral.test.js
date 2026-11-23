@@ -3,11 +3,15 @@ import {
   REFERRAL_MAX_VISITS,
   REFERRAL_TTL_MS,
   captureVisit,
+  getReferralCodeFromUrl,
   isRepeatedNavigation,
+  normalizeReferralCode,
   normalizeUtmValue,
+  referralAttributionSettled,
   referralForPlace,
   registerVisit,
   storedVisits,
+  subscribeToBrowserReferralUrls,
   utmFromSearch
 } from '../referral'
 
@@ -302,14 +306,6 @@ describe('registerVisit', () => {
     expect(stored.visits).toHaveLength(REFERRAL_MAX_VISITS)
   })
 })
-
-import { describe, expect, it } from 'vitest'
-import {
-  getReferralCodeFromUrl,
-  normalizeReferralCode,
-  referralAttributionSettled,
-  subscribeToBrowserReferralUrls
-} from '../referral'
 
 describe('referral utilities', () => {
   it('normalizes a valid referral code', () => {
