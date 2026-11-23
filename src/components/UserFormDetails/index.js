@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import PropTypes from 'prop-types'
 import { useSession } from '../../contexts/SessionContext'
 import { useApi } from '../../contexts/ApiContext'
@@ -37,6 +37,15 @@ export const UserFormDetails = (props) => {
   const [ordering] = useApi()
   const socket = useWebsocket()
   const [session, { changeUser }] = useSession()
+  // Current session user for handlers registered once (the socket listener). It follows the session
+  // whenever the session user changes, and the listener also updates it as soon as it sends a change,
+  // because `changeUser` takes effect later and a second event can arrive before that.
+  const sessionUserRef = useRef(session.user)
+  const lastSessionUserRef = useRef(session.user)
+  if (lastSessionUserRef.current !== session.user) {
+    lastSessionUserRef.current = session.user
+    sessionUserRef.current = session.user
+  }
   const [customer, { setUserCustomer }] = useCustomer()
   const [validationFields] = useValidationsFieldsController()
   const [, { showToast }] = useToast()
@@ -611,18 +620,20 @@ export const UserFormDetails = (props) => {
       data.changes?.map(change => (
         changes[change.attribute] = change.new
       ))
-      setUserState({
-        ...userState,
+      setUserState((prevState) => ({
+        ...prevState,
         loadingDriver: false,
         result: {
-          ...userState?.result,
+          ...prevState?.result,
           ...changes
         }
-      })
-      changeUser({
-        ...session.user,
+      }))
+      const nextUser = {
+        ...sessionUserRef.current,
         ...changes
-      })
+      }
+      sessionUserRef.current = nextUser
+      changeUser(nextUser)
     }
 
     socket.on('drivers_changes', handleUpdateDriver)
