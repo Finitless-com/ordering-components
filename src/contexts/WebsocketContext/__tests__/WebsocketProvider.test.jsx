@@ -229,4 +229,167 @@ describe('WebsocketProvider', () => {
       expect(socketUrlOf(null)).toBe(DEFAULT_SOCKET_URL)
     })
   })
+
+  describe('logout and session changes', () => {
+    const strategy = { getItem: vi.fn(), removeItem: vi.fn() }
+    const seen = []
+
+    const Probe = () => {
+      const socket = useWebsocket()
+      if (!seen.includes(socket)) seen.push(socket)
+      return null
+    }
+
+    const tree = (providerSettings, room = 'orders_1') => (
+      <WebsocketProvider settings={providerSettings} strategy={strategy}>
+        <Probe />
+        <RoomSubscriber room={room} />
+      </WebsocketProvider>
+    )
+
+    const loggedIn = (token = 'token-1', id = 1) => ({ loading: false, auth: true, token, user: { id } })
+    const loggedOut = () => ({ loading: false, auth: false, token: null, user: null })
+
+    const update = (view, providerSettings, session) => {
+      state.session = session
+      act(() => { view.rerender(tree(providerSettings)) })
+    }
+
+    const wrapperWithRooms = () => seen.find(socket => socket.socket && Object.keys(socket.rooms).length > 0)
+
+    beforeEach(() => {
+      seen.length = 0
+    })
+
+    describe.each([
+      ['use_root_point', { project: 'demo', use_root_point: true }],
+      ['no use_root_point', { project: 'demo' }]
+    ])('logout with %s', (_name, providerSettings) => {
+      it('leaves no live connection and no remembered rooms of the previous user, and does not revive it', () => {
+        const view = render(tree(providerSettings))
+        const first = state.instances[0]
+        connect(first)
+        const previous = wrapperWithRooms()
+        expect(Object.keys(previous.rooms)).toEqual(['demo_orders_1'])
+
+        update(view, providerSettings, loggedOut())
+        act(() => { vi.advanceTimersByTime(120000) })
+
+        expect(first.connectCalls).toBe(0)
+        expect(first.connected).toBe(false)
+        expect(first.closeCalls).toBeGreaterThan(0)
+        expect(previous.rooms).toEqual({})
+        expect(previous.closed).toBe(true)
+        expect(joinsOf(first)).toEqual(['demo_orders_1'])
+        // Nothing from the previous user is joined or connected from here on
+        state.instances.slice(1).forEach(io => {
+          expect(io.options.query).not.toContain('token-1')
+          expect(io.options.extraHeaders).toBeUndefined()
+        })
+      })
+
+      it('keeps the hook usable: same methods, whatever the provider holds', () => {
+        const view = render(tree(providerSettings))
+        connect(state.instances[0])
+        update(view, providerSettings, loggedOut())
+        const current = seen[seen.length - 1]
+        ;['join', 'leave', 'on', 'off'].forEach(method => {
+          expect(typeof current[method]).toBe('function')
+          expect(() => current[method]('orders_9', () => {})).not.toThrow()
+        })
+      })
+
+      it('creates a fresh connection on a later login with the new token, rejoining only what is mounted', () => {
+        const view = render(tree(providerSettings))
+        connect(state.instances[0])
+        update(view, providerSettings, loggedOut())
+        update(view, providerSettings, loggedIn('token-2', 2))
+
+        const created = state.instances
+        const last = created[created.length - 1]
+        expect(last).not.toBe(created[0])
+        expect(last.options.query).toContain('token=token-2')
+        expect(last.options.extraHeaders).toEqual({ Authorization: 'Bearer token-2' })
+        connect(last)
+        expect(joinsOf(last)).toEqual(['demo_orders_1'])
+        expect(created[0].connectCalls).toBe(0)
+        expect(created[0].connected).toBe(false)
+      })
+    })
+
+    it('with use_root_point a logout creates no new socket', () => {
+      const providerSettings = { project: 'demo', use_root_point: true }
+      const view = render(tree(providerSettings))
+      update(view, providerSettings, loggedOut())
+      expect(state.instances).toHaveLength(1)
+    })
+
+    it('without use_root_point a logout creates a guest socket without token', () => {
+      const providerSettings = { project: 'demo' }
+      const view = render(tree(providerSettings))
+      connect(state.instances[0])
+      update(view, providerSettings, loggedOut())
+      expect(state.instances).toHaveLength(2)
+      expect(state.instances[1].options.query).toBe('project=demo')
+      expect(state.instances[1].options.extraHeaders).toBeUndefined()
+      expect(state.instances[1].closeCalls).toBe(0)
+    })
+
+    it('a token change while logged in replaces the connection once and drops the old one', () => {
+      const providerSettings = { project: 'demo' }
+      const view = render(tree(providerSettings))
+      const first = state.instances[0]
+      connect(first)
+      const previous = wrapperWithRooms()
+      update(view, providerSettings, loggedIn('token-2', 1))
+      expect(state.instances).toHaveLength(2)
+      expect(first.connectCalls).toBe(0)
+      expect(first.connected).toBe(false)
+      expect(previous.rooms).toEqual({})
+      const second = state.instances[1]
+      expect(second.options.query).toContain('token=token-2')
+      connect(second)
+      expect(joinsOf(second)).toEqual(['demo_orders_1'])
+      act(() => { vi.advanceTimersByTime(120000) })
+      expect(state.instances).toHaveLength(2)
+      expect(second.closeCalls).toBe(0)
+    })
+
+    it('a user id change with the same token still reconnects the same wrapper and keeps its rooms', () => {
+      const providerSettings = { project: 'demo' }
+      const view = render(tree(providerSettings))
+      const first = state.instances[0]
+      connect(first)
+      const wrapper = wrapperWithRooms()
+      update(view, providerSettings, loggedIn('token-1', 2))
+      expect(state.instances).toHaveLength(1)
+      expect(first.closeCalls).toBe(1)
+      expect(first.connectCalls).toBe(1)
+      expect(Object.keys(wrapper.rooms)).toEqual(['demo_orders_1'])
+    })
+
+    it('guests (no token, no use_root_point) get one tokenless connection, as before', () => {
+      state.session = loggedOut()
+      const providerSettings = { project: 'demo' }
+      const view = render(tree(providerSettings))
+      expect(state.instances).toHaveLength(1)
+      expect(state.instances[0].options.query).toBe('project=demo')
+      expect(state.instances[0].options.extraHeaders).toBeUndefined()
+      connect(state.instances[0])
+      expect(joinsOf(state.instances[0])).toEqual(['demo_orders_1'])
+      update(view, providerSettings, loggedOut())
+      expect(state.instances).toHaveLength(1)
+      expect(state.instances[0].closeCalls).toBe(0)
+    })
+
+    it('guests with use_root_point get no connection until they log in', () => {
+      state.session = loggedOut()
+      const providerSettings = { project: 'demo', use_root_point: true }
+      const view = render(tree(providerSettings))
+      expect(state.instances).toHaveLength(0)
+      update(view, providerSettings, loggedIn())
+      expect(state.instances).toHaveLength(1)
+      expect(state.instances[0].options.query).toContain('token=token-1')
+    })
+  })
 })
