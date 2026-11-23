@@ -11,6 +11,7 @@ vi.mock('../../SessionContext', () => ({
 vi.mock('socket.io-client', () => {
   class FakeIoSocket {
     constructor (url, options) {
+      this.url = url
       this.options = options
       this.listeners = {}
       this.emitted = []
@@ -66,7 +67,7 @@ vi.mock('socket.io-client', () => {
   }
 })
 
-const { WebsocketProvider, useWebsocket } = await import('../index')
+const { WebsocketProvider, useWebsocket, socketUrlOf, DEFAULT_SOCKET_URL } = await import('../index')
 
 const settings = { project: 'demo' }
 
@@ -187,5 +188,45 @@ describe('WebsocketProvider', () => {
       ['join', 'demo_orders_2'],
       ['leave', 'demo_orders_1']
     ])
+  })
+
+  describe('socket url', () => {
+    const strategy = { getItem: vi.fn(), removeItem: vi.fn() }
+    const urlFor = (extraSettings) => {
+      state.instances.length = 0
+      render(
+        <WebsocketProvider settings={{ project: 'demo', ...extraSettings }} strategy={strategy}>
+          <RoomSubscriber room='orders_1' />
+        </WebsocketProvider>
+      )
+      expect(state.instances).toHaveLength(1)
+      return state.instances[0].url
+    }
+
+    it('connects to the v3 host when the settings have no override_url', () => {
+      expect(DEFAULT_SOCKET_URL).toBe('https://sockets-v3.orderingplus.com')
+      expect(urlFor({})).toBe('https://sockets-v3.orderingplus.com')
+    })
+
+    it('connects to override_url when it is set, trimmed', () => {
+      expect(urlFor({ override_url: 'http://localhost:3000' })).toBe('http://localhost:3000')
+      expect(urlFor({ override_url: '  https://sockets.staging.test  ' })).toBe('https://sockets.staging.test')
+    })
+
+    it('still ignores the legacy url of the settings', () => {
+      expect(urlFor({ url: 'https://sockets-v2.orderingplus.com' })).toBe('https://sockets-v3.orderingplus.com')
+      expect(urlFor({ url: 'https://old.host', override_url: 'http://localhost:3000' })).toBe('http://localhost:3000')
+    })
+
+    it('falls back to the default for an empty, blank or non-string override_url', () => {
+      ;['', '   ', null, undefined, 42, {}, ['http://x']].forEach((override_url) => {
+        expect(urlFor({ override_url })).toBe('https://sockets-v3.orderingplus.com')
+      })
+    })
+
+    it('socketUrlOf tolerates missing settings', () => {
+      expect(socketUrlOf(undefined)).toBe(DEFAULT_SOCKET_URL)
+      expect(socketUrlOf(null)).toBe(DEFAULT_SOCKET_URL)
+    })
   })
 })
