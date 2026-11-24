@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import PropTypes, { string, object } from 'prop-types'
 import { useSession } from '../../contexts/SessionContext'
 import { useApi } from '../../contexts/ApiContext'
@@ -15,6 +15,7 @@ export const Contacts = (props) => {
     customerConditions,
     driverConditions,
     orderConditions,
+    orderFilter,
     sortParams,
     paginationSettings,
     conditionsConector
@@ -27,6 +28,15 @@ export const Contacts = (props) => {
   const [{ token, user }] = useSession()
   const [ordering] = useApi()
   const socket = useWebsocket()
+
+  // The socket handlers are created once: they read the predicate through a ref to always use the current one
+  const orderFilterRef = useRef(orderFilter)
+  orderFilterRef.current = orderFilter
+
+  const canInsertOrder = (order) => {
+    const filter = orderFilterRef.current
+    return typeof filter !== 'function' || !!filter(order)
+  }
 
   const [sortBy, setSortBy] = useState(sortParams)
   const [orders, setOrders] = useState({
@@ -342,7 +352,7 @@ export const Contacts = (props) => {
             return false
           })
 
-          if (!order) {
+          if (!order && canInsertOrder(result)) {
             data.unshift(result)
           }
 
@@ -376,7 +386,7 @@ export const Contacts = (props) => {
         return false
       })
 
-      if (!newOrder) {
+      if (!newOrder && canInsertOrder(order)) {
         data.unshift(order)
       }
 
@@ -477,6 +487,18 @@ Contacts.propTypes = {
    * [{ attribute: 'last_direct_message_at', value: { condition: '!=', value: null } }]
    */
   orderConditions: PropTypes.arrayOf(object),
+
+  /**
+   * Optional predicate `(order) => boolean` that decides whether an order that is NOT yet in the list
+   * may be inserted by a real-time event (`message`, `orders_register`, `update_order`).
+   * An order already in the list is updated or moved to the top as usual, whatever the predicate says;
+   * socket events never remove it (removal happens on the next fetch).
+   * When it is not passed, every unknown order is inserted, as always.
+   * It pairs with `orderConditions` (server filter for the pages; this one is for what sockets may add).
+   * Example, only orders with direct messages (pair it with the `orderConditions` above):
+   * (order) => !!order?.last_direct_message_at
+   */
+  orderFilter: PropTypes.func,
 
   /**
    * String that indicates the conector type of the conditions to fetch
