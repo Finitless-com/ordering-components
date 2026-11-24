@@ -14,6 +14,7 @@ export const Contacts = (props) => {
     businessConditions,
     customerConditions,
     driverConditions,
+    orderConditions,
     sortParams,
     paginationSettings,
     conditionsConector
@@ -61,6 +62,13 @@ export const Contacts = (props) => {
     const pageFetch = {
       page: nextPage ? pagination.currentPage + 1 : paginationSettings.page,
       page_size: pagination.pageSize || paginationSettings.pageSize
+    }
+    // Same `where` shape OrderList sends: only added when the app passes `orderConditions`
+    if (orderConditions?.length > 0) {
+      pageFetch.where = {
+        conditions: orderConditions,
+        conector: conditionsConector
+      }
     }
 
     try {
@@ -461,7 +469,18 @@ Contacts.propTypes = {
   driverConditions: PropTypes.arrayOf(object),
 
   /**
+   * Optional array of conditions to filter the orders request on the server
+   * (first page, load more and refetches). It is sent as
+   * `where: { conditions: orderConditions, conector: conditionsConector }`.
+   * When it is not passed (or is empty) the orders request has no `where`.
+   * Example, only orders with direct messages:
+   * [{ attribute: 'last_direct_message_at', value: { condition: '!=', value: null } }]
+   */
+  orderConditions: PropTypes.arrayOf(object),
+
+  /**
    * String that indicates the conector type of the conditions to fetch
+   * (businesses, customers, drivers and orders)
    */
   conditionsConector: PropTypes.string
 }
