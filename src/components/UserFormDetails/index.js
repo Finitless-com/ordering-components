@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import PropTypes from 'prop-types'
 import { useSession } from '../../contexts/SessionContext'
 import { useApi } from '../../contexts/ApiContext'
@@ -37,6 +37,15 @@ export const UserFormDetails = (props) => {
   const [ordering] = useApi()
   const socket = useWebsocket()
   const [session, { changeUser }] = useSession()
+  // Current session user for handlers registered once (the socket listener). It follows the session
+  // whenever the session user changes, and the listener also updates it as soon as it sends a change,
+  // because `changeUser` takes effect later and a second event can arrive before that.
+  const sessionUserRef = useRef(session.user)
+  const lastSessionUserRef = useRef(session.user)
+  if (lastSessionUserRef.current !== session.user) {
+    lastSessionUserRef.current = session.user
+    sessionUserRef.current = session.user
+  }
   const [customer, { setUserCustomer }] = useCustomer()
   const [validationFields] = useValidationsFieldsController()
   const [, { showToast }] = useToast()
@@ -205,6 +214,69 @@ export const UserFormDetails = (props) => {
         if (!image && !options?.dontToggleEditMode) {
           setIsEdit(!isEdit)
         }
+      }
+    } catch (err) {
+      setFormState({
+        ...formState,
+        result: {
+          error: true,
+          result: err.message
+        },
+        loading: false
+      })
+    }
+  }
+
+  /**
+   * Remove the user's photo.
+   * The API clears the photo when it is sent as an empty string: a `null` is refused by the photo's
+   * validation and a missing `photo` changes nothing, which is why `handleButtonUpdateClick` (that
+   * sends `image || formState.changes.photo`) cannot do it. The flow after the request is the one of
+   * saving a new photo (`handleButtonUpdateClick(null, true, image)`): the result is in `formState`,
+   * and the session (or the customer) user takes the answer.
+   */
+  const handleRemovePhoto = async () => {
+    try {
+      setFormState({ ...formState, loading: true })
+      const response = await ordering.users(props?.userData?.id || userState.result.result.id).save({ photo: '' }, {
+        accessToken
+      })
+
+      const { photo, ...changes } = formState.changes
+
+      setFormState({
+        ...formState,
+        changes: response.content.error ? formState.changes : changes,
+        result: response.content,
+        loading: false
+      })
+
+      if (!response.content.error) {
+        setUserState({
+          ...userState,
+          loadingDriver: false,
+          result: {
+            ...userState.result,
+            ...response.content
+          }
+        })
+        if (!isCustomerMode) {
+          changeUser({
+            ...session.user,
+            ...response.content.result
+          })
+        } else {
+          setUserCustomer({
+            ...customer.user,
+            ...response.content.result
+          }, true)
+        }
+
+        if (handleSuccessUpdate) {
+          handleSuccessUpdate(response.content.result)
+        }
+
+        onClose && onClose()
       }
     } catch (err) {
       setFormState({
@@ -611,18 +683,20 @@ export const UserFormDetails = (props) => {
       data.changes?.map(change => (
         changes[change.attribute] = change.new
       ))
-      setUserState({
-        ...userState,
+      setUserState((prevState) => ({
+        ...prevState,
         loadingDriver: false,
         result: {
-          ...userState?.result,
+          ...prevState?.result,
           ...changes
         }
-      })
-      changeUser({
-        ...session.user,
+      }))
+      const nextUser = {
+        ...sessionUserRef.current,
         ...changes
-      })
+      }
+      sessionUserRef.current = nextUser
+      changeUser(nextUser)
     }
 
     socket.on('drivers_changes', handleUpdateDriver)
@@ -657,6 +731,7 @@ export const UserFormDetails = (props) => {
           handleChangeInput={handleChangeInput}
           handleButtonUpdateClick={handleUpdateClick}
           handlechangeImage={handlechangeImage}
+          handleRemovePhoto={handleRemovePhoto}
           toggleIsEdit={() => setIsEdit(!isEdit)}
           handleToggleAvalaibleStatusDriver={handleToggleAvalaibleStatusDriver}
           handleSendVerifyCode={sendVerifyPhoneCode}

@@ -88,6 +88,8 @@ import { SingleProductCard } from './components/SingleProductCard'
 import { SingleProfessionalCard } from './components/SingleProfessionalCard'
 import { SmartAppBanner } from './components/SmartAppBanner'
 import { StoreProductList } from './components/StoreProductList'
+import { StoreProductSearch } from './components/StoreProductSearch'
+import { isProductUnavailable } from './components/StoreProductSearch/utils'
 import { StoreProductOptions } from './components/StoreProductOptions'
 import { UserFormDetails } from './components/UserFormDetails'
 import { UpsellingPage } from './components/UpsellingPage'
@@ -298,6 +300,8 @@ export {
   SingleProfessionalCard,
   SmartAppBanner,
   StoreProductList,
+  StoreProductSearch,
+  isProductUnavailable,
   StoreProductOptions,
   UserFormDetails,
   UpsellingPage,
