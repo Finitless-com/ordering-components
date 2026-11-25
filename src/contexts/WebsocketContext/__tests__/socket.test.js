@@ -79,7 +79,7 @@ vi.mock('socket.io-client', () => {
   return { default: io }
 })
 
-const { Socket } = await import('../socket')
+const { Socket, isSessionRejectedError } = await import('../socket')
 
 const createSocket = () => {
   const socket = new Socket({ url: 'wss://sockets.test', project: 'demo', accessToken: 'token' })
@@ -448,5 +448,54 @@ describe('Socket', () => {
     io.simulateDisconnect()
     io.simulateConnect()
     expect(io.joins()).toEqual(['demo_orders_7'])
+  })
+
+  it('isSessionRejectedError matches only the error the wrapper stops retrying for', () => {
+    expect(isSessionRejectedError(new Error('invalid signature'))).toBe(true)
+    expect(isSessionRejectedError({ message: 'invalid signature' })).toBe(true)
+    expect(isSessionRejectedError(new Error('websocket error'))).toBe(false)
+    expect(isSessionRejectedError(undefined)).toBe(false)
+    expect(isSessionRejectedError(null)).toBe(false)
+  })
+
+  it('dispose closes the connection once and forgets rooms, pending leaves and queued listeners', () => {
+    const socket = createSocket()
+    const io = ioState.instances[0]
+    io.simulateConnect()
+    socket.join('orders_1')
+    socket.join('orders_2')
+    socket.leave('orders_2')
+    socket.dispose()
+    expect(io.closeCalls).toBe(1)
+    expect(socket.rooms).toEqual({})
+    expect(Object.keys(socket.pendingLeaves)).toHaveLength(0)
+    vi.advanceTimersByTime(5000)
+    expect(io.leaves()).toEqual([])
+    socket.dispose()
+    expect(io.closeCalls).toBe(1)
+  })
+
+  it('dispose drops the listeners queued before the connection and a later connect starts clean', () => {
+    const socket = new Socket({ url: 'wss://sockets.test', project: 'demo', accessToken: 'token' })
+    const handler = vi.fn()
+    socket.on('update_order', handler)
+    socket.join('orders_1')
+    socket.dispose()
+    socket.connect()
+    const io = ioState.instances[0]
+    expect(io.listeners.update_order || []).toHaveLength(0)
+    io.simulateConnect()
+    expect(io.joins()).toEqual([])
+  })
+
+  it('close keeps the rooms so the same wrapper can connect again', () => {
+    const socket = createSocket()
+    const io = ioState.instances[0]
+    io.simulateConnect()
+    socket.join('orders_1')
+    socket.close()
+    socket.connect()
+    io.simulateConnect()
+    expect(io.joins()).toEqual(['demo_orders_1', 'demo_orders_1'])
   })
 })

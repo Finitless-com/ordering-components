@@ -26,7 +26,8 @@ export const OrderDetails = (props) => {
     isDisabledOrdersRoom,
     disableMessages,
     isDriverNotification,
-    isBusinessApp
+    isBusinessApp,
+    clearErrorOnAction
   } = props
 
   const [{ user, token, loading }] = useSession()
@@ -51,6 +52,12 @@ export const OrderDetails = (props) => {
   const [messagesReadList, setMessagesReadList] = useState([])
   const [driverUpdateLocation, setDriverUpdateLocation] = useState({ loading: false, error: null, newLocation: null })
   const [forceUpdate, setForceUpdate] = useState(null)
+  /**
+   * Opt-in (clearErrorOnAction): the fields to merge into the order state when an action
+   * starts or ends, so a failure of a previous attempt does not stay in `error`.
+   * Empty object without the prop: the state is merged exactly as before.
+   */
+  const errorReset = clearErrorOnAction ? { error: null, errorCodes: null, retryAfter: null } : {}
   const [regressionRequest, setRegressionRequest] = useState(null)
   const [reorderState, setReorderState] = useState({ loading: false, result: [], error: null })
   const [cartState, setCartState] = useState({ loading: false, error: null })
@@ -308,7 +315,7 @@ export const OrderDetails = (props) => {
         }
       }
 
-      setOrderState({ ...orderState, loading: true })
+      setOrderState({ ...orderState, loading: true, ...errorReset })
 
       const isFormData = bodyToSend && bodyToSend instanceof FormData
 
@@ -344,7 +351,8 @@ export const OrderDetails = (props) => {
         setOrderState({
           ...orderState,
           order: Object.assign(orderState.order, result),
-          loading: false
+          loading: false,
+          ...errorReset
         })
         if (result?.status === 7 && result?.reservation && isBusinessApp) {
           setShowReservationAlert(true)
@@ -361,10 +369,10 @@ export const OrderDetails = (props) => {
             : null
         if (selected) {
           setForceUpdate(null)
-          setOrderState({ ...orderState, loading: false })
+          setOrderState({ ...orderState, loading: false, ...errorReset })
           setForceUpdate(selected.value)
         } else if (isRegressionValidationEnabled && !isFormData && !bodyToSend?.reasons && isOrderStatusRegressionError(errorCodes)) {
-          setOrderState({ ...orderState, loading: false })
+          setOrderState({ ...orderState, loading: false, ...errorReset })
           setRegressionRequest({ status, body: { ...bodyToSend, status } })
         } else {
           const message = Array.isArray(result) ? result[0] : typeof result === 'string' ? result : 'INTERNAL_ERROR'
@@ -400,7 +408,7 @@ export const OrderDetails = (props) => {
   const handleAssignDriver = async (driverId) => {
     try {
       const bodyToSend = { driver_id: driverId }
-      setOrderState({ ...orderState, loading: true })
+      setOrderState({ ...orderState, loading: true, ...errorReset })
       const { content: { error, result } } = await ordering
         .setAccessToken(token)
         .orders(orderState?.order?.id ?? orderId)
@@ -409,16 +417,29 @@ export const OrderDetails = (props) => {
       setOrderState({
         ...orderState,
         loading: false,
-        order: Object.assign(orderState.order, result),
+        // clearErrorOnAction: a failed assignment does not merge the error list into the order
+        order: clearErrorOnAction && error ? orderState.order : Object.assign(orderState.order, result),
+        ...errorReset,
         error: error ? result : null
       })
     } catch (e) {
       setOrderState({
         ...orderState,
         loading: false,
-        error: e?.message ? drivers.error?.push(e?.message) : ['ERROR']
+        ...errorReset,
+        error: clearErrorOnAction
+          ? [e?.message || 'ERROR']
+          : e?.message ? drivers.error?.push(e?.message) : ['ERROR']
       })
     }
+  }
+
+  /**
+   * Clears the error of the order (a failed status change or driver assignment), so the UI
+   * can show it inline and dismiss it, e.g. before a retry. Only the error fields change.
+   */
+  const clearError = () => {
+    setOrderState(prev => ({ ...prev, error: null, errorCodes: null, retryAfter: null }))
   }
 
   /**
@@ -806,6 +827,7 @@ export const OrderDetails = (props) => {
           messageErrors={messageErrors}
           formatPrice={formatPrice}
           handleAssignDriver={handleAssignDriver}
+          clearError={clearError}
           handlerSubmit={handlerSubmitSpotNumber}
           handleChangeOrderStatus={handleChangeOrderStatus}
           messages={messages}
@@ -850,5 +872,11 @@ OrderDetails.propTypes = {
   /**
    * Order, this must be contains an object with all order info
    */
-  order: PropTypes.object
+  order: PropTypes.object,
+  /**
+   * Opt-in. When true, `order.error`, `order.errorCodes` and `order.retryAfter` are reset when a
+   * status change or a driver assignment starts and when it ends without a failure, and a failed
+   * assignment does not merge its error list into the order. Default false: unchanged behaviour.
+   */
+  clearErrorOnAction: PropTypes.bool
 }

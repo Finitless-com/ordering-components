@@ -15,15 +15,20 @@ const mocks = vi.hoisted(() => ({
   orderOptionsGet: vi.fn(),
   orderOptionsSave: vi.fn(),
   orderTypesAllowed: '',
-  sessionToken: 'session-token'
+  defaultOrderType: undefined,
+  unaddressedAllowed: undefined,
+  sessionToken: 'session-token',
+  // A guest with the config loaded (stable object: the provider's effects depend on it).
+  guest: false,
+  guestConfig: null
 }))
 
 vi.mock('../../SessionContext', () => ({
   useSession: () => [{
-    auth: true,
-    loading: true,
+    auth: !mocks.guest,
+    loading: !mocks.guest,
     token: mocks.sessionToken,
-    user: { id: 8 }
+    user: mocks.guest ? undefined : { id: 8 }
   }, { logout: vi.fn() }]
 }))
 
@@ -67,10 +72,12 @@ vi.mock('../../EventContext', () => ({
 }))
 
 vi.mock('../../ConfigContext', () => ({
-  useConfig: () => [{
+  useConfig: () => [mocks.guestConfig ?? {
     loading: true,
     configs: {
-      order_types_allowed: { value: mocks.orderTypesAllowed }
+      order_types_allowed: { value: mocks.orderTypesAllowed },
+      ...(mocks.defaultOrderType && { default_order_type: { key: 'default_order_type', type: 2, value: mocks.defaultOrderType } }),
+      ...(mocks.unaddressedAllowed && { unaddressed_order_types_allowed: { value: mocks.unaddressedAllowed } })
     }
   }]
 }))
@@ -1310,6 +1317,15 @@ describe('OrderContext pickupWithoutAddress', () => {
     expect(mocks.addProduct).toHaveBeenCalledTimes(1)
   })
 
+  it('exposes the extra unaddressed types in the state', async () => {
+    renderProvider()
+    expect(orderState.extraUnaddressedOrderTypes).toEqual([])
+    await act(async () => { orderActions.setExtraUnaddressedOrderTypes([2, 3, '4']) })
+    expect(orderState.extraUnaddressedOrderTypes).toEqual([2, 3, 4])
+    await act(async () => { orderActions.setExtraUnaddressedOrderTypes([]) })
+    expect(orderState.extraUnaddressedOrderTypes).toEqual([])
+  })
+
   it('requires the address for eat in by default (no extra unaddressed types)', async () => {
     renderProvider()
     await act(async () => { orderActions.setStateValues({ options: { type: 3 } }) })
@@ -1338,5 +1354,380 @@ describe('OrderContext pickupWithoutAddress', () => {
     expect(response).toBe(false)
     expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 2 })
     expect(mocks.addProduct).not.toHaveBeenCalled()
+  })
+})
+
+describe('OrderContext worker pickup and default order type', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+  const cart = { business_id: 5 }
+  const product = { id: 1, name: 'Taco' }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    strategy.getItem.mockResolvedValue(null)
+    mocks.orderTypesAllowed = '1|2'
+    mocks.defaultOrderType = 'delivery'
+    mocks.unaddressedAllowed = '1|2'
+    mocks.orderOptionsSave.mockReset().mockImplementation(async (body) => ({
+      status: 200,
+      content: { error: false, result: { type: body.type, carts: [] } }
+    }))
+    mocks.addProduct.mockResolvedValue({
+      content: { error: false, result: { business_id: 5, uuid: 'cart-uuid-5' } },
+      status: 200
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    mocks.orderTypesAllowed = ''
+    mocks.defaultOrderType = undefined
+    mocks.unaddressedAllowed = undefined
+  })
+
+  const renderProvider = (props = {}) => render(
+    <OrderProvider strategy={strategy} {...props}>
+      <OrderProbe />
+    </OrderProvider>
+  )
+
+  const savedTypes = () => mocks.orderOptionsSave.mock.calls.map(([body]) => body.type)
+
+  it('starts as pickup when the page comes from the worker and the prop is not set', async () => {
+    vi.stubGlobal('__FIRST_LOAD__', {})
+    renderProvider()
+    expect(orderState.options.type).toBe(2)
+
+    await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+    await act(async () => { await orderActions.addProduct(product, cart, false) })
+    expect(savedTypes()).toContain(2)
+  })
+
+  it('starts as default_order_type with disableWorkerPickup and never forces pickup', async () => {
+    vi.stubGlobal('__FIRST_LOAD__', {})
+    renderProvider({ disableWorkerPickup: true })
+    expect(orderState.options.type).toBe(1)
+
+    await act(async () => { await orderActions.addProduct(product, cart, false) })
+    expect(mocks.addProduct).toHaveBeenCalledTimes(1)
+    expect(savedTypes()).not.toContain(2)
+  })
+
+  it('uses default_order_type when the current type is not allowed and the default is', async () => {
+    mocks.orderTypesAllowed = '1|3'
+    mocks.defaultOrderType = 'eatin'
+    renderProvider()
+    await act(async () => { orderActions.setStateValues({ options: { type: 2 } }) })
+
+    await waitFor(() => expect(savedTypes()).toEqual([3]))
+  })
+
+  it('falls back to the first allowed type, never the config row type, when the default is not allowed', async () => {
+    mocks.orderTypesAllowed = '1|3'
+    mocks.defaultOrderType = 'delivery'
+    renderProvider()
+    await act(async () => { orderActions.setStateValues({ options: { type: 5 } }) })
+    await waitFor(() => expect(savedTypes()).toEqual([1]))
+
+    mocks.orderOptionsSave.mockClear()
+    mocks.defaultOrderType = 'pickup'
+    await act(async () => { orderActions.setStateValues({ options: { type: 4 } }) })
+    await waitFor(() => expect(savedTypes()).toEqual([1]))
+    expect(savedTypes()).not.toContain(2)
+  })
+
+  // SERGIO-1688: the consumer's own list of supported types (the web does not offer seat delivery, 6)
+  describe('with supportedOrderTypes, the provider never picks a type the consumer does not support', () => {
+    const supported = [1, 2, 3, 4, 5, 7, 8, 9]
+
+    it('replaces a saved type that is no longer supported by the first supported allowed one', async () => {
+      mocks.orderTypesAllowed = '6|2'
+      mocks.defaultOrderType = 'seatdelivery'
+      renderProvider({ supportedOrderTypes: supported })
+      await act(async () => { orderActions.setStateValues({ options: { type: 6 } }) })
+
+      await waitFor(() => expect(savedTypes()).toEqual([2]))
+      expect(savedTypes()).not.toContain(6)
+    })
+
+    it('without the prop the same project keeps the allowed 6: nothing changes for the other consumers', async () => {
+      mocks.orderTypesAllowed = '6|2'
+      mocks.defaultOrderType = 'seatdelivery'
+      renderProvider()
+      await act(async () => { orderActions.setStateValues({ options: { type: 6 } }) })
+
+      await waitFor(() => expect(orderState.options.type).toBe(6))
+      expect(mocks.orderOptionsSave).not.toHaveBeenCalled()
+    })
+
+    describe('a guest', () => {
+      beforeEach(() => {
+        mocks.guest = true
+        mocks.orderTypesAllowed = '6|2'
+        mocks.defaultOrderType = 'seatdelivery'
+        mocks.guestConfig = {
+          loading: false,
+          configs: {
+            order_types_allowed: { value: '6|2' },
+            default_order_type: { key: 'default_order_type', type: 2, value: 'seatdelivery' }
+          }
+        }
+      })
+
+      afterEach(() => {
+        mocks.guest = false
+        mocks.guestConfig = null
+      })
+
+      it('starts in the first supported allowed type, and stores that one', async () => {
+        renderProvider({ disableWorkerPickup: true, supportedOrderTypes: supported })
+        expect(orderState.options.type).toBe(2)
+        await waitFor(() => expect(orderState.loading).toBe(false))
+        expect(orderState.options.type).toBe(2)
+        expect(strategy.setItem.mock.calls.every(([key, value]) => key !== 'options' || value.type !== 6)).toBe(true)
+      })
+
+      it('a guest left without a type takes the first supported one, not the 6 the project lists first', async () => {
+        renderProvider({ disableWorkerPickup: true, supportedOrderTypes: supported })
+        await waitFor(() => expect(orderState.loading).toBe(false))
+        await act(async () => { orderActions.setStateValues({ options: { type: null } }) })
+        await waitFor(() => expect(orderState.options.type).toBe(2))
+      })
+
+      it('without the prop the project order still wins: it starts in 6 (the behavior the prop is for)', async () => {
+        renderProvider({ disableWorkerPickup: true })
+        expect(orderState.options.type).toBe(6)
+        await waitFor(() => expect(orderState.loading).toBe(false))
+      })
+    })
+  })
+
+  // SERGIO-1681: a write the customer's later change superseded answers late
+  describe('a late answer to a superseded type write', () => {
+    const deferred = () => {
+      let resolve
+      const promise = new Promise((done) => { resolve = done })
+      return { promise, resolve }
+    }
+    const answer = (type) => ({ status: 200, content: { error: false, result: { type, carts: [] } } })
+
+    // writes A (type 2) first and B (type 3) after it, answers B and then A
+    const lateAnswer = async (props) => {
+      mocks.orderTypesAllowed = '1|2|3'
+      const writeA = deferred()
+      const writeB = deferred()
+      mocks.orderOptionsSave.mockReset()
+        .mockReturnValueOnce(writeA.promise)
+        .mockReturnValueOnce(writeB.promise)
+      renderProvider(props)
+      await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+      let doneA
+      let doneB
+      await act(async () => { doneA = orderActions.changeType(2) })
+      await waitFor(() => expect(mocks.orderOptionsSave).toHaveBeenCalledTimes(1))
+      await act(async () => { doneB = orderActions.changeType(3) })
+      await waitFor(() => expect(mocks.orderOptionsSave).toHaveBeenCalledTimes(2))
+      await act(async () => { writeB.resolve(answer(3)); await doneB })
+      expect(orderState.options.type).toBe(3)
+      await act(async () => { writeA.resolve(answer(2)); await doneA })
+    }
+
+    it('with ignoreStaleTypeResponses the type the customer chose last stays', async () => {
+      await lateAnswer({ ignoreStaleTypeResponses: true })
+      expect(orderState.options.type).toBe(3)
+      expect(orderState.loading).toBe(false)
+    })
+
+    it('without the prop the late answer applies, as before', async () => {
+      await lateAnswer()
+      expect(orderState.options.type).toBe(2)
+    })
+  })
+
+  // SERGIO-1681: a write that never answers must not hold `loading` for good
+  describe('orderOptionsWriteTimeout', () => {
+    const hang = () => {
+      mocks.orderOptionsSave.mockReset().mockImplementation(() => new Promise(() => {}))
+    }
+
+    afterEach(() => { vi.useRealTimers() })
+
+    it('releases loading and cancels the request when the write does not answer in time; the local type stays', async () => {
+      vi.useFakeTimers()
+      hang()
+      const Alert = vi.fn(() => null)
+      renderProvider({ orderOptionsWriteTimeout: 4000, Alert })
+      await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+      await act(async () => { orderActions.changeType(2) })
+      expect(orderState.loading).toBe(true)
+      expect(orderState.options.type).toBe(2)
+      const transport = mocks.orderOptionsSave.mock.calls[0][1]
+      transport.cancelToken.cancel = vi.fn()
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(3999) })
+      expect(orderState.loading).toBe(true)
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(orderState.loading).toBe(false)
+      expect(orderState.options.type).toBe(2)
+      expect(transport.cancelToken.cancel).toHaveBeenCalledTimes(1)
+      expect(Alert.mock.lastCall[0]).toMatchObject({ open: true, content: 'We couldn’t save your order type. Check your connection and try again.' })
+    })
+
+    it('a type write that also clears city_id is cut by the deadline too; the local type stays', async () => {
+      vi.useFakeTimers()
+      hang()
+      renderProvider({ orderOptionsWriteTimeout: 4000 })
+      await act(async () => { orderActions.setStateValues({ options: { type: 1, city_id: 5 } }) })
+      await act(async () => { orderActions.changeType(3) })
+      expect(mocks.orderOptionsSave.mock.calls[0][0]).toMatchObject({ type: 3, city_id: null })
+      expect(orderState.loading).toBe(true)
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
+      expect(orderState.loading).toBe(false)
+      expect(orderState.options.type).toBe(3)
+    })
+
+    it('a write with no changes has no deadline', async () => {
+      vi.useFakeTimers()
+      hang()
+      renderProvider({ orderOptionsWriteTimeout: 4000 })
+      await act(async () => { orderActions.updateOrderOptions({}) })
+      expect(mocks.orderOptionsSave).toHaveBeenCalledTimes(1)
+      expect(mocks.orderOptionsSave.mock.calls[0][1].cancelToken).toBeUndefined()
+      await act(async () => { await vi.advanceTimersByTimeAsync(60000) })
+      expect(orderState.loading).toBe(true)
+    })
+
+    it('a write that changes more than the type (a moment) is not cut by the deadline', async () => {
+      vi.useFakeTimers()
+      hang()
+      const Alert = vi.fn(() => null)
+      renderProvider({ orderOptionsWriteTimeout: 4000, Alert })
+      await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+      await act(async () => { orderActions.changeMoment(new Date('2030-01-01T10:00:00Z')) })
+      expect(orderState.loading).toBe(true)
+      expect(mocks.orderOptionsSave.mock.calls[0][1].cancelToken).toBeUndefined()
+      await act(async () => { await vi.advanceTimersByTimeAsync(60000) })
+      expect(orderState.loading).toBe(true)
+      expect(Alert.mock.calls.some(([props]) => props.open)).toBe(false)
+    })
+
+    it('does not touch a write that answers in time', async () => {
+      vi.useFakeTimers()
+      mocks.orderOptionsSave.mockReset().mockResolvedValue({ status: 200, content: { error: false, result: { type: 2, carts: [] } } })
+      const Alert = vi.fn(() => null)
+      renderProvider({ orderOptionsWriteTimeout: 4000, Alert })
+      await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+      await act(async () => { await orderActions.changeType(2) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+      expect(orderState.loading).toBe(false)
+      expect(Alert.mock.calls.some(([props]) => props.open)).toBe(false)
+    })
+
+    it('without the prop a write that never answers keeps loading, as before', async () => {
+      vi.useFakeTimers()
+      hang()
+      renderProvider()
+      await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+      await act(async () => { orderActions.changeType(2) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(60000) })
+      expect(orderState.loading).toBe(true)
+    })
+  })
+
+  describe('with disableWorkerPickup, a default_order_type that is unknown or not allowed', () => {
+    beforeEach(() => {
+      mocks.guest = true
+    })
+
+    afterEach(() => {
+      mocks.guest = false
+      mocks.guestConfig = null
+    })
+
+    const useGuestConfig = () => {
+      mocks.guestConfig = {
+        loading: false,
+        configs: {
+          order_types_allowed: { value: mocks.orderTypesAllowed },
+          ...(mocks.defaultOrderType && { default_order_type: { key: 'default_order_type', type: 2, value: mocks.defaultOrderType } })
+        }
+      }
+    }
+
+    it('starts in the first allowed type when the default does not map to an order type', async () => {
+      mocks.orderTypesAllowed = '1|2'
+      mocks.defaultOrderType = 'reservation'
+      useGuestConfig()
+      renderProvider({ disableWorkerPickup: true })
+      expect(orderState.options.type).toBe(1)
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      expect(orderState.options.type).toBe(1)
+    })
+
+    it('starts in the first allowed type when the default maps to a type that is not allowed', async () => {
+      mocks.orderTypesAllowed = '1|3'
+      mocks.defaultOrderType = 'pickup'
+      useGuestConfig()
+      renderProvider({ disableWorkerPickup: true })
+      expect(orderState.options.type).toBe(1)
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      expect(orderState.options.type).toBe(1)
+    })
+
+    it('keeps an allowed default_order_type', async () => {
+      mocks.orderTypesAllowed = '1|3'
+      mocks.defaultOrderType = 'eatin'
+      useGuestConfig()
+      renderProvider({ disableWorkerPickup: true })
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      expect(orderState.options.type).toBe(3)
+    })
+
+    it('gives a guest left without a type the first allowed one once the options have loaded', async () => {
+      mocks.orderTypesAllowed = '2|3'
+      mocks.defaultOrderType = 'delivery'
+      useGuestConfig()
+      renderProvider({ disableWorkerPickup: true })
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      await act(async () => { orderActions.setStateValues({ options: { type: null } }) })
+      await waitFor(() => expect(orderState.options.type).toBe(2))
+      expect(strategy.setItem).toHaveBeenCalledWith('options', expect.objectContaining({ type: 2 }), true)
+    })
+
+    it('does not touch the type while the saved options are still loading', async () => {
+      mocks.orderTypesAllowed = '1|2'
+      mocks.defaultOrderType = 'reservation'
+      let resolveOptions
+      strategy.getItem.mockImplementation(() => new Promise(resolve => { resolveOptions = resolve }))
+      useGuestConfig()
+      renderProvider({ disableWorkerPickup: true })
+      expect(strategy.setItem).not.toHaveBeenCalled()
+      await act(async () => { resolveOptions({ type: 2 }) })
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      expect(orderState.options.type).toBe(2)
+    })
+
+    it('without the prop it keeps the previous behavior: no mapped default stays without type', async () => {
+      mocks.orderTypesAllowed = '1|2'
+      mocks.defaultOrderType = 'reservation'
+      useGuestConfig()
+      renderProvider()
+      expect(orderState.options.type).toBeUndefined()
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      expect(orderState.options.type).toBeUndefined()
+    })
+
+    it('without the prop a not allowed default still goes through the existing fallback', async () => {
+      mocks.orderTypesAllowed = '1|3'
+      mocks.defaultOrderType = 'pickup'
+      useGuestConfig()
+      renderProvider()
+      expect(orderState.options.type).toBe(2)
+      await waitFor(() => expect(orderState.options.type).toBe(1))
+    })
   })
 })

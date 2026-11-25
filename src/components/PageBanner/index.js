@@ -5,6 +5,7 @@ import utc from 'dayjs/plugin/utc'
 import { useApi } from '../../contexts/ApiContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
 import { useConfig } from '../../contexts/ConfigContext'
+import { resolveUnaddressedOrderTypes } from '../../utils/orderTypeAddress'
 import { useOrder } from '../../contexts/OrderContext'
 dayjs.extend(utc)
 
@@ -23,7 +24,7 @@ export const PageBanner = (props) => {
 
   const [pageBannerState, setPageBannerState] = useState({ loading: true, banner: null, error: null })
 
-  const unaddressedTypes = configs?.unaddressed_order_types_allowed?.value.split('|').map(value => Number(value)) || []
+  const unaddressedTypes = resolveUnaddressedOrderTypes(configs?.unaddressed_order_types_allowed?.value, orderState)
   const isAllowUnaddressOrderType = unaddressedTypes.includes(orderState?.options?.type)
   const isValidMoment = (date, format) => dayjs.utc(date, format).format(format) === date
 

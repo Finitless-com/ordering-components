@@ -473,4 +473,82 @@ describe('StoreProductOptions', () => {
     expect(mocks.mockProductGet).not.toHaveBeenCalled()
     expect(mocks.mockGet).not.toHaveBeenCalled()
   })
+
+  describe('handleUpdateProduct', () => {
+    it('turns the product off with the product update request and keeps the new value', async () => {
+      mocks.mockPost.mockResolvedValue({ content: { error: false, result: { id: 1981, enabled: false } } })
+      await renderLoaded()
+      let saved
+      await act(async () => { saved = await lastControllerProps.handleUpdateProduct({ enabled: false }) })
+      expect(mocks.mockPost).toHaveBeenCalledWith(
+        '/business/100/categories/232/products/1981',
+        { enabled: false },
+        { json: true, accessToken: 'owner-token' }
+      )
+      expect(saved).toEqual({ enabled: false })
+      expect(lastControllerProps.productState.product.enabled).toBe(false)
+      expect(lastControllerProps.productState.product.name).toBe('Product 1981')
+      expect(lastControllerProps.productState.productExtraIds).toEqual([397, 166])
+      expect(mocks.mockShowToast).toHaveBeenCalledWith('SUCCESS', 'Disabled product')
+      expect(lastControllerProps.updatingState.products).toEqual([])
+    })
+
+    it('turns it on and clears the pause', async () => {
+      mocks.mockPost.mockResolvedValue({ content: { error: false, result: { id: 1981, enabled: true, snooze_until: null } } })
+      await renderLoaded()
+      await act(async () => { await lastControllerProps.handleUpdateProduct({ enabled: true, snooze_until: '' }) })
+      expect(mocks.mockPost.mock.calls[0][1]).toEqual({ enabled: true, snooze_until: '' })
+      expect(lastControllerProps.productState.product).toMatchObject({ enabled: true, snooze_until: null })
+      expect(mocks.mockShowToast).toHaveBeenCalledWith('SUCCESS', 'Enabled product')
+    })
+
+    it('passes snooze_until through without a toast about enabled', async () => {
+      mocks.mockPost.mockResolvedValue({ content: { error: false, result: { id: 1981 } } })
+      await renderLoaded()
+      await act(async () => { await lastControllerProps.handleUpdateProduct({ snooze_until: '2999-01-01 10:00:00' }) })
+      expect(mocks.mockPost.mock.calls[0][1]).toEqual({ snooze_until: '2999-01-01 10:00:00' })
+      expect(lastControllerProps.productState.product.snooze_until).toBe('2999-01-01 10:00:00')
+      expect(mocks.mockShowToast).not.toHaveBeenCalled()
+    })
+
+    it('keeps the product and shows the error when saving fails', async () => {
+      mocks.mockPost.mockResolvedValue({ content: { error: true, result: ['Permission denied'] } })
+      await renderLoaded()
+      let saved
+      await act(async () => { saved = await lastControllerProps.handleUpdateProduct({ enabled: false }) })
+      expect(saved).toBeNull()
+      expect(lastControllerProps.productState.product.enabled).toBeUndefined()
+      expect(mocks.mockShowToast).toHaveBeenCalledWith('ERROR', 'Permission denied')
+      mocks.mockPost.mockRejectedValue(new Error('Network Error'))
+      await act(async () => { await lastControllerProps.handleUpdateProduct({ enabled: false }) })
+      expect(mocks.mockShowToast).toHaveBeenCalledWith('ERROR', 'Network Error')
+      expect(lastControllerProps.updatingState.products).toEqual([])
+    })
+
+    it('saves one change at a time', async () => {
+      const pending = deferred()
+      mocks.mockPost.mockReturnValueOnce(pending.promise)
+      await renderLoaded()
+      let first
+      act(() => { first = lastControllerProps.handleUpdateProduct({ enabled: false }) })
+      await waitFor(() => expect(lastControllerProps.updatingState.products).toEqual([1981]))
+      let second
+      await act(async () => { second = await lastControllerProps.handleUpdateProduct({ enabled: true }) })
+      expect(second).toBeNull()
+      expect(mocks.mockPost).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        pending.resolve({ content: { error: false, result: { id: 1981, enabled: false } } })
+        await first
+      })
+    })
+
+    it('does nothing without the product ids', async () => {
+      renderController(StoreProductOptions, {})
+      await waitFor(() => expect(lastControllerProps.productState.loading).toBe(false))
+      let saved
+      await act(async () => { saved = await lastControllerProps.handleUpdateProduct({ enabled: false }) })
+      expect(saved).toBeNull()
+      expect(mocks.mockPost).not.toHaveBeenCalled()
+    })
+  })
 })

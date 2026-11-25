@@ -837,11 +837,16 @@ export const Checkout = (props) => {
       if (cart?.status !== 1 || !cart?.order?.uuid) return
       handleOrderRedirect && handleOrderRedirect(cart?.order?.uuid)
     }
+    // Only listen when the OrderContext already does (it joins the carts room). Remember whether
+    // this effect registered, so the cleanup removes exactly that and does not depend on the
+    // emitter's state at cleanup time.
+    let registered = false
     if ((isCustomerMode || isListenOrderUpdate) && socket?.socket?._callbacks?.$carts_update) {
       socket.on('carts_update', handleCartUpdate)
+      registered = true
     }
     return () => {
-      if ((isCustomerMode || isListenOrderUpdate) && socket?.socket?._callbacks?.$carts_update) {
+      if (registered) {
         socket.off('carts_update', handleCartUpdate)
       }
     }

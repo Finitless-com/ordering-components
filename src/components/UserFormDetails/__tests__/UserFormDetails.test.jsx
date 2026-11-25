@@ -126,4 +126,113 @@ describe('UserFormDetails', () => {
     expect(lastControllerProps.wallets.result.result.cash).toBeTruthy()
     expect(lastControllerProps.wallets.result.result.points).toBeTruthy()
   })
+
+  describe('the photo', () => {
+    it('is saved as it always was: the picture the caller gives, as `photo`', async () => {
+      renderController(UserFormDetails, { user: upm.sampleUser, onClose: upm.mockOnClose })
+      await act(async () => {
+        await lastControllerProps.handleButtonUpdateClick(null, true, 'data:image/png;base64,AAAA')
+      })
+      expect(upm.mockUserSave).toHaveBeenCalledTimes(1)
+      expect(upm.mockUserSave.mock.calls[0][0]).toEqual({ photo: 'data:image/png;base64,AAAA' })
+      expect(upm.mockChangeUser).toHaveBeenCalled()
+    })
+
+    it('offers a way to remove it next to the ones it had', () => {
+      renderController(UserFormDetails, { user: upm.sampleUser })
+      expect(typeof lastControllerProps.handleRemovePhoto).toBe('function')
+      expect(typeof lastControllerProps.handleButtonUpdateClick).toBe('function')
+      expect(typeof lastControllerProps.handlechangeImage).toBe('function')
+    })
+
+    it('removes it by saving an empty `photo` (the API clears it; a null is refused and a missing photo changes nothing)', async () => {
+      upm.mockUserSave.mockResolvedValue({ content: { error: false, result: { ...upm.sampleUser, photo: '' } } })
+      renderController(UserFormDetails, {
+        user: upm.sampleUser,
+        onClose: upm.mockOnClose,
+        handleSuccessUpdate: upm.mockHandleSuccessUpdate,
+        useDefualtSessionManager: true
+      })
+      await act(async () => {
+        await lastControllerProps.handleRemovePhoto()
+      })
+      expect(upm.mockUserSave).toHaveBeenCalledTimes(1)
+      expect(upm.mockUserSave).toHaveBeenCalledWith({ photo: '' }, { accessToken: 'session-tok' })
+      // The session's user takes the answer, as for a new photo.
+      expect(upm.mockChangeUser).toHaveBeenCalledWith(expect.objectContaining({ id: upm.sampleUser.id, photo: '' }))
+      expect(upm.mockHandleSuccessUpdate).toHaveBeenCalledWith(expect.objectContaining({ photo: '' }))
+      expect(upm.mockOnClose).toHaveBeenCalled()
+      expect(lastControllerProps.formState.loading).toBe(false)
+      expect(lastControllerProps.formState.result.error).toBe(false)
+    })
+
+    it('does not leave edit mode, as the save of a photo does not', async () => {
+      renderController(UserFormDetails, { user: upm.sampleUser, isEdit: true })
+      await act(async () => {
+        await lastControllerProps.handleRemovePhoto()
+      })
+      expect(lastControllerProps.isEdit).toBe(true)
+    })
+
+    it('drops a picture that was waiting to be saved', async () => {
+      renderController(UserFormDetails, { user: upm.sampleUser })
+      act(() => {
+        lastControllerProps.handleChangeInput({ target: { name: 'photo', value: 'data:image/png;base64,AAAA' } })
+      })
+      act(() => {
+        lastControllerProps.handleChangeInput({ target: { name: 'name', value: 'Pending' } })
+      })
+      expect(lastControllerProps.formState.changes.photo).toBe('data:image/png;base64,AAAA')
+      await act(async () => {
+        await lastControllerProps.handleRemovePhoto()
+      })
+      expect(lastControllerProps.formState.changes.photo).toBeUndefined()
+      expect(lastControllerProps.formState.changes.name).toBe('Pending')
+    })
+
+    it('says the API\'s error, leaves the user as he was and keeps the form\'s changes', async () => {
+      upm.mockUserSave.mockResolvedValue({ content: { error: true, result: ['Photo not valid'] } })
+      renderController(UserFormDetails, { user: upm.sampleUser, onClose: upm.mockOnClose, handleSuccessUpdate: upm.mockHandleSuccessUpdate })
+      act(() => {
+        lastControllerProps.handleChangeInput({ target: { name: 'name', value: 'Pending' } })
+      })
+      await act(async () => {
+        await lastControllerProps.handleRemovePhoto()
+      })
+      expect(lastControllerProps.formState.result).toEqual({ error: true, result: ['Photo not valid'] })
+      expect(lastControllerProps.formState.loading).toBe(false)
+      expect(lastControllerProps.formState.changes.name).toBe('Pending')
+      expect(upm.mockChangeUser).not.toHaveBeenCalled()
+      expect(upm.mockHandleSuccessUpdate).not.toHaveBeenCalled()
+      expect(upm.mockOnClose).not.toHaveBeenCalled()
+    })
+
+    it('says a request that fails as an error of the form', async () => {
+      upm.mockUserSave.mockRejectedValue(new Error('Network Error'))
+      renderController(UserFormDetails, { user: upm.sampleUser })
+      await act(async () => {
+        await lastControllerProps.handleRemovePhoto()
+      })
+      expect(lastControllerProps.formState.result).toEqual({ error: true, result: 'Network Error' })
+      expect(lastControllerProps.formState.loading).toBe(false)
+      expect(upm.mockChangeUser).not.toHaveBeenCalled()
+    })
+
+    it('updates the customer instead of the session in customer mode', async () => {
+      renderController(UserFormDetails, { user: upm.sampleUser, isCustomerMode: true })
+      await act(async () => {
+        await lastControllerProps.handleRemovePhoto()
+      })
+      expect(upm.mockSetUserCustomer).toHaveBeenCalled()
+      expect(upm.mockChangeUser).not.toHaveBeenCalled()
+    })
+
+    it('removes the photo of the user it was given, not the session\'s', async () => {
+      renderController(UserFormDetails, { user: upm.sampleUser, userData: { id: 42 } })
+      await act(async () => {
+        await lastControllerProps.handleRemovePhoto()
+      })
+      expect(upm.mockOrdering.users).toHaveBeenCalledWith(42)
+    })
+  })
 })

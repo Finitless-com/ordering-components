@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import { renderController, lastControllerProps } from '../../../__tests__/helpers/renderController'
 
 const cart = vi.hoisted(() => {
@@ -280,5 +280,83 @@ describe('MultiCheckout', () => {
       expect.objectContaining({ amount: 40 }),
       'group-uuid-1'
     )
+  })
+
+  // SERGIO-1685: the order types' fields are the rules of the order; opt-in `requireCheckoutFields` waits for them
+  describe('the order types\' checkout fields', () => {
+    const originalFetch = global.fetch
+    const withFieldsAnswer = (answer) => {
+      const calls = { count: 0 }
+      global.fetch = vi.fn(async (url, options = {}) => {
+        if (String(url).includes('/validation_field_order_types')) {
+          calls.count += 1
+          return answer(calls.count)
+        }
+        return originalFetch(url, options)
+      })
+      return calls
+    }
+    const fieldsFailing = () => ({ json: async () => ({ error: true, result: ['Unavailable'] }) })
+    const fieldsOk = () => ({ json: async () => ({ error: false, result: [{ order_type_id: 1, enabled: true, required: true, validation_field: { code: 'coupon' } }] }) })
+    const readyToPlace = async (props) => {
+      renderController(MultiCheckout, { cartUuid: 'group-uuid-1', onPlaceOrderClick: vi.fn(), ...props })
+      await waitFor(() => expect(lastControllerProps.cartGroup.loading).toBe(false))
+      lastControllerProps.handleSelectPaymethod({ paymethod: { id: 4, gateway: 'cash' } })
+      await waitFor(() => expect(lastControllerProps.paymethodSelected.paymethod?.id).toBe(4))
+    }
+
+    it('says when they are loaded, and offers to read them again', async () => {
+      withFieldsAnswer(fieldsOk)
+      await readyToPlace()
+      await waitFor(() => expect(lastControllerProps.checkoutFieldsState.loaded).toBe(true))
+      expect(lastControllerProps.checkoutFieldsState.failed).toBe(false)
+      expect(lastControllerProps.checkoutFieldsState.error).toBeNull()
+      expect(typeof lastControllerProps.retryCheckoutFields).toBe('function')
+    })
+
+    it('by default the order goes out whether or not they loaded (as before)', async () => {
+      withFieldsAnswer(fieldsFailing)
+      await readyToPlace()
+      await waitFor(() => expect(lastControllerProps.checkoutFieldsState.error).toBeTruthy())
+      expect(lastControllerProps.checkoutFieldsState.loaded).toBe(false)
+      await lastControllerProps.handleGroupPlaceOrder()
+      expect(cart.mockPlaceMultiCarts).toHaveBeenCalledTimes(1)
+    })
+
+    it('with requireCheckoutFields nothing is placed while they have not loaded or failed, and a retry that loads them lets it go', async () => {
+      const calls = withFieldsAnswer((count) => count === 1 ? fieldsFailing() : fieldsOk())
+      await readyToPlace({ requireCheckoutFields: true })
+      await waitFor(() => expect(lastControllerProps.checkoutFieldsState.error).toBeTruthy())
+      await lastControllerProps.handleGroupPlaceOrder()
+      expect(cart.mockPlaceMultiCarts).not.toHaveBeenCalled()
+
+      await act(async () => { await lastControllerProps.retryCheckoutFields() })
+      expect(calls.count).toBe(2)
+      await waitFor(() => expect(lastControllerProps.checkoutFieldsState.loaded).toBe(true))
+      expect(lastControllerProps.checkoutFieldsState.failed).toBe(false)
+      expect(lastControllerProps.checkoutFieldsState.error).toBeNull()
+      await lastControllerProps.handleGroupPlaceOrder()
+      expect(cart.mockPlaceMultiCarts).toHaveBeenCalledTimes(1)
+    })
+
+    it('error stays what the API answered (never forced to true) and loaded says the read failed', async () => {
+      withFieldsAnswer(fieldsFailing)
+      await readyToPlace({ requireCheckoutFields: true })
+      await waitFor(() => expect(lastControllerProps.checkoutFieldsState.loading).toBe(false))
+      await waitFor(() => expect(lastControllerProps.checkoutFieldsState.error).toEqual(['Unavailable']))
+      expect(lastControllerProps.checkoutFieldsState.loaded).toBe(false)
+    })
+
+    it('a failure that carries no message leaves error as it was before (empty), not true', async () => {
+      withFieldsAnswer(() => ({ json: async () => ({ error: true }) }))
+      await readyToPlace({ requireCheckoutFields: true })
+      await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/validation_field_order_types'), expect.anything()))
+      await waitFor(() => expect(lastControllerProps.checkoutFieldsState.loading).toBe(false))
+      expect(lastControllerProps.checkoutFieldsState.error).toBeFalsy()
+      expect(lastControllerProps.checkoutFieldsState.error).not.toBe(true)
+      expect(lastControllerProps.checkoutFieldsState.loaded).toBe(false)
+      // `failed` is the signal that does not depend on the API's message
+      expect(lastControllerProps.checkoutFieldsState.failed).toBe(true)
+    })
   })
 })
