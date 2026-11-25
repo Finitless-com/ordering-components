@@ -6,6 +6,7 @@ import { useApi } from '../../contexts/ApiContext'
 import { useSession } from '../../contexts/SessionContext'
 import { useToast, ToastType } from '../../contexts/ToastContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+import { getMaxProductAmount } from '../../utils/maxProductAmount'
 
 export const Cart = (props) => {
   const {
@@ -55,7 +56,7 @@ export const Cart = (props) => {
   /**
    * Max total product in cart by config
    */
-  const maxCartProductConfig = (stateConfig.configs.max_product_amount ? parseInt(stateConfig.configs.max_product_amount) : 100) - totalBalance
+  const maxCartProductConfig = getMaxProductAmount(stateConfig.configs) - totalBalance
   /**
    * Previous comment value
    */

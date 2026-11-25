@@ -116,4 +116,37 @@ describe('Cart', () => {
       user_id: 12
     })
   })
+
+  describe('max_product_amount', () => {
+    const maxFor = (product = {}) => {
+      renderController(Cart, { cart: cart.sampleCart, businessConfigs: [] })
+      return lastControllerProps.getProductMax({ ...cart.sampleProduct, quantity: 1, balance: 1, ...product })
+    }
+
+    it('reads the value of the setting', () => {
+      cart.mockConfigState.configs = { max_product_amount: { value: '5' } }
+      expect(maxFor()).toBe(5)
+    })
+
+    it('discounts the units already in the order', () => {
+      cart.mockConfigState.configs = { max_product_amount: { value: '5' } }
+      cart.mockConfigState.order = { quantity: 2 }
+      expect(maxFor()).toBe(3)
+    })
+
+    it('uses 100 without the setting', () => {
+      cart.mockConfigState.configs = {}
+      expect(maxFor()).toBe(100)
+    })
+
+    it('uses 100 when the value is not a number', () => {
+      cart.mockConfigState.configs = { max_product_amount: { value: 'many' } }
+      expect(maxFor()).toBe(100)
+    })
+
+    it('lets the stock of an inventoried product win over the setting', () => {
+      cart.mockConfigState.configs = { max_product_amount: { value: '5' } }
+      expect(maxFor({ inventoried: true, stock: 3 })).toBe(3)
+    })
+  })
 })

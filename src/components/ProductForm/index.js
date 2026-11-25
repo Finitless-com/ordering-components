@@ -11,6 +11,7 @@ import { useSession } from '../../contexts/SessionContext'
 import { ToastType, useToast } from '../../contexts/ToastContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
+import { getMaxProductAmount } from '../../utils/maxProductAmount'
 
 dayjs.extend(utc)
 
@@ -147,7 +148,7 @@ export const ProductForm = (props) => {
   /**
    * Max total product in cart by config
    */
-  const maxCartProductConfig = (stateConfig.configs.max_product_amount ? parseInt(stateConfig.configs.max_product_amount) : 100) - totalBalance
+  const maxCartProductConfig = getMaxProductAmount(stateConfig.configs) - totalBalance
 
   /**
    * Max total product in cart by config

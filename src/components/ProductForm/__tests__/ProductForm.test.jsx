@@ -10,7 +10,10 @@ const detail = vi.hoisted(() => {
   const mockAddProduct = vi.fn().mockResolvedValue(true)
   const mockUpdateProduct = vi.fn().mockResolvedValue(true)
   const mockLogin = vi.fn()
+  const settings = { configs: { max_product_amount: { value: '100' } } }
   const reset = () => {
+    settings.configs = { max_product_amount: { value: '100' } }
+    h.defaultOrderState.carts = { 'businessId:5': { business_id: 5, products: [] } }
     vi.clearAllMocks()
     h.applyDefaultProductDetailMockImplementations(vi, api)
     h.setupProductDetailFetchMock(vi)
@@ -20,6 +23,7 @@ const detail = vi.hoisted(() => {
   return {
     ...api,
     mockOrdering: h.buildProductDetailMockOrdering(vi, api),
+    settings,
     mockShowToast,
     mockEmit,
     mockAddProduct,
@@ -58,11 +62,7 @@ vi.mock('../../../contexts/SessionContext', () => ({
 }))
 
 vi.mock('../../../contexts/ConfigContext', () => ({
-  useConfig: () => [{
-    configs: {
-      max_product_amount: { value: '100' }
-    }
-  }]
+  useConfig: () => [detail.settings]
 }))
 
 vi.mock('../../../contexts/OrderContext', () => ({
@@ -456,5 +456,46 @@ describe('ProductForm', () => {
       expect(lastControllerProps.professionalListState.loading).toBe(false)
     })
     expect(lastControllerProps.professionalListState.professionals).toEqual([])
+  })
+
+  describe('max_product_amount', () => {
+    const maxFor = async (extraProps = {}) => {
+      renderController(ProductForm, { ...baseProps(), ...extraProps })
+      await waitFor(() => expect(lastControllerProps.productCart.name).toBe('Burger'))
+      return lastControllerProps.maxProductQuantity
+    }
+
+    it('reads the value of the setting', async () => {
+      detail.settings.configs = { max_product_amount: { value: '5' } }
+      expect(await maxFor()).toBe(5)
+    })
+
+    it('discounts the units already in the cart', async () => {
+      detail.settings.configs = { max_product_amount: { value: '5' } }
+      detail.defaultOrderState.carts['businessId:5'].products = [{ id: 10, quantity: 2 }]
+      expect(await maxFor()).toBe(3)
+    })
+
+    it('uses 100 without the setting', async () => {
+      detail.settings.configs = {}
+      expect(await maxFor()).toBe(100)
+    })
+
+    it('uses 100 when the value is not a number', async () => {
+      detail.settings.configs = { max_product_amount: { value: 'abc' } }
+      expect(await maxFor()).toBe(100)
+      detail.settings.configs = { max_product_amount: { value: '' } }
+      expect(await maxFor()).toBe(100)
+    })
+
+    it('lets a lower inventory win over the setting', async () => {
+      detail.settings.configs = { max_product_amount: { value: '5' } }
+      expect(await maxFor({ product: { ...detail.sampleProduct, inventoried: true, quantity: 3 } })).toBe(3)
+    })
+
+    it('keeps the setting when the inventory is higher', async () => {
+      detail.settings.configs = { max_product_amount: { value: '5' } }
+      expect(await maxFor({ product: { ...detail.sampleProduct, inventoried: true, quantity: 50 } })).toBe(5)
+    })
   })
 })
