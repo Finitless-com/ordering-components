@@ -71,6 +71,19 @@ export const OrderActionsContext = createContext()
  * worker (`__FIRST_LOAD__` / `__CONFIG__`), the worker's fixed pickup is applied to
  * addressless orders. Set it to true to drop that and use the project's
  * `default_order_type` instead. The web marketplace turns it on; apps have no worker.
+ * @param {number[]} [props.supportedOrderTypes] The order type ids the consumer supports. The
+ * project's `order_types_allowed` is cut down to them before the provider picks a default, a
+ * fallback or a type to replace one that is no longer allowed, so it never starts in or stores a
+ * type the consumer does not offer. Without it every allowed type is a candidate, as before.
+ * @param {boolean} [props.ignoreStaleTypeResponses=false] Every write that carries an order `type`
+ * takes a sequence number. With this on, the answer to a write that a newer type write has
+ * superseded no longer applies its `type` (the one the customer chose last stays), so a late
+ * answer cannot undo a later change. Off, every answer applies as before.
+ * @param {number} [props.orderOptionsWriteTimeout] Milliseconds an authenticated order options
+ * write may wait for its answer. When it runs out the request is cancelled and the write fails
+ * like any other (an alert, `loading` released, the type already applied locally stays), so a
+ * request that never answers cannot hold `loading` and every screen that waits on it. Without
+ * it the write waits for as long as the request lasts, as before.
  */
 export const OrderProvider = ({
   Alert,
@@ -84,7 +97,10 @@ export const OrderProvider = ({
   enableCouponsRetries = false,
   referralEnabled = true,
   waitForGuestDeliveryAddress = false,
-  disableWorkerPickup = false
+  disableWorkerPickup = false,
+  supportedOrderTypes,
+  ignoreStaleTypeResponses = false,
+  orderOptionsWriteTimeout
 }) => {
   const [confirmAlert, setConfirm] = useState({ show: false })
   const [alert, setAlert] = useState({ show: false })
@@ -102,7 +118,10 @@ export const OrderProvider = ({
   const [customerState, { setUserCustomer }] = useCustomer()
   const { showToast } = useToastActions()
 
-  const configTypes = configState?.configs?.order_types_allowed?.value.split('|').map(value => Number(value)) || []
+  const allowedTypes = configState?.configs?.order_types_allowed?.value.split('|').map(value => Number(value)) || []
+  const configTypes = Array.isArray(supportedOrderTypes)
+    ? allowedTypes.filter(type => supportedOrderTypes.includes(type))
+    : allowedTypes
 
   const orderTypes = {
     delivery: 1,
@@ -156,6 +175,8 @@ export const OrderProvider = ({
   })
 
   const intervalRetriesRef = useRef(null)
+  // The last write that carried an order `type` (see `ignoreStaleTypeResponses`).
+  const typeWriteSeq = useRef(0)
   // The URL's UTM visit this page load already captured, and the queue of captures.
   const referralCapture = useRef({ landing: null, queue: Promise.resolve() })
   // Read at execution time (queued closures and the stable actions outlive a render),
@@ -180,6 +201,20 @@ export const OrderProvider = ({
 
   const hasGuestDeliveryAddress = options =>
     [orderTypes.delivery, orderTypes.catering_delivery].includes(Number(options?.type)) && options?.address?.location
+
+  // The ordinary (no guest delivery migration) order options write, with its own deadline.
+  const withWriteTimeout = (request, timeout) => {
+    const cancelToken = {}
+    let timer
+    const deadline = new Promise((resolve, reject) => {
+      timer = globalThis.setTimeout(() => {
+        // The SDK's cancel token aborts the XHR without settling its promise.
+        reject(new Error('Order options request timed out'))
+        cancelToken.cancel?.()
+      }, timeout)
+    })
+    return Promise.race([request({ cancelToken }), deadline]).finally(() => globalThis.clearTimeout(timer))
+  }
 
   const requestGuestDelivery = (sync, request, write = false) => {
     if (!sync) return request()
@@ -713,6 +748,7 @@ export const OrderProvider = ({
         ['address_id', 'type', 'moment'].some(key => changes[key] !== undefined)) {
         return replaceGuestDeliverySelection(sync, changes)
       }
+      const typeWrite = changes.type !== undefined ? ++typeWriteSeq.current : null
       const isCurrent = () => !migration || isCurrentGuestDeliverySync(migration)
       const countryCodeFromLocalStorage = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
@@ -753,12 +789,15 @@ export const OrderProvider = ({
           .setAccessToken(session.token)
           .orderOptions()
           .save(body, { ...options, ...transport })
-        const { content: { error, result }, status } = await requestGuestDelivery(migration, save, true)
+        const { content: { error, result }, status } = await (migration || !orderOptionsWriteTimeout
+          ? requestGuestDelivery(migration, save, true)
+          : withWriteTimeout(save, orderOptionsWriteTimeout))
         if (!isCurrent()) return false
         if (!error) {
           if (recovering && countryCode) await strategy.setItem('country-code', countryCode)
           if (!isCurrent()) return false
           const { carts, ...options } = result
+          if (ignoreStaleTypeResponses && typeWrite !== null && typeWrite !== typeWriteSeq.current) delete options.type
           setState(prevState => ({
             ...prevState,
             options: { ...prevState.options, ...options },
