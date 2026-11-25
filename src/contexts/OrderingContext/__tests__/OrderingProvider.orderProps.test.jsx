@@ -123,6 +123,20 @@ describe('OrderingProvider passes its optional order props to the real OrderProv
     expect(orderState.options.type).toBe(2)
   })
 
+  it('orderOptionsWriteTimeout: a write that is not only the type (a moment) is not cut by the deadline', async () => {
+    vi.useFakeTimers()
+    mocks.config.configs.order_types_allowed = { value: '1|2' }
+    mocks.config.configs.default_order_type = { key: 'default_order_type', type: 2, value: 'delivery' }
+    mocks.session = [{ auth: true, loading: false, token: 'token', user: { id: 8 } }, { logout: vi.fn() }]
+    mocks.save = vi.fn(() => new Promise(() => {}))
+    renderOrdering({ orderOptionsWriteTimeout: 4000 })
+    await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+    await act(async () => { orderActions.changeMoment(new Date('2030-01-01T10:00:00Z')) })
+    expect(orderState.loading).toBe(true)
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000) })
+    expect(orderState.loading).toBe(true)
+  })
+
   it('without orderOptionsWriteTimeout that write keeps loading, as before', async () => {
     vi.useFakeTimers()
     mocks.config.configs.order_types_allowed = { value: '1|2' }

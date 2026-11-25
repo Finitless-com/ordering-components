@@ -80,10 +80,12 @@ export const OrderActionsContext = createContext()
  * superseded no longer applies its `type` (the one the customer chose last stays), so a late
  * answer cannot undo a later change. Off, every answer applies as before.
  * @param {number} [props.orderOptionsWriteTimeout] Milliseconds an authenticated order options
- * write may wait for its answer. When it runs out the request is cancelled and the write fails
- * like any other (an alert, `loading` released, the type already applied locally stays), so a
- * request that never answers cannot hold `loading` and every screen that waits on it. Without
- * it the write waits for as long as the request lasts, as before.
+ * write that changes only the order `type` may wait for its answer. When it runs out the request
+ * is cancelled and the write fails like any other (an alert, `loading` released, the type already
+ * applied locally stays), so a request that never answers cannot hold `loading` and every screen
+ * that waits on it. A write that changes anything else (address, moment, ...) has no deadline:
+ * cancelling it could drop a change the server applied and leave the local state out of step.
+ * Without it the write waits for as long as the request lasts, as before.
  */
 export const OrderProvider = ({
   Alert,
@@ -209,7 +211,7 @@ export const OrderProvider = ({
     const deadline = new Promise((resolve, reject) => {
       timer = globalThis.setTimeout(() => {
         // The SDK's cancel token aborts the XHR without settling its promise.
-        reject(new Error('Order options request timed out'))
+        reject(Object.assign(new Error('Order options request timed out'), { writeTimeout: true }))
         cancelToken.cancel?.()
       }, timeout)
     })
@@ -789,7 +791,8 @@ export const OrderProvider = ({
           .setAccessToken(session.token)
           .orderOptions()
           .save(body, { ...options, ...transport })
-        const { content: { error, result }, status } = await (migration || !orderOptionsWriteTimeout
+        const onlyType = Object.keys(changes).every(key => key === 'type')
+        const { content: { error, result }, status } = await (migration || !orderOptionsWriteTimeout || !onlyType
           ? requestGuestDelivery(migration, save, true)
           : withWriteTimeout(save, orderOptionsWriteTimeout))
         if (!isCurrent()) return false
@@ -811,9 +814,11 @@ export const OrderProvider = ({
         return !error
       } catch (err) {
         if (!isCurrent()) return false
-        const message = err?.message?.includes('Internal error')
-          ? 'INTERNAL_ERROR'
-          : err.message
+        const message = err?.writeTimeout
+          ? t('ORDER_OPTIONS_TIMEOUT', 'We couldn’t save your order type. Check your connection and try again.')
+          : err?.message?.includes('Internal error')
+            ? 'INTERNAL_ERROR'
+            : err.message
         if (!recovering) setAlert({ show: true, content: message })
         setState(prevState => ({ ...prevState, loading: false }))
         state.loading = false

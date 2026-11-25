@@ -1574,7 +1574,21 @@ describe('OrderContext worker pickup and default order type', () => {
       expect(orderState.loading).toBe(false)
       expect(orderState.options.type).toBe(2)
       expect(transport.cancelToken.cancel).toHaveBeenCalledTimes(1)
-      expect(Alert.mock.lastCall[0]).toMatchObject({ open: true, content: 'Order options request timed out' })
+      expect(Alert.mock.lastCall[0]).toMatchObject({ open: true, content: 'We couldn’t save your order type. Check your connection and try again.' })
+    })
+
+    it('a write that changes more than the type (a moment) is not cut by the deadline', async () => {
+      vi.useFakeTimers()
+      hang()
+      const Alert = vi.fn(() => null)
+      renderProvider({ orderOptionsWriteTimeout: 4000, Alert })
+      await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+      await act(async () => { orderActions.changeMoment(new Date('2030-01-01T10:00:00Z')) })
+      expect(orderState.loading).toBe(true)
+      expect(mocks.orderOptionsSave.mock.calls[0][1].cancelToken).toBeUndefined()
+      await act(async () => { await vi.advanceTimersByTimeAsync(60000) })
+      expect(orderState.loading).toBe(true)
+      expect(Alert.mock.calls.some(([props]) => props.open)).toBe(false)
     })
 
     it('does not touch a write that answers in time', async () => {
