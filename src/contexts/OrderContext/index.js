@@ -10,7 +10,7 @@ import { ToastType, useToastActions } from '../ToastContext'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { INVALID_API_JSON_BODY } from '../../utils/parseApiJsonBody'
-import { parseUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
+import { resolveUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
 import { isUnchangedDriverTip } from './isUnchangedDriverTip'
 import { evictConsumedCart, shouldEvictConsumedCart } from './evictConsumedCart'
 import {
@@ -67,6 +67,26 @@ export const OrderActionsContext = createContext()
  * Custom provider to order manager
  * This provider has a reducer for manage order state
  * @param {props} props
+ * @param {boolean} [props.disableWorkerPickup=false] When the page comes from the
+ * worker (`__FIRST_LOAD__` / `__CONFIG__`), the worker's fixed pickup is applied to
+ * addressless orders. Set it to true to drop that and use the project's
+ * `default_order_type` instead. The web marketplace turns it on; apps have no worker.
+ * @param {number[]} [props.supportedOrderTypes] The order type ids the consumer supports. The
+ * project's `order_types_allowed` is cut down to them before the provider picks a default, a
+ * fallback or a type to replace one that is no longer allowed, so it never starts in or stores a
+ * type the consumer does not offer. Without it every allowed type is a candidate, as before.
+ * @param {boolean} [props.ignoreStaleTypeResponses=false] Every write that carries an order `type`
+ * takes a sequence number. With this on, the answer to a write that a newer type write has
+ * superseded no longer applies its `type` (the one the customer chose last stays), so a late
+ * answer cannot undo a later change. Off, every answer applies as before.
+ * @param {number} [props.orderOptionsWriteTimeout] Milliseconds an authenticated order options
+ * write that changes only the order `type` (with, at most, the `city_id: null` that changing it
+ * clears) may wait for its answer. When it runs out the request
+ * is cancelled and the write fails like any other (an alert, `loading` released, the type already
+ * applied locally stays), so a request that never answers cannot hold `loading` and every screen
+ * that waits on it. A write that changes anything else (address, moment, ...) has no deadline:
+ * cancelling it could drop a change the server applied and leave the local state out of step.
+ * Without it the write waits for as long as the request lasts, as before.
  */
 export const OrderProvider = ({
   Alert,
@@ -79,7 +99,11 @@ export const OrderProvider = ({
   userAgent,
   enableCouponsRetries = false,
   referralEnabled = true,
-  waitForGuestDeliveryAddress = false
+  waitForGuestDeliveryAddress = false,
+  disableWorkerPickup = false,
+  supportedOrderTypes,
+  ignoreStaleTypeResponses = false,
+  orderOptionsWriteTimeout
 }) => {
   const [confirmAlert, setConfirm] = useState({ show: false })
   const [alert, setAlert] = useState({ show: false })
@@ -97,7 +121,10 @@ export const OrderProvider = ({
   const [customerState, { setUserCustomer }] = useCustomer()
   const { showToast } = useToastActions()
 
-  const configTypes = configState?.configs?.order_types_allowed?.value.split('|').map(value => Number(value)) || []
+  const allowedTypes = configState?.configs?.order_types_allowed?.value.split('|').map(value => Number(value)) || []
+  const configTypes = Array.isArray(supportedOrderTypes)
+    ? allowedTypes.filter(type => supportedOrderTypes.includes(type))
+    : allowedTypes
 
   const orderTypes = {
     delivery: 1,
@@ -110,12 +137,20 @@ export const OrderProvider = ({
   }
 
   const fromWorker = typeof window !== 'undefined' && (window.__FIRST_LOAD__ || window.__CONFIG__)
-  const defaultOrderType = fromWorker
+  const forceWorkerPickup = Boolean(fromWorker) && !disableWorkerPickup
+  const configDefaultOrderType = orderTypes[configState?.configs?.default_order_type?.value]
+  // With `disableWorkerPickup` (the web) a `default_order_type` that does not map to an
+  // order type (`seatdelivery`, `reservation`...) or is not allowed starts in the first
+  // allowed type, so a guest never starts without a type. Without the prop nothing changes.
+  const startsInAllowedType = disableWorkerPickup && configTypes.length > 0
+  const defaultOrderType = forceWorkerPickup
     ? orderTypes.pickup
-    : orderTypes[configState?.configs?.default_order_type?.value]
+    : startsInAllowedType && !configTypes.includes(configDefaultOrderType)
+      ? configTypes[0]
+      : configDefaultOrderType
 
   const shouldForceWorkerPickup = (orderOptions) => (
-    fromWorker &&
+    forceWorkerPickup &&
     !orderOptions?.address_id &&
     !orderOptions?.address?.location &&
     configTypes.includes(orderTypes.pickup)
@@ -143,6 +178,8 @@ export const OrderProvider = ({
   })
 
   const intervalRetriesRef = useRef(null)
+  // The last write that carried an order `type` (see `ignoreStaleTypeResponses`).
+  const typeWriteSeq = useRef(0)
   // The URL's UTM visit this page load already captured, and the queue of captures.
   const referralCapture = useRef({ landing: null, queue: Promise.resolve() })
   // Read at execution time (queued closures and the stable actions outlive a render),
@@ -167,6 +204,20 @@ export const OrderProvider = ({
 
   const hasGuestDeliveryAddress = options =>
     [orderTypes.delivery, orderTypes.catering_delivery].includes(Number(options?.type)) && options?.address?.location
+
+  // The ordinary (no guest delivery migration) order options write, with its own deadline.
+  const withWriteTimeout = (request, timeout) => {
+    const cancelToken = {}
+    let timer
+    const deadline = new Promise((resolve, reject) => {
+      timer = globalThis.setTimeout(() => {
+        // The SDK's cancel token aborts the XHR without settling its promise.
+        reject(Object.assign(new Error('Order options request timed out'), { writeTimeout: true }))
+        cancelToken.cancel?.()
+      }, timeout)
+    })
+    return Promise.race([request({ cancelToken }), deadline]).finally(() => globalThis.clearTimeout(timer))
+  }
 
   const requestGuestDelivery = (sync, request, write = false) => {
     if (!sync) return request()
@@ -700,6 +751,7 @@ export const OrderProvider = ({
         ['address_id', 'type', 'moment'].some(key => changes[key] !== undefined)) {
         return replaceGuestDeliverySelection(sync, changes)
       }
+      const typeWrite = changes.type !== undefined ? ++typeWriteSeq.current : null
       const isCurrent = () => !migration || isCurrentGuestDeliverySync(migration)
       const countryCodeFromLocalStorage = await strategy.getItem('country-code')
       const customerFromLocalStorage = await strategy.getItem('user-customer', true)
@@ -740,12 +792,18 @@ export const OrderProvider = ({
           .setAccessToken(session.token)
           .orderOptions()
           .save(body, { ...options, ...transport })
-        const { content: { error, result }, status } = await requestGuestDelivery(migration, save, true)
+        // the type, with the `city_id: null` that changing it clears: both already applied locally
+        const onlyType = changes.type !== undefined &&
+          Object.keys(changes).every(key => key === 'type' || (key === 'city_id' && changes[key] === null))
+        const { content: { error, result }, status } = await (migration || !orderOptionsWriteTimeout || !onlyType
+          ? requestGuestDelivery(migration, save, true)
+          : withWriteTimeout(save, orderOptionsWriteTimeout))
         if (!isCurrent()) return false
         if (!error) {
           if (recovering && countryCode) await strategy.setItem('country-code', countryCode)
           if (!isCurrent()) return false
           const { carts, ...options } = result
+          if (ignoreStaleTypeResponses && typeWrite !== null && typeWrite !== typeWriteSeq.current) delete options.type
           setState(prevState => ({
             ...prevState,
             options: { ...prevState.options, ...options },
@@ -759,9 +817,11 @@ export const OrderProvider = ({
         return !error
       } catch (err) {
         if (!isCurrent()) return false
-        const message = err?.message?.includes('Internal error')
-          ? 'INTERNAL_ERROR'
-          : err.message
+        const message = err?.writeTimeout
+          ? t('ORDER_OPTIONS_TIMEOUT', 'We couldn’t save your order type. Check your connection and try again.')
+          : err?.message?.includes('Internal error')
+            ? 'INTERNAL_ERROR'
+            : err.message
         if (!recovering) setAlert({ show: true, content: message })
         setState(prevState => ({ ...prevState, loading: false }))
         state.loading = false
@@ -804,13 +864,10 @@ export const OrderProvider = ({
     isPlatformProduct = false
   ) => {
     try {
-      const unaddressedTypes = parseUnaddressedOrderTypes(
-        configState?.configs?.unaddressed_order_types_allowed?.value
+      const unaddressedTypes = resolveUnaddressedOrderTypes(
+        configState?.configs?.unaddressed_order_types_allowed?.value,
+        { pickupWithoutAddress, extraUnaddressedOrderTypes }
       )
-      if (pickupWithoutAddress && !unaddressedTypes.includes(orderTypes.pickup)) {
-        unaddressedTypes.push(orderTypes.pickup)
-      }
-      unaddressedTypes.push(...extraUnaddressedOrderTypes)
       if (shouldRequireOrderAddress(state.options?.type, state.options, unaddressedTypes)) {
         events.emit('require_order_address', { orderType: state.options?.type })
         return false
@@ -1775,7 +1832,7 @@ export const OrderProvider = ({
     const savedAddressId = optionsLocalStorage?.address_id || state?.options?.address_id || null
     const savedType = optionsLocalStorage?.type || defaultOrderType
     const resolvedType = shouldForceWorkerPickup({ address: savedAddress, address_id: savedAddressId }) ? orderTypes.pickup : savedType
-    if (fromWorker && !isDisabledDefaultOpts && optionsLocalStorage && optionsLocalStorage.type !== resolvedType) {
+    if (forceWorkerPickup && !isDisabledDefaultOpts && optionsLocalStorage && optionsLocalStorage.type !== resolvedType) {
       await strategy.setItem('options', { ...optionsLocalStorage, type: resolvedType }, true)
     }
     setState({
@@ -1995,16 +2052,29 @@ export const OrderProvider = ({
 
   useEffect(() => {
     if (configTypes?.length > 0 && state.options.type && !configTypes.includes(state.options.type)) {
-      const validDefaultValue = configTypes.includes(configState?.configs?.default_order_type?.type)
-      updateOrderOptions(validDefaultValue ? { type: configState?.configs?.default_order_type?.type } : { type: configTypes[0] })
+      // `default_order_type.type` is the config row's type (select), not an order type: read the value.
+      const defaultTypeFromConfig = orderTypes[configState?.configs?.default_order_type?.value]
+      const validDefaultValue = configTypes.includes(defaultTypeFromConfig)
+      const fallbackType = validDefaultValue ? defaultTypeFromConfig : configTypes[0]
+      updateOrderOptions({ type: fallbackType })
       if (!session.auth && !state?.loading) {
-        changeType(validDefaultValue ? configState?.configs?.default_order_type?.type : configTypes[0])
+        changeType(fallbackType)
       }
       if (!session.auth) {
-        changeType(validDefaultValue ? configState?.configs?.default_order_type?.type : configTypes[0])
+        changeType(fallbackType)
       }
     }
   }, [configTypes?.length, state.options.type])
+
+  // `disableWorkerPickup`: a guest left without a type (nothing saved and a default that
+  // maps to none) takes the first allowed one, once the saved options have loaded. It runs
+  // once the type is set, so it cannot loop; `isDisabledDefaultOpts` keeps its null type.
+  useEffect(() => {
+    if (!disableWorkerPickup || isDisabledDefaultOpts) return
+    if (session.loading || session.auth || state.loading || state.options.type) return
+    if (!(configTypes?.length > 0)) return
+    changeType(configTypes[0])
+  }, [disableWorkerPickup, configTypes?.length, state.options.type, state.loading, session.loading, session.auth])
 
   /**
    * Update carts from sockets
@@ -2139,7 +2209,7 @@ export const OrderProvider = ({
     setExtraUnaddressedOrderTypes
   }
 
-  const copyState = { ...JSON.parse(JSON.stringify(state)), pickupWithoutAddress }
+  const copyState = { ...JSON.parse(JSON.stringify(state)), pickupWithoutAddress, extraUnaddressedOrderTypes }
 
   const latestFunctions = useRef(functions)
   latestFunctions.current = functions
