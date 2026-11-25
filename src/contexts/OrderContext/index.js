@@ -116,9 +116,16 @@ export const OrderProvider = ({
 
   const fromWorker = typeof window !== 'undefined' && (window.__FIRST_LOAD__ || window.__CONFIG__)
   const forceWorkerPickup = Boolean(fromWorker) && !disableWorkerPickup
+  const configDefaultOrderType = orderTypes[configState?.configs?.default_order_type?.value]
+  // With `disableWorkerPickup` (the web) a `default_order_type` that does not map to an
+  // order type (`seatdelivery`, `reservation`...) or is not allowed starts in the first
+  // allowed type, so a guest never starts without a type. Without the prop nothing changes.
+  const startsInAllowedType = disableWorkerPickup && configTypes.length > 0
   const defaultOrderType = forceWorkerPickup
     ? orderTypes.pickup
-    : orderTypes[configState?.configs?.default_order_type?.value]
+    : startsInAllowedType && !configTypes.includes(configDefaultOrderType)
+      ? configTypes[0]
+      : configDefaultOrderType
 
   const shouldForceWorkerPickup = (orderOptions) => (
     forceWorkerPickup &&
@@ -2011,6 +2018,16 @@ export const OrderProvider = ({
       }
     }
   }, [configTypes?.length, state.options.type])
+
+  // `disableWorkerPickup`: a guest left without a type (nothing saved and a default that
+  // maps to none) takes the first allowed one, once the saved options have loaded. It runs
+  // once the type is set, so it cannot loop; `isDisabledDefaultOpts` keeps its null type.
+  useEffect(() => {
+    if (!disableWorkerPickup || isDisabledDefaultOpts) return
+    if (session.loading || session.auth || state.loading || state.options.type) return
+    if (!(configTypes?.length > 0)) return
+    changeType(configTypes[0])
+  }, [disableWorkerPickup, configTypes?.length, state.options.type, state.loading, session.loading, session.auth])
 
   /**
    * Update carts from sockets

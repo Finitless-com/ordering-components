@@ -17,15 +17,18 @@ const mocks = vi.hoisted(() => ({
   orderTypesAllowed: '',
   defaultOrderType: undefined,
   unaddressedAllowed: undefined,
-  sessionToken: 'session-token'
+  sessionToken: 'session-token',
+  // A guest with the config loaded (stable object: the provider's effects depend on it).
+  guest: false,
+  guestConfig: null
 }))
 
 vi.mock('../../SessionContext', () => ({
   useSession: () => [{
-    auth: true,
-    loading: true,
+    auth: !mocks.guest,
+    loading: !mocks.guest,
     token: mocks.sessionToken,
-    user: { id: 8 }
+    user: mocks.guest ? undefined : { id: 8 }
   }, { logout: vi.fn() }]
 }))
 
@@ -69,7 +72,7 @@ vi.mock('../../EventContext', () => ({
 }))
 
 vi.mock('../../ConfigContext', () => ({
-  useConfig: () => [{
+  useConfig: () => [mocks.guestConfig ?? {
     loading: true,
     configs: {
       order_types_allowed: { value: mocks.orderTypesAllowed },
@@ -1435,5 +1438,98 @@ describe('OrderContext worker pickup and default order type', () => {
     await act(async () => { orderActions.setStateValues({ options: { type: 4 } }) })
     await waitFor(() => expect(savedTypes()).toEqual([1]))
     expect(savedTypes()).not.toContain(2)
+  })
+
+  describe('with disableWorkerPickup, a default_order_type that is unknown or not allowed', () => {
+    beforeEach(() => {
+      mocks.guest = true
+    })
+
+    afterEach(() => {
+      mocks.guest = false
+      mocks.guestConfig = null
+    })
+
+    const useGuestConfig = () => {
+      mocks.guestConfig = {
+        loading: false,
+        configs: {
+          order_types_allowed: { value: mocks.orderTypesAllowed },
+          ...(mocks.defaultOrderType && { default_order_type: { key: 'default_order_type', type: 2, value: mocks.defaultOrderType } })
+        }
+      }
+    }
+
+    it('starts in the first allowed type when the default does not map to an order type', async () => {
+      mocks.orderTypesAllowed = '1|2'
+      mocks.defaultOrderType = 'reservation'
+      useGuestConfig()
+      renderProvider({ disableWorkerPickup: true })
+      expect(orderState.options.type).toBe(1)
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      expect(orderState.options.type).toBe(1)
+    })
+
+    it('starts in the first allowed type when the default maps to a type that is not allowed', async () => {
+      mocks.orderTypesAllowed = '1|3'
+      mocks.defaultOrderType = 'pickup'
+      useGuestConfig()
+      renderProvider({ disableWorkerPickup: true })
+      expect(orderState.options.type).toBe(1)
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      expect(orderState.options.type).toBe(1)
+    })
+
+    it('keeps an allowed default_order_type', async () => {
+      mocks.orderTypesAllowed = '1|3'
+      mocks.defaultOrderType = 'eatin'
+      useGuestConfig()
+      renderProvider({ disableWorkerPickup: true })
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      expect(orderState.options.type).toBe(3)
+    })
+
+    it('gives a guest left without a type the first allowed one once the options have loaded', async () => {
+      mocks.orderTypesAllowed = '2|3'
+      mocks.defaultOrderType = 'delivery'
+      useGuestConfig()
+      renderProvider({ disableWorkerPickup: true })
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      await act(async () => { orderActions.setStateValues({ options: { type: null } }) })
+      await waitFor(() => expect(orderState.options.type).toBe(2))
+      expect(strategy.setItem).toHaveBeenCalledWith('options', expect.objectContaining({ type: 2 }), true)
+    })
+
+    it('does not touch the type while the saved options are still loading', async () => {
+      mocks.orderTypesAllowed = '1|2'
+      mocks.defaultOrderType = 'reservation'
+      let resolveOptions
+      strategy.getItem.mockImplementation(() => new Promise(resolve => { resolveOptions = resolve }))
+      useGuestConfig()
+      renderProvider({ disableWorkerPickup: true })
+      expect(strategy.setItem).not.toHaveBeenCalled()
+      await act(async () => { resolveOptions({ type: 2 }) })
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      expect(orderState.options.type).toBe(2)
+    })
+
+    it('without the prop it keeps the previous behavior: no mapped default stays without type', async () => {
+      mocks.orderTypesAllowed = '1|2'
+      mocks.defaultOrderType = 'reservation'
+      useGuestConfig()
+      renderProvider()
+      expect(orderState.options.type).toBeUndefined()
+      await waitFor(() => expect(orderState.loading).toBe(false))
+      expect(orderState.options.type).toBeUndefined()
+    })
+
+    it('without the prop a not allowed default still goes through the existing fallback', async () => {
+      mocks.orderTypesAllowed = '1|3'
+      mocks.defaultOrderType = 'pickup'
+      useGuestConfig()
+      renderProvider()
+      expect(orderState.options.type).toBe(2)
+      await waitFor(() => expect(orderState.options.type).toBe(1))
+    })
   })
 })
