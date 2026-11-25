@@ -1577,6 +1577,30 @@ describe('OrderContext worker pickup and default order type', () => {
       expect(Alert.mock.lastCall[0]).toMatchObject({ open: true, content: 'We couldn’t save your order type. Check your connection and try again.' })
     })
 
+    it('a type write that also clears city_id is cut by the deadline too; the local type stays', async () => {
+      vi.useFakeTimers()
+      hang()
+      renderProvider({ orderOptionsWriteTimeout: 4000 })
+      await act(async () => { orderActions.setStateValues({ options: { type: 1, city_id: 5 } }) })
+      await act(async () => { orderActions.changeType(3) })
+      expect(mocks.orderOptionsSave.mock.calls[0][0]).toMatchObject({ type: 3, city_id: null })
+      expect(orderState.loading).toBe(true)
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
+      expect(orderState.loading).toBe(false)
+      expect(orderState.options.type).toBe(3)
+    })
+
+    it('a write with no changes has no deadline', async () => {
+      vi.useFakeTimers()
+      hang()
+      renderProvider({ orderOptionsWriteTimeout: 4000 })
+      await act(async () => { orderActions.updateOrderOptions({}) })
+      expect(mocks.orderOptionsSave).toHaveBeenCalledTimes(1)
+      expect(mocks.orderOptionsSave.mock.calls[0][1].cancelToken).toBeUndefined()
+      await act(async () => { await vi.advanceTimersByTimeAsync(60000) })
+      expect(orderState.loading).toBe(true)
+    })
+
     it('a write that changes more than the type (a moment) is not cut by the deadline', async () => {
       vi.useFakeTimers()
       hang()

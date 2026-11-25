@@ -80,7 +80,8 @@ export const OrderActionsContext = createContext()
  * superseded no longer applies its `type` (the one the customer chose last stays), so a late
  * answer cannot undo a later change. Off, every answer applies as before.
  * @param {number} [props.orderOptionsWriteTimeout] Milliseconds an authenticated order options
- * write that changes only the order `type` may wait for its answer. When it runs out the request
+ * write that changes only the order `type` (with, at most, the `city_id: null` that changing it
+ * clears) may wait for its answer. When it runs out the request
  * is cancelled and the write fails like any other (an alert, `loading` released, the type already
  * applied locally stays), so a request that never answers cannot hold `loading` and every screen
  * that waits on it. A write that changes anything else (address, moment, ...) has no deadline:
@@ -791,7 +792,9 @@ export const OrderProvider = ({
           .setAccessToken(session.token)
           .orderOptions()
           .save(body, { ...options, ...transport })
-        const onlyType = Object.keys(changes).every(key => key === 'type')
+        // the type, with the `city_id: null` that changing it clears: both already applied locally
+        const onlyType = changes.type !== undefined &&
+          Object.keys(changes).every(key => key === 'type' || (key === 'city_id' && changes[key] === null))
         const { content: { error, result }, status } = await (migration || !orderOptionsWriteTimeout || !onlyType
           ? requestGuestDelivery(migration, save, true)
           : withWriteTimeout(save, orderOptionsWriteTimeout))
