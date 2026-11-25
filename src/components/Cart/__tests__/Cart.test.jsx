@@ -149,4 +149,44 @@ describe('Cart', () => {
       expect(maxFor({ inventoried: true, stock: 3 })).toBe(3)
     })
   })
+
+  // SERGIO-1732: the catering settings reach the UI as numbers or undefined, never NaN
+  describe('catering preorder values', () => {
+    const settings = (value) => [
+      'preorder_slot_interval', 'preorder_lead_time', 'preorder_time_range', 'preorder_maximum_days', 'preorder_minimum_days'
+    ].map((key) => ({ key, value }))
+    const valuesOf = (props) => ({
+      preorderSlotInterval: props.preorderSlotInterval,
+      preorderLeadTime: props.preorderLeadTime,
+      preorderTimeRange: props.preorderTimeRange,
+      preorderMaximumDays: props.preorderMaximumDays,
+      preorderMinimumDays: props.preorderMinimumDays
+    })
+
+    it('reads the value of the catering type', () => {
+      cart.mockOrderState.options = { ...cart.mockOrderState.options, type: 8 }
+      renderController(Cart, { cart: cart.sampleCart, businessConfigs: settings('delivery,1|catering_delivery,2|pickup,3|catering_pickup,4') })
+      expect(Object.values(valuesOf(lastControllerProps))).toEqual([4, 4, 4, 4, 4])
+    })
+
+    it.each([
+      ['a type that is not in the text', 'delivery,15|pickup,10'],
+      ['a plain number', '20'],
+      ['an empty value', ''],
+      ['text that is not a number', 'catering_pickup,soon']
+    ])('gives no NaN with %s', (_name, value) => {
+      cart.mockOrderState.options = { ...cart.mockOrderState.options, type: 8 }
+      renderController(Cart, { cart: cart.sampleCart, businessConfigs: settings(value) })
+      for (const number of Object.values(valuesOf(lastControllerProps))) {
+        expect(Number.isNaN(number)).toBe(false)
+        expect(number === undefined || Number.isFinite(number)).toBe(true)
+      }
+    })
+
+    it('gives undefined when the order is not catering', () => {
+      cart.mockOrderState.options = { ...cart.mockOrderState.options, type: 1 }
+      renderController(Cart, { cart: cart.sampleCart, businessConfigs: settings('catering_pickup,4') })
+      expect(Object.values(valuesOf(lastControllerProps))).toEqual([undefined, undefined, undefined, undefined, undefined])
+    })
+  })
 })

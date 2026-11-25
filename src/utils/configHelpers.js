@@ -38,6 +38,25 @@ export const isWalletEnabled = (configs = {}) => (
   isEnabledValue(configValue(configs, 'wallet_credit_point_enabled'))
 )
 
+// the names api-core stores the per order type settings with
+// (`delivery,15|pickup,10|...`) by order type id
+const PREORDER_TYPE_NAMES = {
+  1: 'delivery',
+  2: 'pickup',
+  3: 'eatin',
+  4: 'curbside',
+  5: 'driver_thru',
+  6: 'seat_delivery',
+  7: 'catering_delivery',
+  8: 'catering_pickup'
+}
+
+const sameOrderType = (key, orderType) => {
+  const normalized = (value) => String(value).trim().toLowerCase().replace(/[\s_-]/g, '').replace(/^drivethru$/, 'driverthru')
+  const name = PREORDER_TYPE_NAMES[Number(orderType)]
+  return normalized(key) === normalized(orderType) || (name !== undefined && normalized(key) === normalized(name))
+}
+
 export const getMaxPreorderDays = (configs = {}, orderType) => {
   const fallback = parseInt(configValue(configs, 'max_days_preorder'), 10)
   const defaultDays = Number.isFinite(fallback) ? fallback : 6
@@ -49,7 +68,7 @@ export const getMaxPreorderDays = (configs = {}, orderType) => {
   const parts = String(raw).split('|')
   for (const part of parts) {
     const [type, days] = part.split(',')
-    if (String(type).trim() !== typeKey) continue
+    if (!sameOrderType(type, typeKey)) continue
     const parsed = parseInt(days, 10)
     if (Number.isFinite(parsed)) return parsed
   }
