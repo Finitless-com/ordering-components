@@ -7,6 +7,7 @@ import { useEvent } from '../EventContext'
 import { useConfig } from '../ConfigContext'
 import { useCustomer } from '../CustomerContext'
 import { ToastType, useToastActions } from '../ToastContext'
+import { isWebRuntime } from '../../utils/isWebRuntime'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { INVALID_API_JSON_BODY } from '../../utils/parseApiJsonBody'
@@ -63,6 +64,9 @@ export const OrderStateContext = createContext()
 /** The order's actions, stable for the provider's life; each runs its latest version. */
 export const OrderActionsContext = createContext()
 
+// Marker of loggedOutTokenRef: no 401 has started a logout yet
+const NO_LOGOUT_YET = Symbol('no logout yet')
+
 /**
  * Custom provider to order manager
  * This provider has a reducer for manage order state
@@ -93,6 +97,11 @@ export const OrderProvider = ({
   const [events] = useEvent()
   const [configState] = useConfig()
   const [session, { logout }] = useSession()
+  // The session as of the last render: a request answers later than the render that sent it
+  const sessionRef = useRef(session)
+  sessionRef.current = session
+  // Token whose 401 already started a logout, so a second 401 of the same session does not start another
+  const loggedOutTokenRef = useRef(NO_LOGOUT_YET)
   const guestDeliverySync = useRef(null)
   const [customerState, { setUserCustomer }] = useCustomer()
   const { showToast } = useToastActions()
@@ -244,9 +253,15 @@ export const OrderProvider = ({
         }
       }
 
-      const getOptions = transport => ordering.setAccessToken(session.token).orderOptions().get({ ...options, ...transport })
+      const requestToken = session.token
+      const getOptions = transport => ordering.setAccessToken(requestToken).orderOptions().get({ ...options, ...transport })
       const res = await requestGuestDelivery(migration, getOptions)
       if (!isCurrent()) return false
+      // The answer belongs to the session that sent the request. If the session changed meanwhile (a sign-out,
+      // or a new sign-in) it is ignored: it must neither log the new session out nor overwrite its options and carts.
+      // The session that replaced it loads its own options (see the effect on session.auth / user / token).
+      const currentSession = sessionRef.current
+      if ((currentSession?.token ?? null) !== (requestToken ?? null)) return false
       const status = res?.status
       // Read the sentinel before the SDK casts its result on HTTP 200.
       const invalidResponse = res?.response?.data === INVALID_API_JSON_BODY
@@ -291,7 +306,8 @@ export const OrderProvider = ({
         }
       }
       if (error) {
-        if (status === 401 && session.auth) {
+        if (status === 401 && session.auth && currentSession.auth && loggedOutTokenRef.current !== requestToken) {
+          loggedOutTokenRef.current = requestToken
           // Sesion invalida (p.ej. usuario deshabilitado desde el dashboard).
           // En WEB: se limpia el storage directamente -SIN llamar logout(),
           // que hace setState y alimenta la tormenta de re-renders que puede
@@ -300,10 +316,7 @@ export const OrderProvider = ({
           // llama orderOptions autenticado => no hay 401 (sin loop de recargas).
           // El submodulo es compartido con apps React Native: el reload se
           // hace SOLO en web; en el resto se cierra sesion normal con logout().
-          const isWeb = typeof window !== 'undefined' &&
-            typeof window.document !== 'undefined' &&
-            typeof window.location?.reload === 'function'
-          if (isWeb) {
+          if (isWebRuntime()) {
             await strategy.removeItem('token')
             await strategy.removeItem('user')
             await strategy.removeItem('device_code')
@@ -1984,7 +1997,7 @@ export const OrderProvider = ({
     } else {
       guestDeliverySync.current = null
     }
-  }, [session.auth, session.loading, languageState.loading, ordering?.project, session?.user?.id])
+  }, [session.auth, session.loading, languageState.loading, ordering?.project, session?.user?.id, session?.token])
 
   useEffect(() => {
     if (session.loading || configState.loading) return
