@@ -26,6 +26,7 @@ vi.mock('../../OrderingThemeContext', () => ({ OrderingThemeProvider: passthroug
 vi.mock('../../OptimizationLoadContext', () => ({ OptimizationLoadProvider: passthrough }))
 vi.mock('../../UtilsContext', () => ({ UtilsProviders: passthrough }))
 vi.mock('../../OrderContext', () => ({ OrderProvider: passthrough }))
+vi.mock('../../ReferralContext', () => ({ ReferralProvider: passthrough }))
 vi.mock('../../../webStrategy', () => ({ WebStrategy: class {} }))
 vi.mock('../../../../native/src/NativeStrategy', () => ({ NativeStrategy: class {} }))
 

@@ -45,3 +45,15 @@ describe('OrderingProvider referralEnabled', () => {
     expect(orderProps.current.referralEnabled).toBe(true)
   })
 })
+
+describe('OrderingProvider disableWorkerPickup', () => {
+  it('keeps the worker pickup by default', () => {
+    render(<OrderingProvider settings={settings}><div /></OrderingProvider>)
+    expect(orderProps.current.disableWorkerPickup).toBe(false)
+  })
+
+  it('forwards the switch to OrderProvider', () => {
+    render(<OrderingProvider settings={settings} disableWorkerPickup><div /></OrderingProvider>)
+    expect(orderProps.current.disableWorkerPickup).toBe(true)
+  })
+})

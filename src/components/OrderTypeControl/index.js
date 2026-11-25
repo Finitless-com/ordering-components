@@ -3,7 +3,7 @@ import PropTypes, { object } from 'prop-types'
 import { useOrder } from '../../contexts/OrderContext'
 import { useConfig } from '../../contexts/ConfigContext'
 import { useEvent } from '../../contexts/EventContext'
-import { parseUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
+import { resolveUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
 
 export const OrderTypeControl = (props) => {
   props = { ...defaultProps, ...props }
@@ -19,8 +19,9 @@ export const OrderTypeControl = (props) => {
   const handleChangeOrderType = async (orderType) => {
     setTypeSelected(orderType)
     await changeType(orderType)
-    const unaddressedTypes = parseUnaddressedOrderTypes(
-      configState?.configs?.unaddressed_order_types_allowed?.value
+    const unaddressedTypes = resolveUnaddressedOrderTypes(
+      configState?.configs?.unaddressed_order_types_allowed?.value,
+      orderState
     )
     if (shouldRequireOrderAddress(orderType, orderState?.options, unaddressedTypes)) {
       events.emit('require_order_address', { orderType })

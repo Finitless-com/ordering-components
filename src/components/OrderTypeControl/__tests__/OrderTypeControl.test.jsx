@@ -4,9 +4,10 @@ import { OrderTypeControl } from '../index'
 
 const changeType = vi.fn()
 const emit = vi.fn()
+const orderStateMock = vi.hoisted(() => ({ extra: {} }))
 
 vi.mock('../../../contexts/OrderContext', () => ({
-  useOrder: () => [{ options: { type: 1 } }, { changeType }]
+  useOrder: () => [{ options: { type: 1 }, ...orderStateMock.extra }, { changeType }]
 }))
 
 vi.mock('../../../contexts/ConfigContext', () => ({
@@ -24,6 +25,7 @@ vi.mock('../../../contexts/EventContext', async (importOriginal) => {
 describe('OrderTypeControl', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    orderStateMock.extra = {}
   })
 
   it('renders UIComponent with selected order type', () => {
@@ -44,6 +46,29 @@ describe('OrderTypeControl', () => {
     renderController(OrderTypeControl)
     await lastControllerProps.handleChangeOrderType(2)
     expect(changeType).toHaveBeenCalledWith(2)
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it('still asks for the address for eat in when the state has no extra unaddressed types', async () => {
+    renderController(OrderTypeControl)
+    await lastControllerProps.handleChangeOrderType(3)
+    expect(emit).toHaveBeenCalledWith('require_order_address', { orderType: 3 })
+  })
+
+  it('does not emit for the extra unaddressed types of the order state', async () => {
+    orderStateMock.extra = { extraUnaddressedOrderTypes: [2, 3, 4, 5, 6, 8] }
+    renderController(OrderTypeControl)
+    await lastControllerProps.handleChangeOrderType(3)
+    expect(changeType).toHaveBeenCalledWith(3)
+    expect(emit).not.toHaveBeenCalled()
+    await lastControllerProps.handleChangeOrderType(1)
+    expect(emit).toHaveBeenCalledWith('require_order_address', { orderType: 1 })
+  })
+
+  it('does not emit for pickup when pickupWithoutAddress is on and the config lacks it', async () => {
+    orderStateMock.extra = { pickupWithoutAddress: true }
+    renderController(OrderTypeControl)
+    await lastControllerProps.handleChangeOrderType(2)
     expect(emit).not.toHaveBeenCalled()
   })
 })
