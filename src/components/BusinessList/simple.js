@@ -4,6 +4,7 @@ import utc from 'dayjs/plugin/utc'
 import { useApi } from '../../contexts/ApiContext'
 import { useOrder } from '../../contexts/OrderContext'
 import { useConfig } from '../../contexts/ConfigContext'
+import { resolveUnaddressedOrderTypes } from '../../utils/orderTypeAddress'
 dayjs.extend(utc)
 
 export const BusinessSimpleList = (props) => {
@@ -31,7 +32,7 @@ export const BusinessSimpleList = (props) => {
     totalPages: null
   })
 
-  const unaddressedTypes = configs?.unaddressed_order_types_allowed?.value.split('|').map(value => Number(value)) || []
+  const unaddressedTypes = resolveUnaddressedOrderTypes(configs?.unaddressed_order_types_allowed?.value, orderState)
   const isAllowUnaddressOrderType = unaddressedTypes.includes(orderType)
 
   const isValidMoment = (date, format) => dayjs.utc(date, format).format(format) === date

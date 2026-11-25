@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   parseUnaddressedOrderTypes,
+  resolveUnaddressedOrderTypes,
   orderTypeRequiresAddress,
   hasOrderAddress,
   shouldRequireOrderAddress
@@ -19,6 +20,29 @@ describe('orderTypeAddress', () => {
 
     it('filters non-finite values', () => {
       expect(parseUnaddressedOrderTypes('2|x|5')).toEqual([2, 5])
+    })
+  })
+
+  describe('resolveUnaddressedOrderTypes', () => {
+    it('is the parsed config without options, and tolerates a missing value', () => {
+      expect(resolveUnaddressedOrderTypes('2|5')).toEqual([2, 5])
+      expect(resolveUnaddressedOrderTypes(undefined)).toEqual([])
+      expect(resolveUnaddressedOrderTypes('', {})).toEqual([])
+    })
+
+    it('adds pickup when pickupWithoutAddress is on, without duplicates', () => {
+      expect(resolveUnaddressedOrderTypes('3', { pickupWithoutAddress: true })).toEqual([3, 2])
+      expect(resolveUnaddressedOrderTypes('2|3', { pickupWithoutAddress: true })).toEqual([2, 3])
+      expect(resolveUnaddressedOrderTypes('3', { pickupWithoutAddress: false })).toEqual([3])
+    })
+
+    it('adds the extra types, without duplicates', () => {
+      expect(resolveUnaddressedOrderTypes('2|3', { extraUnaddressedOrderTypes: [2, 3, 4, 5] })).toEqual([2, 3, 4, 5])
+      expect(resolveUnaddressedOrderTypes('', { pickupWithoutAddress: true, extraUnaddressedOrderTypes: [2, 8] })).toEqual([2, 8])
+    })
+
+    it('ignores an extras value that is not an array', () => {
+      expect(resolveUnaddressedOrderTypes('3', { extraUnaddressedOrderTypes: null })).toEqual([3])
     })
   })
 

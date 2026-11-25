@@ -1314,6 +1314,15 @@ describe('OrderContext pickupWithoutAddress', () => {
     expect(mocks.addProduct).toHaveBeenCalledTimes(1)
   })
 
+  it('exposes the extra unaddressed types in the state', async () => {
+    renderProvider()
+    expect(orderState.extraUnaddressedOrderTypes).toEqual([])
+    await act(async () => { orderActions.setExtraUnaddressedOrderTypes([2, 3, '4']) })
+    expect(orderState.extraUnaddressedOrderTypes).toEqual([2, 3, 4])
+    await act(async () => { orderActions.setExtraUnaddressedOrderTypes([]) })
+    expect(orderState.extraUnaddressedOrderTypes).toEqual([])
+  })
+
   it('requires the address for eat in by default (no extra unaddressed types)', async () => {
     renderProvider()
     await act(async () => { orderActions.setStateValues({ options: { type: 3 } }) })

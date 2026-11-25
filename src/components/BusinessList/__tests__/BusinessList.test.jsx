@@ -5,9 +5,11 @@ import { renderController, lastControllerProps } from '../../../__tests__/helper
 const biz = vi.hoisted(() => {
   const h = require('../../../__tests__/helpers/businessDiscoveryTestHelpers')
   const api = h.createBusinessApiMocks(vi)
-  const state = { testAdvancedSearch: '0' }
+  const state = { testAdvancedSearch: '0', configOverride: {}, orderState: null }
   const reset = () => {
     state.testAdvancedSearch = '0'
+    state.configOverride = {}
+    state.orderState = null
     vi.clearAllMocks()
     h.applyDefaultBusinessMockImplementations(vi, api)
     h.setupFetchMock(vi)
@@ -40,11 +42,11 @@ vi.mock('../../../contexts/OrderingThemeContext', () => ({
 }))
 
 vi.mock('../../../contexts/ConfigContext', () => ({
-  useConfig: () => [{ configs: biz.discoveryConfigs(biz.state) }]
+  useConfig: () => [{ configs: { ...biz.discoveryConfigs(biz.state), ...biz.state.configOverride } }]
 }))
 
 vi.mock('../../../contexts/OrderContext', () => ({
-  useOrder: () => [biz.defaultOrderState, { changeAddress: vi.fn() }]
+  useOrder: () => [biz.state.orderState || biz.defaultOrderState, { changeAddress: vi.fn() }]
 }))
 
 vi.mock('../../../contexts/ApiContext', () => ({
@@ -268,5 +270,37 @@ describe('BusinessList', () => {
     await waitFor(() => expect(lastControllerProps.businessesList.businesses).toHaveLength(1))
     await lastControllerProps.getBusinesses(false)
     await waitFor(() => expect(lastControllerProps.businessesList.businesses).toHaveLength(2))
+  })
+
+  describe('unaddressed order types of the consumer', () => {
+    const noAddressState = (extra = {}) => ({
+      loading: false,
+      options: { type: 2, user_id: 8 },
+      ...extra
+    })
+
+    it('does not list businesses without an address when pickup is not unaddressed and there are no extras', async () => {
+      biz.state.configOverride = { unaddressed_order_types_allowed: { value: '5' } }
+      biz.state.orderState = noAddressState()
+      renderController(BusinessList, { isOrderStateReady: true, avoidRefreshUserInfo: true })
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(lastControllerProps.businessesList.businesses).toHaveLength(0)
+    })
+
+    it('lists businesses without an address when extraUnaddressedOrderTypes includes the order type', async () => {
+      biz.state.configOverride = { unaddressed_order_types_allowed: { value: '5' } }
+      biz.state.orderState = noAddressState({ extraUnaddressedOrderTypes: [2, 3, 4] })
+      renderController(BusinessList, { isOrderStateReady: true, avoidRefreshUserInfo: true })
+      await waitFor(() => expect(lastControllerProps.businessesList.loading).toBe(false))
+      expect(lastControllerProps.businessesList.businesses).toHaveLength(1)
+    })
+
+    it('lists businesses without an address for pickup when pickupWithoutAddress is on, even with an empty config', async () => {
+      biz.state.configOverride = { unaddressed_order_types_allowed: { value: '' } }
+      biz.state.orderState = noAddressState({ pickupWithoutAddress: true })
+      renderController(BusinessList, { isOrderStateReady: true, avoidRefreshUserInfo: true })
+      await waitFor(() => expect(lastControllerProps.businessesList.loading).toBe(false))
+      expect(lastControllerProps.businessesList.businesses).toHaveLength(1)
+    })
   })
 })

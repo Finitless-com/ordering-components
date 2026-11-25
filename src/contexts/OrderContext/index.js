@@ -10,7 +10,7 @@ import { ToastType, useToastActions } from '../ToastContext'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { INVALID_API_JSON_BODY } from '../../utils/parseApiJsonBody'
-import { parseUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
+import { resolveUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
 import { isUnchangedDriverTip } from './isUnchangedDriverTip'
 import { evictConsumedCart, shouldEvictConsumedCart } from './evictConsumedCart'
 import {
@@ -810,13 +810,10 @@ export const OrderProvider = ({
     isPlatformProduct = false
   ) => {
     try {
-      const unaddressedTypes = parseUnaddressedOrderTypes(
-        configState?.configs?.unaddressed_order_types_allowed?.value
+      const unaddressedTypes = resolveUnaddressedOrderTypes(
+        configState?.configs?.unaddressed_order_types_allowed?.value,
+        { pickupWithoutAddress, extraUnaddressedOrderTypes }
       )
-      if (pickupWithoutAddress && !unaddressedTypes.includes(orderTypes.pickup)) {
-        unaddressedTypes.push(orderTypes.pickup)
-      }
-      unaddressedTypes.push(...extraUnaddressedOrderTypes)
       if (shouldRequireOrderAddress(state.options?.type, state.options, unaddressedTypes)) {
         events.emit('require_order_address', { orderType: state.options?.type })
         return false
@@ -2148,7 +2145,7 @@ export const OrderProvider = ({
     setExtraUnaddressedOrderTypes
   }
 
-  const copyState = { ...JSON.parse(JSON.stringify(state)), pickupWithoutAddress }
+  const copyState = { ...JSON.parse(JSON.stringify(state)), pickupWithoutAddress, extraUnaddressedOrderTypes }
 
   const latestFunctions = useRef(functions)
   latestFunctions.current = functions

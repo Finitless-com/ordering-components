@@ -5,6 +5,7 @@ import utc from 'dayjs/plugin/utc'
 import { useApi } from '../../contexts/ApiContext'
 import { useOrder } from '../../contexts/OrderContext'
 import { useConfig } from '../../contexts/ConfigContext'
+import { resolveUnaddressedOrderTypes } from '../../utils/orderTypeAddress'
 import { useSession } from '../../contexts/SessionContext'
 import { useOrderingTheme } from '../../contexts/OrderingThemeContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
@@ -72,7 +73,7 @@ export const BusinessList = (props) => {
   const rex = /^[A-Za-z0-9\s]+$/g
   const advancedSearchEnabled = configs?.advanced_business_search_enabled?.value === '1' || showSearchBar
   const showCities = (!orderingTheme?.theme?.business_listing_view?.components?.cities?.hidden && orderState?.options?.type === 2 && !props.disabledCities) ?? false
-  const unaddressedTypes = configs?.unaddressed_order_types_allowed?.value.split('|').map(value => Number(value)) || []
+  const unaddressedTypes = resolveUnaddressedOrderTypes(configs?.unaddressed_order_types_allowed?.value, orderState)
   const isAllowUnaddressOrderType = unaddressedTypes.includes(orderState?.options?.type)
 
   const sortBusinesses = (array, option) => {
