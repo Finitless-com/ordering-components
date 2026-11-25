@@ -26,7 +26,8 @@ export const MultiCheckout = (props) => {
     handleOrderRedirect,
     isListenOrderUpdate,
     returnUrl,
-    urlscheme
+    urlscheme,
+    requireCheckoutFields
   } = props
 
   const qParams = userId ? `?user_id=${userId}` : ''
@@ -57,7 +58,8 @@ export const MultiCheckout = (props) => {
   const [paymethodSelected, setPaymethodSelected] = useState({})
   const [cartGroup, setCartGroup] = useState({ loading: true, error: null, result: null })
   const [walletState, setWalletState] = useState({ loading: false, error: null, result: null })
-  const [checkoutFieldsState, setCheckoutFieldsState] = useState({ fields: [], loading: false, error: null })
+  // `loaded` is true once the order types' fields were read: until then (and after a failed read) the rules are unknown
+  const [checkoutFieldsState, setCheckoutFieldsState] = useState({ fields: [], loading: false, error: null, loaded: false })
   const [cartsRequireConfirm, setCartsRequireConfirm] = useState(null)
   const openCarts = (cartGroup?.result?.carts?.filter(cart => cart?.valid && cart?.status !== 1 && cart?.business_id) || null) || []
   const cartsInvalid = (cartGroup?.result?.carts?.filter(cart => cart?.status !== 1) || null) || []
@@ -65,6 +67,8 @@ export const MultiCheckout = (props) => {
   const totalCartsFee = openCarts?.length && openCarts?.filter(cart => cart?.status !== 1 && cart?.valid)?.reduce((total, cart) => { return total + (cart?.delivery_price_with_discount) }, 0)
 
   const handleGroupPlaceOrder = async (confirmPayment) => {
+    // opt-in `requireCheckoutFields`: the order waits for the order types' fields (their rules); without it, as before
+    if (requireCheckoutFields && !checkoutFieldsState?.loaded) return
     if (placing) {
       showToast(ToastType.Info, t('CART_IN_PROGRESS', 'Cart in progress'))
       return
@@ -344,7 +348,7 @@ export const MultiCheckout = (props) => {
 
   const getValidationFieldOrderTypes = async () => {
     try {
-      setCheckoutFieldsState({ ...checkoutFieldsState, loading: true })
+      setCheckoutFieldsState({ ...checkoutFieldsState, loading: true, error: null })
 
       const requestOptions = {
         method: 'GET',
@@ -356,12 +360,12 @@ export const MultiCheckout = (props) => {
       const response = await fetch(`${ordering.root}/validation_field_order_types`, requestOptions)
       const content = await response.json()
       if (!content?.error) {
-        setCheckoutFieldsState({ fields: content?.result, loading: false })
+        setCheckoutFieldsState({ fields: content?.result, loading: false, error: null, loaded: true })
       } else {
-        setCheckoutFieldsState({ ...checkoutFieldsState, loading: false, error: content?.result })
+        setCheckoutFieldsState({ ...checkoutFieldsState, loading: false, loaded: false, error: content?.result || true })
       }
     } catch (err) {
-      setCheckoutFieldsState({ ...checkoutFieldsState, loading: false, error: [err.message] })
+      setCheckoutFieldsState({ ...checkoutFieldsState, loading: false, loaded: false, error: [err.message] })
     }
   }
 
@@ -444,6 +448,7 @@ export const MultiCheckout = (props) => {
           totalCartsFee={totalCartsFee}
           cartsInvalid={cartsInvalid}
           checkoutFieldsState={checkoutFieldsState}
+          retryCheckoutFields={getValidationFieldOrderTypes}
           getMultiCart={getMultiCart}
         />
       )}
@@ -455,5 +460,10 @@ MultiCheckout.propTypes = {
   /**
    * UI Component, this must be containt all graphic elements and use parent props
    */
-  UIComponent: PropTypes.elementType
+  UIComponent: PropTypes.elementType,
+  /**
+   * Optional: handleGroupPlaceOrder does nothing until the order types' checkout fields are loaded
+   * (the UI says when, and offers `retryCheckoutFields`). Off by default.
+   */
+  requireCheckoutFields: PropTypes.bool
 }
