@@ -7,7 +7,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   resolve: {
     alias: {
-      'smart-app-banner': path.resolve(__dirname, 'src/__tests__/mocks/smart-app-banner.js')
+      'smart-app-banner': path.resolve(__dirname, 'src/__tests__/mocks/smart-app-banner.js'),
+      'react-native': path.resolve(__dirname, 'src/__tests__/mocks/react-native.js')
     }
   },
   esbuild: {
