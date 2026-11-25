@@ -199,6 +199,11 @@ export const MomentOption = (props) => {
    * generate a list of available hours
    */
   const generateHourList = (preorderLeadTime, preorderTimeRange, preorderSlotInterval) => {
+    // a value that is not a number (a setting that did not parse) would make the
+    // catering list empty or endless: it falls back to the defaults
+    preorderLeadTime = Number.isFinite(preorderLeadTime) && preorderLeadTime >= 0 ? preorderLeadTime : defaultProps.preorderLeadTime
+    preorderTimeRange = Number.isFinite(preorderTimeRange) && preorderTimeRange > 0 ? preorderTimeRange : defaultProps.preorderTimeRange
+    preorderSlotInterval = Number.isFinite(preorderSlotInterval) && preorderSlotInterval > 0 ? preorderSlotInterval : defaultProps.preorderSlotInterval
     const hoursAvailable = []
     const now = getNow()
     const isToday = dateSelected === now.format('YYYY-MM-DD')

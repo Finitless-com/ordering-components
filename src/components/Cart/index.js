@@ -76,11 +76,18 @@ export const Cart = (props) => {
       ? 'catering_pickup'
       : null
   const splitCateringValue = (configName) => businessConfigs.find((config) => config.key === configName)?.value?.split('|')?.find((val) => val?.includes(cateringTypeString))?.split(',')[1]
-  const preorderSlotInterval = businessConfigs && cateringTypeString && parseInt(splitCateringValue('preorder_slot_interval'))
-  const preorderLeadTime = businessConfigs && cateringTypeString && parseInt(splitCateringValue('preorder_lead_time'))
-  const preorderTimeRange = businessConfigs && cateringTypeString && parseInt(splitCateringValue('preorder_time_range'))
-  const preorderMaximumDays = businessConfigs && cateringTypeString && parseInt(splitCateringValue('preorder_maximum_days'))
-  const preorderMinimumDays = businessConfigs && cateringTypeString && parseInt(splitCateringValue('preorder_minimum_days'))
+  // a whole number or undefined, never NaN: a setting without the type, or a plain
+  // text, must not reach the moment picker as NaN (SERGIO-1732)
+  const cateringNumber = (configName) => {
+    if (!businessConfigs || !cateringTypeString) return undefined
+    const value = parseInt(splitCateringValue(configName), 10)
+    return Number.isFinite(value) ? value : undefined
+  }
+  const preorderSlotInterval = cateringNumber('preorder_slot_interval')
+  const preorderLeadTime = cateringNumber('preorder_lead_time')
+  const preorderTimeRange = cateringNumber('preorder_time_range')
+  const preorderMaximumDays = cateringNumber('preorder_maximum_days')
+  const preorderMinimumDays = cateringNumber('preorder_minimum_days')
   /**
    * Calc balance by product id
    */
