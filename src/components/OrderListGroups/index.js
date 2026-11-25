@@ -7,6 +7,7 @@ import { ToastType, useToast } from '../../contexts/ToastContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useEvent } from '../../contexts/EventContext'
 import { useConfig } from '../../contexts/ConfigContext'
+import { useOrder } from '../../contexts/OrderContext'
 import { PROJECTS_WITH_LOGISTIC_DEFAULT_ETA } from '../../constants/logistic'
 import { isOrderStatusRegressionError } from '../../constants/orderStatusRegression'
 import { mergeAssignRequestOrders } from './utils'
@@ -34,6 +35,10 @@ export const OrderListGroups = (props) => {
   const [, t] = useLanguage()
   const [, { showToast }] = useToast()
   const [{ configs }] = useConfig()
+  const [, orderActions] = useOrder()
+  // The latest actions of the order context, for requests that answer after the render that sent them
+  const orderActionsRef = useRef(orderActions)
+  orderActionsRef.current = orderActions
 
   const _combineTabs = props.combineTabs ?? configs?.combine_pending_and_progress_orders?.value === '1'
   const [combineTabs, setCombineTabsState] = useState(_combineTabs)
@@ -377,10 +382,18 @@ export const OrderListGroups = (props) => {
     requestsState.orders = source
     options.cancelToken = source
 
+    const requestToken = session.token
     const functionFetch = asDashboard
-      ? ordering.setAccessToken(session.token).orders().asDashboard()
-      : ordering.setAccessToken(session.token).orders()
-    return await functionFetch.get(options)
+      ? ordering.setAccessToken(requestToken).orders().asDashboard()
+      : ordering.setAccessToken(requestToken).orders()
+    const response = await functionFetch.get(options)
+    if (response?.status === 401) {
+      // The session ended on the server. The order context owns the decision (it ignores the report when the
+      // token is no longer the session's, when nobody is signed in and after the first one of a token), so
+      // the lists that fail together end the session once. Not awaited: the list shows its error meanwhile.
+      Promise.resolve(orderActionsRef.current?.handleUnauthorized?.(requestToken)).catch(() => {})
+    }
+    return response
   }
 
   const getControls = async () => {
@@ -408,6 +421,12 @@ export const OrderListGroups = (props) => {
       })
     }
   }
+
+  /**
+   * The error state of a list for an error answer of the API: its own `result` (an array of messages, or a
+   * string), never an empty value that would hide the failure.
+   */
+  const getErrorState = (result) => (Array.isArray(result) ? result.length : result) ? result : ['ERROR']
 
   const loadOrders = async ({ newFetch, newFetchCurrent } = {}, options = {}) => {
     if (
@@ -476,17 +495,20 @@ export const OrderListGroups = (props) => {
 
       if (options?.allStatusses) {
         setOrdersFiltered({
-          error,
+          error: error ? getErrorState(result) : error,
           orders: formatOrdersGrouped(_ordersCleaned, { allStatusses: true }),
-          pagination: {
-            ...ordersFiltered.pagination,
-            currentPage: pagination.current_page,
-            pageSize: pagination.page_size,
-            totalPages: pagination.total_pages,
-            total: pagination.total,
-            from: pagination.from,
-            to: pagination.to
-          },
+          // An error answer carries no pagination: the previous one stays
+          pagination: error
+            ? ordersFiltered.pagination
+            : {
+                ...ordersFiltered.pagination,
+                currentPage: pagination.current_page,
+                pageSize: pagination.page_size,
+                totalPages: pagination.total_pages,
+                total: pagination.total,
+                from: pagination.from,
+                to: pagination.to
+              },
           loading: false
         })
         return
@@ -498,17 +520,19 @@ export const OrderListGroups = (props) => {
           ...ordersGroup[currentTabSelected],
           loading: false,
           orders: _ordersCleaned,
-          error: error ? result : null,
+          error: error ? getErrorState(result) : null,
           fetched: true,
-          pagination: {
-            ...ordersGroup[currentTabSelected].pagination,
-            currentPage: pagination.current_page,
-            pageSize: pagination.page_size,
-            totalPages: pagination.total_pages,
-            total: pagination.total,
-            from: pagination.from,
-            to: pagination.to
-          }
+          pagination: error
+            ? ordersGroup[currentTabSelected].pagination
+            : {
+                ...ordersGroup[currentTabSelected].pagination,
+                currentPage: pagination.current_page,
+                pageSize: pagination.page_size,
+                totalPages: pagination.total_pages,
+                total: pagination.total,
+                from: pagination.from,
+                to: pagination.to
+              }
         }
       })
     } catch (err) {
@@ -557,23 +581,26 @@ export const OrderListGroups = (props) => {
       })
 
       if (options?.allStatusses) {
-        setOrdersFiltered({
-          error,
-          orders: formatOrdersGrouped([
-            ...ordersFiltered?.orders,
-            ...sortOrders(result)
-          ], { allStatusses: true }),
-          pagination: {
-            ...ordersFiltered.pagination,
-            currentPage: pagination.current_page,
-            pageSize: pagination.page_size,
-            totalPages: pagination.total_pages,
-            total: pagination.total,
-            from: pagination.from,
-            to: pagination.to
-          },
-          loading: false
-        })
+        setOrdersFiltered(error
+          // An error answer has no orders nor pagination: the list and its pagination stay as they were
+          ? { ...ordersFiltered, error: getErrorState(result), loading: false }
+          : {
+              error,
+              orders: formatOrdersGrouped([
+                ...ordersFiltered?.orders,
+                ...sortOrders(result)
+              ], { allStatusses: true }),
+              pagination: {
+                ...ordersFiltered.pagination,
+                currentPage: pagination.current_page,
+                pageSize: pagination.page_size,
+                totalPages: pagination.total_pages,
+                total: pagination.total,
+                from: pagination.from,
+                to: pagination.to
+              },
+              loading: false
+            })
         return
       }
 
@@ -586,7 +613,7 @@ export const OrderListGroups = (props) => {
           ...ordersGroup[currentTabSelected],
           loading: false,
           orders: _ordersCleaned,
-          error: error ? result : null,
+          error: error ? getErrorState(result) : null,
           pagination: !error
             ? {
                 ...ordersGroup[currentTabSelected].pagination,

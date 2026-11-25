@@ -265,6 +265,45 @@ export const OrderProvider = ({
   }
 
   /**
+   * The ONE place that decides "this token is dead": an authenticated request answered HTTP 401, so the
+   * session ended on the server (expired or deleted session, disabled user). Any controller that sends an
+   * authenticated request reports its 401 here, with the token that REQUEST used, and the session is ended.
+   *
+   * The guards live here and nowhere else: the report is ignored when the session is no longer the one that
+   * sent the request (a sign-out, or a new sign-in, happened while it was in flight), when nobody is signed
+   * in, and when a 401 of the same token already started a logout (several requests fail together: one
+   * logout). On web it clears the storage and reloads WITHOUT calling `logout()` (see the comment below);
+   * on the other runtimes it calls `logout()`.
+   *
+   * @param {string} requestToken the access token the request that was answered 401 was sent with
+   * @returns {Promise<boolean>} true when this call ended the session (it started the logout / the reload),
+   * false when it did nothing
+   */
+  const handleUnauthorized = async (requestToken) => {
+    const currentSession = sessionRef.current
+    if ((currentSession?.token ?? null) !== (requestToken ?? null)) return false
+    if (!currentSession?.auth || loggedOutTokenRef.current === requestToken) return false
+    loggedOutTokenRef.current = requestToken
+    // Sesion invalida (p.ej. usuario deshabilitado desde el dashboard).
+    // En WEB: se limpia el storage directamente -SIN llamar logout(),
+    // que hace setState y alimenta la tormenta de re-renders que puede
+    // congelar la pestaña ANTES de alcanzar el reload- y se recarga.
+    // Tras recargar no hay token/user => sesion de invitado => no se
+    // llama orderOptions autenticado => no hay 401 (sin loop de recargas).
+    // El submodulo es compartido con apps React Native: el reload se
+    // hace SOLO en web; en el resto se cierra sesion normal con logout().
+    if (isWebRuntime()) {
+      await strategy.removeItem('token')
+      await strategy.removeItem('user')
+      await strategy.removeItem('device_code')
+      window.location.reload()
+      return true
+    }
+    await logout()
+    return true
+  }
+
+  /**
    * Refresh order options and carts from API. A recovery reports success only
    * after required option writes have succeeded.
    */
@@ -357,24 +396,7 @@ export const OrderProvider = ({
         }
       }
       if (error) {
-        if (status === 401 && session.auth && currentSession.auth && loggedOutTokenRef.current !== requestToken) {
-          loggedOutTokenRef.current = requestToken
-          // Sesion invalida (p.ej. usuario deshabilitado desde el dashboard).
-          // En WEB: se limpia el storage directamente -SIN llamar logout(),
-          // que hace setState y alimenta la tormenta de re-renders que puede
-          // congelar la pestaña ANTES de alcanzar el reload- y se recarga.
-          // Tras recargar no hay token/user => sesion de invitado => no se
-          // llama orderOptions autenticado => no hay 401 (sin loop de recargas).
-          // El submodulo es compartido con apps React Native: el reload se
-          // hace SOLO en web; en el resto se cierra sesion normal con logout().
-          if (isWebRuntime()) {
-            await strategy.removeItem('token')
-            await strategy.removeItem('user')
-            await strategy.removeItem('device_code')
-            window.location.reload()
-            return { status }
-          }
-          await logout()
+        if (status === 401 && session.auth && await handleUnauthorized(requestToken)) {
           return { status }
         }
         if (invalidResponse || recovering) {
@@ -2184,6 +2206,7 @@ export const OrderProvider = ({
 
   const functions = {
     refreshOrderOptions,
+    handleUnauthorized,
     ensureGuestDeliveryAddress,
     changeAddress,
     changeType,
@@ -2290,6 +2313,7 @@ export const useOrder = () => {
    */
   const functionsPlaceholders = {
     refreshOrderOptions: warningMessage,
+    handleUnauthorized: warningMessage,
     changeAddress: warningMessage,
     changeType: warningMessage,
     changeMoment: warningMessage,
