@@ -109,4 +109,39 @@ describe('MomentOption', () => {
     const schedule = lastControllerProps.getActualSchedule()
     expect(schedule?.enabled).toBe(true)
   })
+
+  // SERGIO-1732: a catering setting that did not parse reaches here as NaN
+  describe('catering hours with values that are not numbers', () => {
+    const cateringHours = async (props) => {
+      renderController(MomentOption, {
+        minDate,
+        maxDate,
+        business: upm.businessWithSchedule,
+        useOrderContext: true,
+        cateringPreorder: true,
+        ...props
+      })
+      await waitFor(() => expect(lastControllerProps.datesList.length).toBeGreaterThan(0))
+      act(() => {
+        lastControllerProps.handleChangeDate(pickScheduledDate())
+      })
+      await waitFor(() => expect(lastControllerProps.hoursList.length).toBeGreaterThan(0))
+      return lastControllerProps.hoursList.map(hour => hour.startTime)
+    }
+
+    it('steps by the slot interval it is given', async () => {
+      const hours = await cateringHours({ preorderSlotInterval: 20, preorderLeadTime: 60, preorderTimeRange: 30 })
+      expect(hours.slice(0, 3)).toEqual(['01:00', '01:20', '01:40'])
+    })
+
+    it.each([NaN, undefined, 0, -5, '15'])('falls back to 15 minutes when the interval is %s', async (interval) => {
+      const hours = await cateringHours({ preorderSlotInterval: interval, preorderLeadTime: 60 })
+      expect(hours.slice(0, 3)).toEqual(['01:00', '01:15', '01:30'])
+    })
+
+    it('starts at midnight when the lead time is NaN', async () => {
+      const hours = await cateringHours({ preorderSlotInterval: 30, preorderLeadTime: NaN, preorderTimeRange: NaN })
+      expect(hours.slice(0, 2)).toEqual(['00:00', '00:30'])
+    })
+  })
 })
