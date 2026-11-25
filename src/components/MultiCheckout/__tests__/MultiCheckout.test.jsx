@@ -246,6 +246,7 @@ describe('MultiCheckout', () => {
       withFieldsAnswer(fieldsOk)
       await readyToPlace()
       await waitFor(() => expect(lastControllerProps.checkoutFieldsState.loaded).toBe(true))
+      expect(lastControllerProps.checkoutFieldsState.failed).toBe(false)
       expect(lastControllerProps.checkoutFieldsState.error).toBeNull()
       expect(typeof lastControllerProps.retryCheckoutFields).toBe('function')
     })
@@ -269,16 +270,30 @@ describe('MultiCheckout', () => {
       await act(async () => { await lastControllerProps.retryCheckoutFields() })
       expect(calls.count).toBe(2)
       await waitFor(() => expect(lastControllerProps.checkoutFieldsState.loaded).toBe(true))
+      expect(lastControllerProps.checkoutFieldsState.failed).toBe(false)
       expect(lastControllerProps.checkoutFieldsState.error).toBeNull()
       await lastControllerProps.handleGroupPlaceOrder()
       expect(cart.mockPlaceMultiCarts).toHaveBeenCalledTimes(1)
     })
 
-    it('a failure that carries no message is still a failure', async () => {
+    it('error stays what the API answered (never forced to true) and loaded says the read failed', async () => {
+      withFieldsAnswer(fieldsFailing)
+      await readyToPlace({ requireCheckoutFields: true })
+      await waitFor(() => expect(lastControllerProps.checkoutFieldsState.loading).toBe(false))
+      await waitFor(() => expect(lastControllerProps.checkoutFieldsState.error).toEqual(['Unavailable']))
+      expect(lastControllerProps.checkoutFieldsState.loaded).toBe(false)
+    })
+
+    it('a failure that carries no message leaves error as it was before (empty), not true', async () => {
       withFieldsAnswer(() => ({ json: async () => ({ error: true }) }))
       await readyToPlace({ requireCheckoutFields: true })
-      await waitFor(() => expect(lastControllerProps.checkoutFieldsState.error).toBeTruthy())
+      await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/validation_field_order_types'), expect.anything()))
+      await waitFor(() => expect(lastControllerProps.checkoutFieldsState.loading).toBe(false))
+      expect(lastControllerProps.checkoutFieldsState.error).toBeFalsy()
+      expect(lastControllerProps.checkoutFieldsState.error).not.toBe(true)
       expect(lastControllerProps.checkoutFieldsState.loaded).toBe(false)
+      // `failed` is the signal that does not depend on the API's message
+      expect(lastControllerProps.checkoutFieldsState.failed).toBe(true)
     })
   })
 })

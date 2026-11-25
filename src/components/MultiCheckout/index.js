@@ -58,8 +58,9 @@ export const MultiCheckout = (props) => {
   const [paymethodSelected, setPaymethodSelected] = useState({})
   const [cartGroup, setCartGroup] = useState({ loading: true, error: null, result: null })
   const [walletState, setWalletState] = useState({ loading: false, error: null, result: null })
-  // `loaded` is true once the order types' fields were read: until then (and after a failed read) the rules are unknown
-  const [checkoutFieldsState, setCheckoutFieldsState] = useState({ fields: [], loading: false, error: null, loaded: false })
+  // `loaded` is true once the order types' fields were read: until then (and after a failed read) the rules are unknown.
+  // `failed` is true after a read that failed, whether or not the API said why (`error` is only what it answered)
+  const [checkoutFieldsState, setCheckoutFieldsState] = useState({ fields: [], loading: false, error: null, loaded: false, failed: false })
   const [cartsRequireConfirm, setCartsRequireConfirm] = useState(null)
   const openCarts = (cartGroup?.result?.carts?.filter(cart => cart?.valid && cart?.status !== 1 && cart?.business_id) || null) || []
   const cartsInvalid = (cartGroup?.result?.carts?.filter(cart => cart?.status !== 1) || null) || []
@@ -348,7 +349,7 @@ export const MultiCheckout = (props) => {
 
   const getValidationFieldOrderTypes = async () => {
     try {
-      setCheckoutFieldsState({ ...checkoutFieldsState, loading: true, error: null })
+      setCheckoutFieldsState({ ...checkoutFieldsState, loading: true, error: null, failed: false })
 
       const requestOptions = {
         method: 'GET',
@@ -360,12 +361,12 @@ export const MultiCheckout = (props) => {
       const response = await fetch(`${ordering.root}/validation_field_order_types`, requestOptions)
       const content = await response.json()
       if (!content?.error) {
-        setCheckoutFieldsState({ fields: content?.result, loading: false, error: null, loaded: true })
+        setCheckoutFieldsState({ fields: content?.result, loading: false, error: null, loaded: true, failed: false })
       } else {
-        setCheckoutFieldsState({ ...checkoutFieldsState, loading: false, loaded: false, error: content?.result || true })
+        setCheckoutFieldsState({ ...checkoutFieldsState, loading: false, loaded: false, failed: true, error: content?.result })
       }
     } catch (err) {
-      setCheckoutFieldsState({ ...checkoutFieldsState, loading: false, loaded: false, error: [err.message] })
+      setCheckoutFieldsState({ ...checkoutFieldsState, loading: false, loaded: false, failed: true, error: [err.message] })
     }
   }
 
