@@ -7,7 +7,7 @@ import { ToastType, useToast } from '../../contexts/ToastContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useEvent } from '../../contexts/EventContext'
 import { useConfig } from '../../contexts/ConfigContext'
-import { useOrder } from '../../contexts/OrderContext'
+import { useOrderActions } from '../../contexts/OrderContext'
 import { PROJECTS_WITH_LOGISTIC_DEFAULT_ETA } from '../../constants/logistic'
 import { isOrderStatusRegressionError } from '../../constants/orderStatusRegression'
 import { mergeAssignRequestOrders } from './utils'
@@ -35,10 +35,10 @@ export const OrderListGroups = (props) => {
   const [, t] = useLanguage()
   const [, { showToast }] = useToast()
   const [{ configs }] = useConfig()
-  const [, orderActions] = useOrder()
-  // The latest actions of the order context, for requests that answer after the render that sent them
-  const orderActionsRef = useRef(orderActions)
-  orderActionsRef.current = orderActions
+  // The order context's actions live in their own context, with a value that is stable for the provider's
+  // life and each action running its latest version: reading them adds no re-render source (the order's
+  // state is NOT subscribed). Without an OrderProvider it is `{}`, and a 401 is then only the list's error.
+  const orderActions = useOrderActions()
 
   const _combineTabs = props.combineTabs ?? configs?.combine_pending_and_progress_orders?.value === '1'
   const [combineTabs, setCombineTabsState] = useState(_combineTabs)
@@ -391,7 +391,7 @@ export const OrderListGroups = (props) => {
       // The session ended on the server. The order context owns the decision (it ignores the report when the
       // token is no longer the session's, when nobody is signed in and after the first one of a token), so
       // the lists that fail together end the session once. Not awaited: the list shows its error meanwhile.
-      Promise.resolve(orderActionsRef.current?.handleUnauthorized?.(requestToken)).catch(() => {})
+      Promise.resolve(orderActions?.handleUnauthorized?.(requestToken)).catch(() => {})
     }
     return response
   }

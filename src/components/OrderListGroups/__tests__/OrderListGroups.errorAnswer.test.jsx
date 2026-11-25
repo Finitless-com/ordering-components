@@ -51,7 +51,7 @@ vi.mock('../../../contexts/ToastContext', () => ({
 }))
 
 // eslint-disable-next-line import/first
-import { OrderProvider } from '../../../contexts/OrderContext'
+import { OrderProvider, useOrder } from '../../../contexts/OrderContext'
 // eslint-disable-next-line import/first
 import { OrderListGroups } from '../index'
 
@@ -386,5 +386,72 @@ describe.each([
     await act(async () => { await list.loadOrders({ newFetchCurrent: true }) })
     await settle()
     expect(endedTimes()).toBe(1)
+  })
+})
+
+describe('OrderListGroups does not subscribe to the order state', () => {
+  it('a change of the order state does not render the list again, while a consumer of useOrder does; a 401 still ends the session once', async () => {
+    let probeRenders = 0
+    let orderActions
+    let uiRenders = 0
+    const CountingUI = (props) => {
+      uiRenders++
+      list = props
+      return null
+    }
+    const Probe = () => {
+      probeRenders++
+      ;[, orderActions] = useOrder()
+      return null
+    }
+    // the same element objects on every render: only a context change can render them again
+    const tree = (
+      <OrderProvider strategy={strategy} Alert={() => null}>
+        <Probe />
+        <OrderListGroups UIComponent={CountingUI} isDriverApp isNetConnected />
+      </OrderProvider>
+    )
+    const pending = deferred()
+    mocks.ordersGet.mockReturnValueOnce(pending.promise)
+    view = render(tree)
+    await settle()
+    await waitFor(() => expect(mocks.ordersGet).toHaveBeenCalledTimes(1))
+    const uiBefore = uiRenders
+    const probeBefore = probeRenders
+    await act(async () => { orderActions.setStateValues({ options: { type: 2 } }) })
+    await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+    expect(probeRenders).toBeGreaterThan(probeBefore)
+    expect(uiRenders).toBe(uiBefore)
+
+    await act(async () => { pending.resolve(apiError(401)); await Promise.resolve() })
+    await settle()
+    expect(mocks.logout).toHaveBeenCalledTimes(1)
+    expect(list.ordersGroup.pending.error).toEqual(['Unauthorized'])
+  })
+})
+
+describe('OrderListGroups mounted without an OrderProvider', () => {
+  const bare = () => <OrderListGroups UIComponent={UI} isDriverApp isNetConnected />
+  let warn
+  beforeEach(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}) })
+  afterEach(() => { warn.mockRestore() })
+
+  it('loads the list', async () => {
+    mocks.ordersGet.mockResolvedValueOnce(page(1, 3, 25, [order(1), order(2)]))
+    view = render(bare())
+    await settle()
+    expect(list.ordersGroup.pending.orders.map(o => o.id)).toEqual([2, 1])
+    expect(list.ordersGroup.pending.pagination).toEqual(PAGE_1)
+    expect(list.ordersGroup.pending.error).toBeNull()
+  })
+
+  it('shows an error answer as an error and does not throw on a 401 (it only is the list\'s error)', async () => {
+    mocks.ordersGet.mockResolvedValueOnce(apiError(401))
+    view = render(bare())
+    await settle()
+    expect(list.ordersGroup.pending.error).toEqual(['Unauthorized'])
+    expect(list.ordersGroup.pending.loading).toBe(false)
+    expect(list.ordersGroup.pending.pagination).toEqual(INITIAL_PAGINATION)
+    expect(mocks.logout).not.toHaveBeenCalled()
   })
 })
