@@ -7,6 +7,14 @@ const RANDOMIZATION_FACTOR = 0.5
 const MANUAL_RECONNECT_BASE_MS = 1000
 const MANUAL_RECONNECT_MAX_MS = 60000
 const STABLE_CONNECTION_MS = 30000
+const SESSION_REJECTED_MESSAGE = 'invalid signature'
+
+/**
+ * True when a `connect_error` means the server rejected the session (the token), as opposed to a
+ * network failure. The wrapper does not schedule its own reconnection for these errors.
+ * @param {Error|{message?: string}} error error received in the `connect_error` event
+ */
+export const isSessionRejectedError = (error) => error?.message === SESSION_REJECTED_MESSAGE
 
 export class Socket {
   constructor ({ url, project, accessToken }) {
@@ -96,7 +104,7 @@ export class Socket {
 
   handleConnectError (error) {
     if (this.closed || this.socket?.active) return
-    if (error?.message === 'invalid signature') return
+    if (isSessionRejectedError(error)) return
     this.scheduleReconnect()
   }
 
@@ -142,6 +150,19 @@ export class Socket {
       if (this.rooms[key]?.count === 0) delete this.rooms[key]
     })
     this.socket?.close()
+  }
+
+  /**
+   * Close the connection and forget everything the wrapper was holding for it: rooms, pending
+   * leaves and listeners queued before the connection. Unlike `close`, which keeps the rooms so
+   * the same wrapper can connect again, this is for a wrapper that will not be used any more
+   * (superseded by another one, or the session it belonged to ended).
+   */
+  dispose () {
+    if (!this.closed) this.close()
+    Object.keys(this.pendingLeaves).forEach((key) => this.clearPendingLeave(key))
+    this.rooms = {}
+    this.queue = []
   }
 
   join (room) {

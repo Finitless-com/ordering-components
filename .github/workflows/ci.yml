@@ -16,7 +16,7 @@ permissions:
 jobs:
   quality-gate:
     name: CI Quality Gate
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-ordering-co-small
     steps:
       - uses: actions/checkout@v4
       - name: Detect package manager

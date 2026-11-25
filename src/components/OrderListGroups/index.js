@@ -279,6 +279,39 @@ export const OrderListGroups = (props) => {
       })
     }
 
+    /**
+     * Customer name (opt-in: only when `filtered.customer.name` or `filtered.customer.lastname` is set).
+     * Same shape as the email/phone filter above: a `customer` relation condition with a
+     * case-insensitive contains match on `name` and/or `lastname` of the order's customer
+     * (OrderCustomer::$whereable has both). The two are ANDed; this is a flat condition list
+     * because the API reads a `where` array without OR groups inside a relation.
+     */
+    if (filtered?.customer?.name || filtered?.customer?.lastname) {
+      const customerNameOptions = []
+      const likeValue = (text) => {
+        const pattern = `%${String(text).trim()}%`
+        return isIos ? pattern : encodeURI(pattern)
+      }
+      if (filtered?.customer?.name && String(filtered.customer.name).trim()) {
+        customerNameOptions.push({
+          attribute: 'name',
+          value: { condition: 'ilike', value: likeValue(filtered.customer.name) }
+        })
+      }
+      if (filtered?.customer?.lastname && String(filtered.customer.lastname).trim()) {
+        customerNameOptions.push({
+          attribute: 'lastname',
+          value: { condition: 'ilike', value: likeValue(filtered.customer.lastname) }
+        })
+      }
+      if (customerNameOptions.length) {
+        options.query.where.push({
+          attribute: 'customer',
+          conditions: customerNameOptions
+        })
+      }
+    }
+
     if (filtered?.delivery_type || customOrderTypes) {
       options.query.where.push({
         attribute: 'delivery_type',
@@ -1239,16 +1272,28 @@ export const OrderListGroups = (props) => {
     [logisticOrders]
   )
 
+  // The handlers above are rebuilt when `logisticOrders` changes, but the effect below only re-runs
+  // with the socket, the session or the logistic flag. The ref keeps the registered listeners
+  // pointing at the handlers of the latest render, so they never read a stale `logisticOrders`,
+  // `orderLogisticAdded` or `orderLogisticUpdated`.
+  const assignRequestHandlersRef = useRef({})
+  assignRequestHandlersRef.current = {
+    request_register: handleAddAssignRequest,
+    request_update: handleUpdateAssignRequest,
+    request_cancel: handleDeleteAssignRequest
+  }
+
   useEffect(() => {
-    if (isLogisticActivated) {
-      socket.on('request_register', handleAddAssignRequest)
-      socket.on('request_update', handleUpdateAssignRequest)
-      socket.on('request_cancel', handleDeleteAssignRequest)
-    }
+    if (!isLogisticActivated) return
+    // The socket wrapper removes a listener by function reference, so keep the exact references
+    // that were registered and pass them to `off`
+    const registered = Object.keys(assignRequestHandlersRef.current).map((event) => ({
+      event,
+      handler: (order) => assignRequestHandlersRef.current[event]?.(order)
+    }))
+    registered.forEach(({ event, handler }) => socket.on(event, handler))
     return () => {
-      socket.off('request_register')
-      socket.off('request_update')
-      socket.off('request_cancel')
+      registered.forEach(({ event, handler }) => socket.off(event, handler))
     }
   }, [socket, session, isLogisticActivated])
 
@@ -1344,6 +1389,7 @@ export const OrderListGroups = (props) => {
           handleUpdateLogisticOrdersEta={handleUpdateLogisticOrdersEta}
           filtered={filtered}
           onFiltered={setFiltered}
+          supportsCustomerNameFilter
           handleChangeOrderStatus={handleChangeOrderStatus}
           handleSendCustomerReview={handleSendCustomerReview}
           ordersFormatted={formatOrdersGrouped(ordersGroup[currentTabSelected]?.orders)}

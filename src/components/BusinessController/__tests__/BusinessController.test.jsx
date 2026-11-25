@@ -173,6 +173,14 @@ describe('BusinessController', () => {
     expect(lastControllerProps.business.name).toBe('Updated Store')
   })
 
+  it('passes snooze_until through to the business update', async () => {
+    renderController(BusinessController, { business: biz.sampleBusiness, isDisabledInterval: true })
+    biz.mockBusinessSave.mockClear()
+    await lastControllerProps.updateBusiness(5, { snooze_until: '2999-01-01 10:00:00' })
+    await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+    expect(biz.mockBusinessSave).toHaveBeenCalledWith({ snooze_until: '2999-01-01 10:00:00' })
+  })
+
   it('marks business favorite when favoriteIds includes its id', async () => {
     renderController(BusinessController, {
       business: biz.sampleBusiness,

@@ -36,6 +36,17 @@ export const WebsocketStatus = (props) => {
   useEffect(() => {
     const ioSocket = socket?.socket
     if (!ioSocket) return
+    // socket.io-client v3+ emits the reconnect events from the Manager (ioSocket.io), not from the
+    // Socket. Listen on only one of them so an attempt is never counted twice: the Manager when
+    // there is one, the Socket for a client without Manager.
+    const reconnectEmitter = typeof ioSocket.io?.on === 'function' ? ioSocket.io : ioSocket
+    // Whether the client will retry on its own: connecting, otherwise disconnected
+    const statusAfterFailure = () => ioSocket.active ? 0 : 2
+
+    // The connection may have completed (or dropped) before the listeners attached
+    setReconnectAttemptCount(0)
+    setSocketStatus(ioSocket.connected ? 1 : 2)
+
     const handleConnect = () => {
       setReconnectAttemptCount(0)
       setSocketStatus(1)
@@ -44,17 +55,32 @@ export const WebsocketStatus = (props) => {
     const handleDisconnect = () => {
       setSocketStatus(2)
     }
+    const handleConnectError = () => {
+      setSocketStatus(statusAfterFailure())
+    }
     const handleReconnectAttempt = () => {
       setReconnectAttemptCount(prev => prev + 1)
       setSocketStatus(0)
     }
+    const handleReconnectError = () => {
+      setSocketStatus(statusAfterFailure())
+    }
+    const handleReconnectFailed = () => {
+      setSocketStatus(2)
+    }
     ioSocket.on('connect', handleConnect)
     ioSocket.on('disconnect', handleDisconnect)
-    ioSocket.on('reconnect_attempt', handleReconnectAttempt)
+    ioSocket.on('connect_error', handleConnectError)
+    reconnectEmitter.on('reconnect_attempt', handleReconnectAttempt)
+    reconnectEmitter.on('reconnect_error', handleReconnectError)
+    reconnectEmitter.on('reconnect_failed', handleReconnectFailed)
     return () => {
       ioSocket.off('connect', handleConnect)
       ioSocket.off('disconnect', handleDisconnect)
-      ioSocket.off('reconnect_attempt', handleReconnectAttempt)
+      ioSocket.off('connect_error', handleConnectError)
+      reconnectEmitter.off('reconnect_attempt', handleReconnectAttempt)
+      reconnectEmitter.off('reconnect_error', handleReconnectError)
+      reconnectEmitter.off('reconnect_failed', handleReconnectFailed)
     }
   }, [socket?.socket])
 

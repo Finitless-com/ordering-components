@@ -80,6 +80,19 @@ describe('StoreProductList', () => {
     expect(menu.mockProductSave).toHaveBeenCalled()
   })
 
+  it('passes snooze_until through to the product update', async () => {
+    renderController(StoreProductList, {
+      slug: 'taco-shop',
+      businessProps: ['id', 'name', 'categories']
+    })
+    await waitFor(() => expect(lastControllerProps.businessState.loading).toBe(false))
+    lastControllerProps.handleChangeCategory({ id: 1, name: 'Mains' })
+    await waitFor(() => expect(lastControllerProps.productsList.products).toHaveLength(2))
+    menu.mockProductSave.mockClear()
+    await lastControllerProps.updateStoreProduct(1, 10, { snooze_until: '2999-01-01 10:00:00' })
+    expect(menu.mockProductSave).toHaveBeenCalledWith({ snooze_until: '2999-01-01 10:00:00' })
+  })
+
   it('updates a store category through the SDK', async () => {
     renderController(StoreProductList, {
       slug: 'taco-shop',
