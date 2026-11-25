@@ -67,6 +67,10 @@ export const OrderActionsContext = createContext()
  * Custom provider to order manager
  * This provider has a reducer for manage order state
  * @param {props} props
+ * @param {boolean} [props.disableWorkerPickup=false] When the page comes from the
+ * worker (`__FIRST_LOAD__` / `__CONFIG__`), the worker's fixed pickup is applied to
+ * addressless orders. Set it to true to drop that and use the project's
+ * `default_order_type` instead. The web marketplace turns it on; apps have no worker.
  */
 export const OrderProvider = ({
   Alert,
@@ -79,7 +83,8 @@ export const OrderProvider = ({
   userAgent,
   enableCouponsRetries = false,
   referralEnabled = true,
-  waitForGuestDeliveryAddress = false
+  waitForGuestDeliveryAddress = false,
+  disableWorkerPickup = false
 }) => {
   const [confirmAlert, setConfirm] = useState({ show: false })
   const [alert, setAlert] = useState({ show: false })
@@ -110,12 +115,13 @@ export const OrderProvider = ({
   }
 
   const fromWorker = typeof window !== 'undefined' && (window.__FIRST_LOAD__ || window.__CONFIG__)
-  const defaultOrderType = fromWorker
+  const forceWorkerPickup = Boolean(fromWorker) && !disableWorkerPickup
+  const defaultOrderType = forceWorkerPickup
     ? orderTypes.pickup
     : orderTypes[configState?.configs?.default_order_type?.value]
 
   const shouldForceWorkerPickup = (orderOptions) => (
-    fromWorker &&
+    forceWorkerPickup &&
     !orderOptions?.address_id &&
     !orderOptions?.address?.location &&
     configTypes.includes(orderTypes.pickup)
@@ -1775,7 +1781,7 @@ export const OrderProvider = ({
     const savedAddressId = optionsLocalStorage?.address_id || state?.options?.address_id || null
     const savedType = optionsLocalStorage?.type || defaultOrderType
     const resolvedType = shouldForceWorkerPickup({ address: savedAddress, address_id: savedAddressId }) ? orderTypes.pickup : savedType
-    if (fromWorker && !isDisabledDefaultOpts && optionsLocalStorage && optionsLocalStorage.type !== resolvedType) {
+    if (forceWorkerPickup && !isDisabledDefaultOpts && optionsLocalStorage && optionsLocalStorage.type !== resolvedType) {
       await strategy.setItem('options', { ...optionsLocalStorage, type: resolvedType }, true)
     }
     setState({
@@ -1995,13 +2001,16 @@ export const OrderProvider = ({
 
   useEffect(() => {
     if (configTypes?.length > 0 && state.options.type && !configTypes.includes(state.options.type)) {
-      const validDefaultValue = configTypes.includes(configState?.configs?.default_order_type?.type)
-      updateOrderOptions(validDefaultValue ? { type: configState?.configs?.default_order_type?.type } : { type: configTypes[0] })
+      // `default_order_type.type` is the config row's type (select), not an order type: read the value.
+      const defaultTypeFromConfig = orderTypes[configState?.configs?.default_order_type?.value]
+      const validDefaultValue = configTypes.includes(defaultTypeFromConfig)
+      const fallbackType = validDefaultValue ? defaultTypeFromConfig : configTypes[0]
+      updateOrderOptions({ type: fallbackType })
       if (!session.auth && !state?.loading) {
-        changeType(validDefaultValue ? configState?.configs?.default_order_type?.type : configTypes[0])
+        changeType(fallbackType)
       }
       if (!session.auth) {
-        changeType(validDefaultValue ? configState?.configs?.default_order_type?.type : configTypes[0])
+        changeType(fallbackType)
       }
     }
   }, [configTypes?.length, state.options.type])

@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   orderOptionsGet: vi.fn(),
   orderOptionsSave: vi.fn(),
   orderTypesAllowed: '',
+  defaultOrderType: undefined,
+  unaddressedAllowed: undefined,
   sessionToken: 'session-token'
 }))
 
@@ -70,7 +72,9 @@ vi.mock('../../ConfigContext', () => ({
   useConfig: () => [{
     loading: true,
     configs: {
-      order_types_allowed: { value: mocks.orderTypesAllowed }
+      order_types_allowed: { value: mocks.orderTypesAllowed },
+      ...(mocks.defaultOrderType && { default_order_type: { key: 'default_order_type', type: 2, value: mocks.defaultOrderType } }),
+      ...(mocks.unaddressedAllowed && { unaddressed_order_types_allowed: { value: mocks.unaddressedAllowed } })
     }
   }]
 }))
@@ -1338,5 +1342,89 @@ describe('OrderContext pickupWithoutAddress', () => {
     expect(response).toBe(false)
     expect(mocks.emit).toHaveBeenCalledWith('require_order_address', { orderType: 2 })
     expect(mocks.addProduct).not.toHaveBeenCalled()
+  })
+})
+
+describe('OrderContext worker pickup and default order type', () => {
+  const strategy = {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+  const cart = { business_id: 5 }
+  const product = { id: 1, name: 'Taco' }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    strategy.getItem.mockResolvedValue(null)
+    mocks.orderTypesAllowed = '1|2'
+    mocks.defaultOrderType = 'delivery'
+    mocks.unaddressedAllowed = '1|2'
+    mocks.orderOptionsSave.mockReset().mockImplementation(async (body) => ({
+      status: 200,
+      content: { error: false, result: { type: body.type, carts: [] } }
+    }))
+    mocks.addProduct.mockResolvedValue({
+      content: { error: false, result: { business_id: 5, uuid: 'cart-uuid-5' } },
+      status: 200
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    mocks.orderTypesAllowed = ''
+    mocks.defaultOrderType = undefined
+    mocks.unaddressedAllowed = undefined
+  })
+
+  const renderProvider = (props = {}) => render(
+    <OrderProvider strategy={strategy} {...props}>
+      <OrderProbe />
+    </OrderProvider>
+  )
+
+  const savedTypes = () => mocks.orderOptionsSave.mock.calls.map(([body]) => body.type)
+
+  it('starts as pickup when the page comes from the worker and the prop is not set', async () => {
+    vi.stubGlobal('__FIRST_LOAD__', {})
+    renderProvider()
+    expect(orderState.options.type).toBe(2)
+
+    await act(async () => { orderActions.setStateValues({ options: { type: 1 } }) })
+    await act(async () => { await orderActions.addProduct(product, cart, false) })
+    expect(savedTypes()).toContain(2)
+  })
+
+  it('starts as default_order_type with disableWorkerPickup and never forces pickup', async () => {
+    vi.stubGlobal('__FIRST_LOAD__', {})
+    renderProvider({ disableWorkerPickup: true })
+    expect(orderState.options.type).toBe(1)
+
+    await act(async () => { await orderActions.addProduct(product, cart, false) })
+    expect(mocks.addProduct).toHaveBeenCalledTimes(1)
+    expect(savedTypes()).not.toContain(2)
+  })
+
+  it('uses default_order_type when the current type is not allowed and the default is', async () => {
+    mocks.orderTypesAllowed = '1|3'
+    mocks.defaultOrderType = 'eatin'
+    renderProvider()
+    await act(async () => { orderActions.setStateValues({ options: { type: 2 } }) })
+
+    await waitFor(() => expect(savedTypes()).toEqual([3]))
+  })
+
+  it('falls back to the first allowed type, never the config row type, when the default is not allowed', async () => {
+    mocks.orderTypesAllowed = '1|3'
+    mocks.defaultOrderType = 'delivery'
+    renderProvider()
+    await act(async () => { orderActions.setStateValues({ options: { type: 5 } }) })
+    await waitFor(() => expect(savedTypes()).toEqual([1]))
+
+    mocks.orderOptionsSave.mockClear()
+    mocks.defaultOrderType = 'pickup'
+    await act(async () => { orderActions.setStateValues({ options: { type: 4 } }) })
+    await waitFor(() => expect(savedTypes()).toEqual([1]))
+    expect(savedTypes()).not.toContain(2)
   })
 })
