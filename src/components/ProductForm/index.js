@@ -705,7 +705,7 @@ export const ProductForm = (props) => {
       const { content: { error, result } } = await ordering.users().save(values)
       if (!error) {
         setActionStatus({ error: null, loading: false })
-        login({
+        await login({
           user: result,
           token: result.session?.access_token
         })

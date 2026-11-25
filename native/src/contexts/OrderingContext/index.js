@@ -28,6 +28,9 @@ export const OrderingContext = createContext()
  * @param {props} props
  * Use restOfProps on contexts that requiere extra settings that aren't in the sdk
  * This prop doesn't need permission from sdk.
+ * @param {number|false|null} [props.sessionCheckInterval] Period in ms of the poll that syncs the session
+ * with the AsyncStorage (default 2000: not given keeps it). `0`, `false` or `null` turn the poll off:
+ * a React Native app has a single JS runtime, so nothing else writes the session.
  */
 export const OrderingProvider = ({ Alert, isValidColor, noValidateColors, settings, children, isDisableToast, isDisabledDefaultOpts, enableCouponsRetries = false, sessionCheckInterval, referralEnabled = true }) => {
   // Stateless, one for the provider's life: a new one each render reached every provider that receives it.

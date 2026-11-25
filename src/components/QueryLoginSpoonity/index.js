@@ -48,7 +48,7 @@ export const QueryLoginSpoonity = (props) => {
       const response = await fetch(`${ordering.root}/auth/spoonity`, requestOptions)
       const { error, result } = await response.json()
       if (!error) {
-        login({
+        await login({
           user: result,
           token: result?.session?.access_token
         })

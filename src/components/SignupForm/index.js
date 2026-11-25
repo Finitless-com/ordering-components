@@ -341,7 +341,7 @@ export const SignupForm = (props) => {
       })
       const res = await response.json()
       if (!res?.error && res?.result?.id) {
-        login({
+        await login({
           user: res?.result,
           token: res?.result?.session?.access_token
         })
@@ -391,7 +391,7 @@ export const SignupForm = (props) => {
       setCheckPhoneCodeState({ ...checkPhoneCodeState, loading: true, result: { error: false } })
       const { content: { error, result } } = await ordering.users().auth(_credentials)
       if (!error && result?.id) {
-        login({
+        await login({
           user: result,
           token: result?.session?.access_token
         })

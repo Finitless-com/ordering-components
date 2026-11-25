@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import PropTypes from 'prop-types'
 import parsePhoneNumber from 'libphonenumber-js'
 import { useSession } from '../../contexts/SessionContext'
@@ -8,6 +8,12 @@ import { useConfig } from '../../contexts/ConfigContext'
 import { useLanguage } from '../../contexts/LanguageContext'
 import { useWebsocket } from '../../contexts/WebsocketContext'
 import { getLoginSessionDecision } from './getLoginSessionDecision'
+
+/**
+ * Codes of the errors that the form reports in `formState.result.code`
+ */
+export const LOGIN_ERROR_SESSION_STORAGE = 'ERROR_SESSION_STORAGE'
+export const LOGIN_ERROR_REQUEST_TIMEOUT = 'ERROR_REQUEST_TIMEOUT'
 
 /**
  * Component to manage login behavior without UI component
@@ -23,13 +29,17 @@ export const LoginForm = (props) => {
     allowedLevels,
     handleCustomLogin,
     notificationState,
-    isGuest
+    isGuest,
+    requestTimeout
   } = props
 
   const [ordering] = useApi()
   const socket = useWebsocket()
   let { defaultLoginTab } = props
   const [formState, setFormState] = useState({ loading: false, result: { error: false } })
+  // True once the session of a successful sign-in is stored (see handleLoginClick); formState is not touched by it
+  const [loginCompleted, setLoginCompleted] = useState(false)
+  const mountedRef = useRef(true)
   const [credentials, setCredentials] = useState({ email: '', cellphone: '', password: '' })
   const [verifyPhoneState, setVerifyPhoneState] = useState({ loading: false, result: { error: false } })
   const [checkPhoneCodeState, setCheckPhoneCodeState] = useState({ loading: false, result: { error: false } })
@@ -57,6 +67,63 @@ export const LoginForm = (props) => {
 
   const [{ user }, { login }] = useSession()
   const [, t] = useLanguage()
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+
+  /**
+   * Send the auth request. With `requestTimeout` (ms) the request is abandoned after that time:
+   * the SDK request is aborted (cancel token) and the returned promise rejects with `code`
+   * ERROR_REQUEST_TIMEOUT. The SDK does not settle an aborted request, so a late answer can never reach
+   * the caller: the user is never signed in behind a timeout message. Without `requestTimeout` it is the
+   * plain SDK call.
+   */
+  const requestAuth = async (_credentials, headers) => {
+    const authRequest = (options) => ordering.setAccessToken(null).users().auth(_credentials, { headers, ...options })
+    if (!(Number.isFinite(requestTimeout) && requestTimeout > 0)) return authRequest()
+    const cancelToken = {}
+    let timer
+    const timeout = new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(t('ERROR_REQUEST_TIMEOUT', 'The request took too long. Please try again'))
+        error.code = LOGIN_ERROR_REQUEST_TIMEOUT
+        reject(error)
+        cancelToken.cancel?.()
+      }, requestTimeout)
+    })
+    try {
+      const request = authRequest({ cancelToken })
+      // A request that fails after the time limit has nobody to report to
+      request.catch(() => {})
+      return await Promise.race([request, timeout])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /**
+   * Store the session and tell the UI. Rejection of the session manager is reported in formState
+   * @returns {Promise<boolean>} false when the session could not be stored
+   */
+  const storeSession = async (sessionValues) => {
+    try {
+      await login(sessionValues)
+    } catch (err) {
+      mountedRef.current && setFormState({
+        result: {
+          error: true,
+          result: [t(LOGIN_ERROR_SESSION_STORAGE, 'The session could not be saved on this device')],
+          code: LOGIN_ERROR_SESSION_STORAGE,
+          reason: err?.message
+        },
+        loading: false
+      })
+      return false
+    }
+    return true
+  }
 
   const invalidateDisallowedSession = async (sessionUser) => {
     const sessionDecision = getLoginSessionDecision({
@@ -127,6 +194,7 @@ export const LoginForm = (props) => {
         }
       }
       setFormState({ ...formState, loading: true })
+      setLoginCompleted(false)
 
       if (_credentials?.cellphone?.includes('+')) {
         const parsedNumber = parsePhoneNumber(_credentials.cellphone)
@@ -159,7 +227,7 @@ export const LoginForm = (props) => {
       }
 
       // Don't send Bearer token on login - ordering instance may have stale token from previous session
-      const { content: { error, result } } = await ordering.setAccessToken(null).users().auth(_credentials, { headers })
+      const { content: { error, result } } = await requestAuth(_credentials, headers)
 
       if (isReCaptchaEnable && window?.grecaptcha) {
         _credentials.recaptcha_type === 'v2' && window.grecaptcha.reset()
@@ -179,19 +247,16 @@ export const LoginForm = (props) => {
             })
             return
           }
-          if (values?.device_code) {
-            login({
-              user: result,
-              token: result.session?.access_token,
-              device_code: values?.device_code
-            })
-          } else {
-            login({
-              user: result,
-              token: result.session?.access_token
-            })
+          // The session is stored (storage written, state updated) before the sign-in goes on
+          const sessionValues = {
+            user: result,
+            token: result.session?.access_token
           }
+          if (values?.device_code) sessionValues.device_code = values?.device_code
+          if (!(await storeSession(sessionValues))) return false
         }
+        // formState.loading is left on purpose: the UI keeps its spinner until the app leaves the form
+        mountedRef.current && setLoginCompleted(true)
         events.emit('userLogin', result)
         if (handleSuccessLogin) {
           await handleSuccessLogin(result)
@@ -214,10 +279,12 @@ export const LoginForm = (props) => {
       setFormState({
         result: {
           error: true,
-          result: err.message
+          result: err.message,
+          ...(err.code === LOGIN_ERROR_REQUEST_TIMEOUT ? { code: err.code } : {})
         },
         loading: false
       })
+      if (err.code === LOGIN_ERROR_REQUEST_TIMEOUT) return false
     }
   }
 
@@ -330,7 +397,7 @@ export const LoginForm = (props) => {
           })
           return
         }
-        login({
+        await login({
           user: res?.result,
           token: res?.result?.session?.access_token
         })
@@ -437,7 +504,7 @@ export const LoginForm = (props) => {
         })
         return
       }
-      login({
+      await login({
         user: result,
         token: result?.session?.access_token
       })
@@ -490,6 +557,7 @@ export const LoginForm = (props) => {
           useLoginOtpWhatsapp={useLoginOtpWhatsapp}
           useLoginSpoonity={useLoginSpoonity}
           handleLoginSpoonity={handleLoginSpoonity}
+          loginCompleted={loginCompleted}
           setCellphoneStartZero={setCellphoneStartZero}
         />
       )}
@@ -548,7 +616,14 @@ LoginForm.propTypes = {
    * Element to custo link to forgot password
    * You can provide de link element as react router Link or your custom Anchor to forgot password page
    */
-  elementLinkToForgotPassword: PropTypes.element
+  elementLinkToForgotPassword: PropTypes.element,
+  /**
+   * Time limit, in milliseconds, of the sign-in request (POST /auth). Optional: without it there is no
+   * client time limit (the same as always). When given and the server does not answer in time, the request
+   * is aborted and formState becomes { loading: false, result: { error: true, result: message,
+   * code: 'ERROR_REQUEST_TIMEOUT' } }. A late answer is ignored: it never signs the user in.
+   */
+  requestTimeout: PropTypes.number
 }
 
 const defaultProps = {
