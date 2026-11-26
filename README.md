@@ -53,6 +53,12 @@ All of these are optional; an app that does not pass them behaves as before.
 
 The storage poll skips a tick while a `login()` / `logout()` is writing, and ticks never overlap.
 
+## Session ended on the server (HTTP 401) and error answers of `OrderListGroups`
+
+`useOrder()` (and `useOrderActions()`) has one more action, `handleUnauthorized(requestToken)` -> `Promise<boolean>`. It is the single place that decides "this token is dead", the same one `refreshOrderOptions` uses for its own 401: a controller that sent an authenticated request and got HTTP 401 reports it with the token **that request used**. It resolves `true` when it ended the session (on web: clears `token`, `user` and `device_code` from the storage and reloads the page, without calling `logout()`; on the other runtimes: calls `logout()`), and `false` when it did nothing: the token is no longer the session's, nobody is signed in, or a 401 of that token already started the logout (several requests that fail together end the session once). `OrderListGroups` reports every 401 of its order requests; an app does not need to pass anything.
+
+An error answer of the API (`error: true`, any status below 500: 401, 403, ...) no longer breaks `OrderListGroups`: the tab's `error` (`ordersGroup[tab].error`) or the filter's (`ordersFiltered.error`) is the API's own `result` (an array of messages or a string; `['ERROR']` if the API sent none), `loading` is `false`, and the pagination of the tab / filter stays as it was. A load of the first page (`newFetch` / `newFetchCurrent`) leaves the list empty, a load of a next page keeps its orders. Success states are unchanged.
+
 ## Format code
 
 Run `yarn lint` to execute the linter.

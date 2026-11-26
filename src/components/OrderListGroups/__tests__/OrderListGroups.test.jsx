@@ -35,6 +35,7 @@ vi.mock('../../../contexts/SessionContext', () => ({
 }))
 
 vi.mock('../../../contexts/OrderContext', () => ({
+  useOrderActions: () => ({}),
   useOrder: () => [orders.mockOrderState, {
     reorder: orders.mockReorder,
     clearCart: orders.mockClearCart
