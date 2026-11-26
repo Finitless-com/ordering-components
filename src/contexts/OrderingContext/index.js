@@ -32,10 +32,10 @@ export const OrderingContext = createContext()
  * @param {props} props
  * Use restOfProps on contexts that requiere extra settings that aren't in the sdk
  * This prop doesn't need permission from sdk.
- * `supportedOrderTypes`, `ignoreStaleTypeResponses` and `orderOptionsWriteTimeout` are optional and
+ * `supportedOrderTypes`, `franchiseMenuFirst`, `ignoreStaleTypeResponses` and `orderOptionsWriteTimeout` are optional and
  * go to OrderProvider as they are (see its docs); without them nothing changes.
  */
-export const OrderingProvider = ({ Alert, settings, children, enableCouponsRetries = false, initialOptimizationLoad, referralEnabled = true, waitForGuestDeliveryAddress = false, disableWorkerPickup = false, supportedOrderTypes, ignoreStaleTypeResponses = false, orderOptionsWriteTimeout }) => {
+export const OrderingProvider = ({ Alert, settings, children, enableCouponsRetries = false, initialOptimizationLoad, referralEnabled = true, waitForGuestDeliveryAddress = false, disableWorkerPickup = false, supportedOrderTypes, franchiseMenuFirst = false, ignoreStaleTypeResponses = false, orderOptionsWriteTimeout }) => {
   const webStrategy = new WebStrategy()
   const restOfSettings = {
     project: settings.project,
@@ -78,6 +78,7 @@ export const OrderingProvider = ({ Alert, settings, children, enableCouponsRetri
                                     waitForGuestDeliveryAddress={waitForGuestDeliveryAddress}
                                     disableWorkerPickup={disableWorkerPickup}
                                     supportedOrderTypes={supportedOrderTypes}
+                                    franchiseMenuFirst={franchiseMenuFirst}
                                     ignoreStaleTypeResponses={ignoreStaleTypeResponses}
                                     orderOptionsWriteTimeout={orderOptionsWriteTimeout}
                                   >
