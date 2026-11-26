@@ -143,7 +143,7 @@ export const Sessions = (props) => {
             sessions: sessionsList.sessions.filter(session => session.current)
           })
           if (user?.session_strategy === 'jwt') {
-            login({
+            await login({
               token,
               user: { ...user, session_strategy: 'jwt_session' }
             })
