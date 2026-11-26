@@ -82,6 +82,9 @@ const __rest = (this && this.__rest) || function (s, e) {
 }
 const stripTrailingSlashes = function (url) { return typeof url === 'string' ? url.replace(/\/+$/, '') : url }
 const joinUrl = function (root, path) { return stripTrailingSlashes(root) + '/' + String(path !== null && path !== void 0 ? path : '').replace(/^\/+/, '') }
+
+// A GET that gets no answer in this time fails (see makeRequest), so the screen waiting on it can show its error.
+const GET_TIMEOUT_MS = 30000
 const Ordering = /** @class */ (function () {
   function Ordering (_a) {
     const _b = _a === void 0 ? {} : _a; const _c = _b.url; const url = _c === void 0 ? 'https://apiv4.ordering.co' : _c; const _d = _b.version; const version = _d === void 0 ? 'v400' : _d; const _e = _b.project; const project = _e === void 0 ? 'demo' : _e; const _f = _b.language; const language = _f === void 0 ? 'en' : _f; const _g = _b.accessToken; const accessToken = _g === void 0 ? null : _g; const _h = _b.apiKey; const apiKey = _h === void 0 ? null : _h; const _j = _b.appId; const appId = _j === void 0 ? null : _j; const _k = _b.billing; const billing = _k === void 0 ? null : _k; const _l = _b.countryCode; const countryCode = _l === void 0 ? null : _l; const _m = _b.appInternalName; const appInternalName = _m === void 0 ? null : _m
@@ -318,6 +321,17 @@ const Ordering = /** @class */ (function () {
       }
       xhr.onerror = function (err) {
         reject(err)
+      }
+      /**
+       * A request that never answers holds every screen waiting on it (a skeleton for good): a GET, which
+       * is safe to give up on, ends after GET_TIMEOUT_MS unless the call sets `timeout` (0: no limit).
+       */
+      const timeout = options.timeout !== undefined ? options.timeout : (method === 'GET' ? GET_TIMEOUT_MS : 0)
+      if (timeout > 0) {
+        xhr.timeout = timeout
+        xhr.ontimeout = function () {
+          reject(new Error('Request timed out'))
+        }
       }
       if (options.json) {
         xhr.setRequestHeader('Content-Type', 'application/json')
