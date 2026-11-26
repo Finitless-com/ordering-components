@@ -36,6 +36,23 @@ git clone --recursive https://github.com/Finitless-com/ordering-app-business-v26
 
 Once added, you can import the components directly from the submodule. This allows you to keep your project and these components separate, making updates and maintenance easier.
 
+## Sign-in props (session and `LoginForm`)
+
+All of these are optional; an app that does not pass them behaves as before.
+
+| Where | Prop | What it does |
+|-------|------|--------------|
+| `OrderingProvider` (web and native) | `sessionCheckInterval` | Period in ms of the poll that compares the stored session with the one in memory (another browser tab that logged in or out, a token replaced from outside). Default `2000`. `0`, `false` or `null` turn the poll **off**: use it in a React Native app, which has a single JS runtime. (`SessionProvider` takes the same value as `checkInterval`.) |
+| `LoginForm` | `requestTimeout` | Time limit in ms of the sign-in request (`POST /auth`). When it expires the request is aborted and `formState` becomes `{ loading: false, result: { error: true, result: <message>, code: 'ERROR_REQUEST_TIMEOUT' } }`. A late answer never signs the user in. Without it there is no client time limit. |
+
+`LoginForm` waits for the session to be stored (`login()` of `useSession`) before calling `handleSuccessLogin` and resolving `handleButtonLoginClick` (it resolves `true`). What the UI receives:
+
+- `formState.loading` stays `true` after a successful sign-in until the app leaves the form (unchanged: a continuous spinner).
+- `loginCompleted` (new prop, `false` by default): `true` once the session is stored. `formState` itself is not modified on success.
+- If the session cannot be stored: `formState = { loading: false, result: { error: true, result: [message], code: 'ERROR_SESSION_STORAGE', reason: <error message> } }`.
+
+The storage poll skips a tick while a `login()` / `logout()` is writing, and ticks never overlap.
+
 ## Format code
 
 Run `yarn lint` to execute the linter.
