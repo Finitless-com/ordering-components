@@ -556,6 +556,88 @@ describe('OrderContext updateOrderOptions', () => {
   })
 })
 
+describe('OrderContext saveCartOrderType', () => {
+  let previousOptions
+  const strategy = {
+    getItem: vi.fn(async key => key === 'options' ? previousOptions : null),
+    setItem: vi.fn(async (key, value) => { if (key === 'options') previousOptions = value }),
+    removeItem: vi.fn(async key => { if (key === 'options') previousOptions = null })
+  }
+  const answer = options => ({ status: 200, content: { error: false, result: { ...options, carts: [] } } })
+  const renderProvider = () => render(<OrderProvider strategy={strategy}><OrderProbe /></OrderProvider>)
+
+  beforeEach(() => {
+    mocks.orderOptionsSave.mockReset()
+    mocks.orderOptionsGet.mockReset()
+    mocks.orderTypesAllowed = '1|2'
+    previousOptions = { type: 2, city_id: 99, moment: null, unrelated: true }
+  })
+
+  afterEach(() => {
+    mocks.guest = false
+    mocks.orderTypesAllowed = ''
+    mocks.sessionToken = 'session-token'
+  })
+
+  it('updates stored type and city after the API acknowledges the rollback so a refresh cannot restore the stale values', async () => {
+    let finishSave
+    mocks.orderOptionsSave.mockReturnValueOnce(new Promise(resolve => { finishSave = resolve }))
+    renderProvider()
+
+    let rollback
+    await act(async () => { rollback = orderActions.saveCartOrderType({ type: 1, city_id: 7 }) })
+    expect(previousOptions).toMatchObject({ type: 2, city_id: 99 })
+    expect(mocks.orderOptionsSave).toHaveBeenCalledWith({ type: 1, city_id: 7, user_id: 8 }, expect.any(Object))
+
+    await act(async () => {
+      finishSave(answer({ type: 1, city_id: 7 }))
+      await expect(rollback).resolves.toBe(true)
+    })
+    expect(previousOptions).toEqual({ type: 1, city_id: 7, moment: null, unrelated: true })
+    mocks.orderOptionsGet.mockResolvedValueOnce(answer({ type: 1, city_id: 7 }))
+    mocks.orderOptionsSave.mockImplementation(async changes => answer(changes))
+    await act(async () => { await orderActions.refreshOrderOptions() })
+
+    expect(orderState.options).toMatchObject({ type: 1, city_id: 7 })
+    expect(mocks.orderOptionsSave.mock.calls.every(([changes]) => changes.type === 1 && changes.city_id === 7)).toBe(true)
+  })
+
+  it('leaves local options as they were if the authenticated save is rejected', async () => {
+    mocks.orderOptionsSave.mockResolvedValueOnce({ status: 400, content: { error: true, result: ['Rejected'] } })
+    renderProvider()
+    await act(async () => {
+      await expect(orderActions.saveCartOrderType({ type: 1, city_id: 7 })).resolves.toBe(false)
+    })
+    expect(previousOptions).toMatchObject({ type: 2, city_id: 99 })
+    expect(strategy.setItem).not.toHaveBeenCalled()
+  })
+
+  it('does not create local guest options for an authenticated user', async () => {
+    previousOptions = null
+    mocks.orderOptionsSave.mockResolvedValueOnce(answer({ type: 1, city_id: 7 }))
+    renderProvider()
+    await act(async () => {
+      await expect(orderActions.saveCartOrderType({ type: 1, city_id: 7 })).resolves.toBe(true)
+    })
+    expect(orderState.options).toMatchObject({ type: 1, city_id: 7 })
+    expect(previousOptions).toBeNull()
+    expect(strategy.setItem).not.toHaveBeenCalled()
+  })
+
+  it('persists and publishes type and city for an anonymous visitor without an API write', async () => {
+    mocks.guest = true
+    mocks.sessionToken = null
+    renderProvider()
+    await act(async () => {
+      await expect(orderActions.saveCartOrderType({ type: 1, city_id: null })).resolves.toBe(true)
+      await expect(orderActions.saveCartOrderType({ type: 2 })).resolves.toBe(true)
+    })
+    expect(orderState.options).toMatchObject({ type: 2, city_id: null })
+    expect(previousOptions).toMatchObject({ type: 2, city_id: null, unrelated: true })
+    expect(mocks.orderOptionsSave).not.toHaveBeenCalled()
+  })
+})
+
 describe('PurchaseGiftCard with real OrderProvider', () => {
   const strategy = {
     getItem: vi.fn().mockResolvedValue(null),

@@ -913,6 +913,34 @@ export const OrderProvider = ({
     }
   }
 
+  // The cart selector needs an acknowledged type change and a matching local
+  // draft. A later refresh can replay that draft after a transfer is rolled back.
+  const saveCartOrderType = async ({ type, city_id: cityId }) => {
+    const changes = {
+      type,
+      ...(cityId !== undefined && { city_id: cityId })
+    }
+    const isCurrent = () => currentCartTransferSession.current === cartTransferSession
+    try {
+      if (session.auth && !await updateOrderOptions(changes)) return false
+      if (!isCurrent()) return false
+
+      const storedOptions = await strategy.getItem('options', true)
+      if (!isCurrent()) return false
+      if (session.auth && !storedOptions) return true
+
+      const localOptions = session.auth ? storedOptions : { ...state.options, ...storedOptions }
+      await strategy.setItem('options', { ...localOptions, ...changes }, true)
+      if (!isCurrent()) return false
+      if (!session.auth) {
+        setState(prevState => ({ ...prevState, options: { ...prevState.options, ...changes } }))
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
   /**
    * Lets a pickup order proceed without an address. The web marketplace turns
    * this on for a store opened directly by link, or a one-store site; off by
@@ -2399,6 +2427,7 @@ export const OrderProvider = ({
     changeBusiness,
     reconcileBusinessCart,
     changeType,
+    saveCartOrderType,
     changeMoment,
     updateOrderOptions,
     addProduct,
@@ -2507,6 +2536,7 @@ export const useOrder = () => {
     changeBusiness: warningMessage,
     reconcileBusinessCart: warningMessage,
     changeType: warningMessage,
+    saveCartOrderType: warningMessage,
     changeMoment: warningMessage,
     addProduct: warningMessage,
     removeProduct: warningMessage,
