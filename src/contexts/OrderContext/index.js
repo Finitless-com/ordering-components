@@ -11,12 +11,14 @@ import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { INVALID_API_JSON_BODY } from '../../utils/parseApiJsonBody'
 import { resolveUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
+import { ORDER_OPTIONS_READ_TIMEOUT_MS, withOrderOptionsTimeout } from './withOrderOptionsTimeout'
 import { isUnchangedDriverTip } from './isUnchangedDriverTip'
 import { evictConsumedCart, shouldEvictConsumedCart } from './evictConsumedCart'
 import {
   mergeCartResult,
   mergeCartsByUpdatedAt,
-  resolveOrderOptionsCarts
+  resolveOrderOptionsCarts,
+  withoutCart
 } from './mergeCartsByUpdatedAt'
 import {
   CLICK_ID_STORAGE_KEY,
@@ -33,48 +35,11 @@ dayjs.extend(utc)
 
 const REFERRAL_MAX_PENDING = 20
 const GUEST_DELIVERY_DEADLINE_MS = 15000
-const CART_TRANSFER_TIMEOUT_MS = 12000
-const ORDER_OPTIONS_READ_TIMEOUT_MS = 12000
 
 /**
  * Create OrderContext
  * This context will manage the current order with options internally and provide an easy interface
  */
-/**
- * The carts without one of them, as a new object: the order's carts are never
- * changed in place, so who reads the order without the copy (useOrderState)
- * sees every change.
- */
-const withoutCart = (carts, key) => {
-  const next = { ...carts }
-  delete next[key]
-  return next
-}
-
-// The transfer summary looks up removed lines by their original IDs, labels
-// their reason, and reads each discarded benefit ID or context field.
-const hasCartTransferDetails = (unavailable, discarded) => (
-  Array.isArray(unavailable) && unavailable.every(line =>
-    Number.isInteger(line?.line_id) &&
-    (line.product_id === null || Number.isInteger(line.product_id)) &&
-    typeof line.reason === 'string'
-  ) &&
-  Array.isArray(discarded?.offers) && discarded.offers.every(offer => Number.isInteger(offer?.id)) &&
-  Array.isArray(discarded?.wallets) && discarded.wallets.every(wallet => Number.isInteger(wallet?.id)) &&
-  Array.isArray(discarded?.context) && discarded.context.every(item => typeof item?.field === 'string' && item.field.trim())
-)
-
-// In the normal cart payload id is the product ID, while line_id identifies
-// the row. Some payloads also carry product_id explicitly.
-const normalizeCartProductId = value => {
-  if (typeof value !== 'string' && typeof value !== 'number') return null
-  const id = Number(value)
-  return Number.isSafeInteger(id) && id > 0 ? id : null
-}
-
-const getCartProductId = line => normalizeCartProductId(line?.product_id ?? line?.id)
-const getCartProductIds = cart => Array.isArray(cart?.products) ? cart.products.map(getCartProductId) : []
-
 export const OrderContext = createContext()
 
 /**
@@ -208,10 +173,7 @@ export const OrderProvider = ({
 
   // The API retires the source UUID and any empty destination cart. Order
   // options responses already in flight and socket events can still carry them.
-  const cartTransferSession = useMemo(() => ({
-    retiredCartIds: new Set(),
-    pendingTransfers: new Map()
-  }), [ordering?.project, session.auth, session.token, session.user?.id, customerState?.user?.id])
+  const cartTransferSession = useMemo(() => ({}), [ordering?.project, session.auth, session.token, session.user?.id, customerState?.user?.id])
   const currentCartTransferSession = useRef(cartTransferSession)
   currentCartTransferSession.current = cartTransferSession
   // Normal consumers reload for the original project/account dependencies. The
@@ -239,13 +201,8 @@ export const OrderProvider = ({
     }
   })
 
-  const mergeOrderOptionsCarts = (previousCarts, incomingCarts) => {
-    const { retiredCartIds } = cartTransferSession
-    const carts = Array.isArray(incomingCarts) && retiredCartIds.size
-      ? incomingCarts.filter(cart => !retiredCartIds.has(cart?.uuid))
-      : incomingCarts
-    return resolveOrderOptionsCarts(previousCarts, carts).carts
-  }
+  const mergeOrderOptionsCarts = (previous, incoming) =>
+    resolveOrderOptionsCarts(previous, cartTransferSession.filterCarts?.(incoming) ?? incoming).carts
 
   const intervalRetriesRef = useRef(null)
   // The last write that carried an order `type` (see `ignoreStaleTypeResponses`).
@@ -275,21 +232,6 @@ export const OrderProvider = ({
 
   const hasGuestDeliveryAddress = options =>
     [orderTypes.delivery, orderTypes.catering_delivery].includes(Number(options?.type)) && options?.address?.location
-
-  // Order options requests whose callers need to offer a bounded retry.
-  const withOrderOptionsTimeout = (request, timeout) => {
-    const cancelToken = {}
-    let timer
-    const deadline = new Promise((resolve, reject) => {
-      timer = globalThis.setTimeout(() => {
-        // The SDK's cancel token aborts the XHR without settling its promise.
-        reject(Object.assign(new Error('Order options request timed out'), { writeTimeout: true }))
-        cancelToken.cancel?.()
-      }, timeout)
-    })
-    const response = Promise.resolve().then(() => request({ cancelToken }))
-    return Promise.race([response, deadline]).finally(() => globalThis.clearTimeout(timer))
-  }
 
   const requestGuestDelivery = (sync, request, write = false, maximumWait = Infinity) => {
     if (!sync) return request()
@@ -334,8 +276,7 @@ export const OrderProvider = ({
    */
   const refreshOrderOptions = async ({ deferMalformedResponse = false, recovering = false, guestDeliveryOptions, migration, franchiseCartRead = false } = {}) => {
     const sync = getGuestDeliverySync()
-    const pendingTransfers = [...cartTransferSession.pendingTransfers.entries()]
-    const reconcileCarts = pendingTransfers.length > 0
+    const reconcileCarts = cartTransferSession.beginRead?.()
     if (!reconcileCarts && !migration && sync && !sync.finished) return ensureGuestDeliveryAddress()
     const isCurrent = () => currentOrderOptionsSession.current === orderOptionsSession &&
       (!reconcileCarts || currentCartTransferSession.current === cartTransferSession) &&
@@ -402,29 +343,19 @@ export const OrderProvider = ({
 
         if (reconcileCarts) {
           // Only a fresh list can confirm which UUIDs the server retired.
-          const listedUuids = new Set(carts.map(cart => cart.uuid))
-          const retired = new Set()
           if (sequence !== orderOptionsSession.refreshSequence) return
           orderOptionsSession.lastTransferRead = sequence
-          for (const [sourceKey, transfer] of pendingTransfers) {
-            if (cartTransferSession.pendingTransfers.get(sourceKey) !== transfer) continue
-            cartTransferSession.pendingTransfers.delete(sourceKey)
-            for (const uuid of [transfer.sourceUuid, transfer.previousDestinationUuid]) {
-              if (uuid && !listedUuids.has(uuid)) retired.add(uuid)
-            }
-          }
-          retired.forEach(uuid => cartTransferSession.retiredCartIds.add(uuid))
+          const reconciled = reconcileCarts(carts)
           setState(prevState => {
             if (!isCurrent()) return prevState
-            const currentCarts = Object.fromEntries(Object.entries(prevState.carts).filter(([, cart]) => !retired.has(cart?.uuid)))
             return {
               ...prevState,
               loading: false,
               options: { ...prevState.options, ...options },
-              carts: mergeOrderOptionsCarts(currentCarts, carts)
+              carts: reconciled.merge(prevState.carts)
             }
           })
-          ready = cartTransferSession.pendingTransfers.size === 0
+          ready = reconciled.ready
           return verified
         }
 
@@ -968,34 +899,6 @@ export const OrderProvider = ({
     }
   }
 
-  // The cart selector needs an acknowledged type change and a matching local
-  // draft. A later refresh can replay that draft after a transfer is rolled back.
-  const saveCartOrderType = async ({ type, city_id: cityId }) => {
-    const changes = {
-      type,
-      ...(cityId !== undefined && { city_id: cityId })
-    }
-    const isCurrent = () => currentCartTransferSession.current === cartTransferSession
-    try {
-      if (session.auth && !await updateOrderOptions(changes)) return false
-      if (!isCurrent()) return false
-
-      const storedOptions = await strategy.getItem('options', true)
-      if (!isCurrent()) return false
-      if (session.auth && !storedOptions) return true
-
-      const localOptions = session.auth ? storedOptions : { ...state.options, ...storedOptions }
-      await strategy.setItem('options', { ...localOptions, ...changes }, true)
-      if (!isCurrent()) return false
-      if (!session.auth) {
-        setState(prevState => ({ ...prevState, options: { ...prevState.options, ...changes } }))
-      }
-      return true
-    } catch {
-      return false
-    }
-  }
-
   /**
    * Lets a pickup order proceed without an address. The web marketplace turns
    * this on for a store opened directly by link, or a one-store site; off by
@@ -1015,188 +918,6 @@ export const OrderProvider = ({
    */
   const setExtraUnaddressedOrderTypes = (types) => {
     setExtraUnaddressedOrderTypesState(Array.isArray(types) ? types.map(Number).filter(Number.isFinite) : [])
-  }
-
-  const reconcileBusinessCart = async (fromBusinessId, toBusinessId, {
-    sourceUuid = state.carts[`businessId:${fromBusinessId}`]?.uuid,
-    previousDestinationUuid = state.carts[`businessId:${toBusinessId}`]?.uuid,
-    expectedDestinationUuid,
-    sourceProductIds,
-    franchiseId: transferFranchiseId = franchiseId
-  } = {}) => {
-    const sourceKey = `businessId:${fromBusinessId}`
-    const source = state.carts[sourceKey]
-    const ids = Array.isArray(sourceProductIds)
-      ? sourceProductIds.map(normalizeCartProductId)
-      : source?.uuid === sourceUuid ? getCartProductIds(source) : []
-    const sourceIds = new Set(ids.filter(id => id !== null))
-    const transfer = {
-      sourceUuid,
-      previousDestinationUuid: previousDestinationUuid !== expectedDestinationUuid ? previousDestinationUuid : undefined
-    }
-    const { pendingTransfers } = cartTransferSession
-    pendingTransfers.set(sourceKey, transfer)
-    let verified
-    try {
-      verified = await refreshOrderOptions({ deferMalformedResponse: true })
-      if (!verified?.carts || currentCartTransferSession.current !== cartTransferSession) {
-        throw Object.assign(new Error('Could not verify the cart after the transfer.'), { recoveryFailed: true })
-      }
-    } finally {
-      if (pendingTransfers.get(sourceKey) === transfer) pendingTransfers.delete(sourceKey)
-    }
-    if (sourceUuid && verified.carts.some(cart => cart.uuid === sourceUuid)) return { cart: null, recovered: false }
-    const destination = verified.carts.find(cart => Number(cart.business_id) === Number(toBusinessId))
-    if (!destination) return { cart: null, recovered: false }
-
-    if (sourceUuid && destination.uuid !== sourceUuid) {
-      if (expectedDestinationUuid && destination.uuid === expectedDestinationUuid) {
-        return { cart: destination, recovered: true }
-      }
-
-      // A confirmed UUID from another tab identifies the cart directly. With
-      // a lost response, product IDs only support attribution for shared_menu.
-      // A key-based strategy can also expose a shared product by coincidence.
-      if (!expectedDestinationUuid && destination.uuid !== previousDestinationUuid &&
-          Array.isArray(destination.products) && destination.products.some(line => sourceIds.has(getCartProductId(line)))) {
-        if (transferFranchiseId && session.token) {
-          try {
-            const reply = await withOrderOptionsTimeout(transport => {
-              if (currentCartTransferSession.current !== cartTransferSession) return
-              return ordering.get(`franchises/${encodeURIComponent(transferFranchiseId)}`, {
-                query: { params: 'id,product_matching' }, json: true, accessToken: session.token, ...transport
-              })
-            }, ORDER_OPTIONS_READ_TIMEOUT_MS)
-            if (currentCartTransferSession.current === cartTransferSession &&
-                reply?.status === 200 && reply.content?.error === false &&
-                reply.content.result?.product_matching === 'shared_menu') {
-              return { cart: destination, recovered: true }
-            }
-          } catch { /* A catalog we cannot verify requires manual review. */ }
-        }
-      }
-    }
-    throw Object.assign(new Error('The destination cart could not be attributed to this transfer.'), {
-      code: 'cart.review_destination'
-    })
-  }
-
-  /**
-   * Move an existing franchise cart. A lost response may follow a committed
-   * transfer, so verify the carts before reporting an uncertain outcome.
-   */
-  const changeBusiness = async (fromBusinessId, toBusinessId, {
-    signal,
-    franchiseId: transferFranchiseId = franchiseId,
-    sourceUuid = state.carts[`businessId:${fromBusinessId}`]?.uuid,
-    previousDestinationUuid = state.carts[`businessId:${toBusinessId}`]?.uuid
-  } = {}) => {
-    const sourceKey = `businessId:${fromBusinessId}`
-    const destinationId = Number(toBusinessId)
-    const destinationKey = `businessId:${destinationId}`
-    const source = state.carts[sourceKey]
-    const sourceProductIds = source?.uuid === sourceUuid ? getCartProductIds(source) : []
-    const { retiredCartIds } = cartTransferSession
-    const isCurrent = () => currentCartTransferSession.current === cartTransferSession
-
-    // Guest carts also belong to an API user and carry a bearer token.
-    if (!session.token) throw new Error('A cart session is required.')
-
-    const recover = async (error) => {
-      if (!isCurrent()) throw error
-      let recovery
-      try {
-        recovery = await reconcileBusinessCart(fromBusinessId, destinationId, {
-          sourceUuid, previousDestinationUuid, sourceProductIds, franchiseId: transferFranchiseId
-        })
-      } catch (readError) {
-        if (readError.code === 'cart.review_destination' && error.code !== 'cart.destination_occupied') throw readError
-        error.recoveryFailed = readError.recoveryFailed
-        throw error
-      }
-      // An explicit occupied rejection must not turn an unrelated cart in
-      // the destination into a successful transfer, even if the source left.
-      if (!recovery.recovered || error.code === 'cart.destination_occupied') throw error
-      return recovery
-    }
-
-    if (!sourceUuid || sourceUuid === 'undefined' || retiredCartIds.has(sourceUuid)) {
-      return recover(Object.assign(new Error('The source cart is unavailable.'), { code: 'cart.not_found' }))
-    }
-
-    const countryCode = await strategy.getItem('country-code')
-    if (!isCurrent()) throw new Error('The cart session changed during the transfer.')
-    const socketId = socket?.getId()
-    const controller = new AbortController()
-    let rejectRequest
-    const cancelled = new Promise((resolve, reject) => { rejectRequest = reject })
-    const cancel = (message) => {
-      controller.abort()
-      rejectRequest(new Error(message))
-    }
-    const abort = () => cancel('The cart transfer was cancelled.')
-    const timeout = globalThis.setTimeout(() => cancel('The cart transfer timed out.'), CART_TRANSFER_TIMEOUT_MS)
-    signal?.addEventListener('abort', abort, { once: true })
-    if (signal?.aborted) abort()
-
-    const send = async () => {
-      if (controller.signal.aborted) return
-      const response = await fetch(`${ordering.root}/carts/${encodeURIComponent(sourceUuid)}/change_business`, {
-        method: 'POST',
-        body: JSON.stringify({ business_id: destinationId }),
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.token}`,
-          ...(ordering.appId && { 'X-APP-X': ordering.appId }),
-          ...(ordering.appInternalName && { 'X-INTERNAL-PRODUCT-X': ordering.appInternalName }),
-          ...(socketId && { 'X-Socket-Id-X': socketId }),
-          ...(countryCode && { 'X-Country-Code-X': countryCode })
-        }
-      })
-      return { response, envelope: await response.json() }
-    }
-
-    let result
-    let apiErrorCode
-    try {
-      const { response, envelope } = await Promise.race([cancelled, send()])
-      if (!isCurrent()) throw new Error('The cart session changed during the transfer.')
-      if (envelope?.error === true) {
-        const message = Array.isArray(envelope.result) ? envelope.result[0] : envelope.result
-        apiErrorCode = Array.isArray(envelope.error_codes) ? envelope.error_codes[0] : undefined
-        throw Object.assign(new Error(typeof message === 'string' ? message : 'Could not move the cart.'), { code: apiErrorCode })
-      }
-      result = envelope?.result
-      const { cart, unavailable, discarded } = result ?? {}
-      if (!response.ok || envelope?.error !== false ||
-          !cart?.uuid || cart.uuid === sourceUuid || cart.business_id !== destinationId ||
-          !Array.isArray(cart.products) || !Number.isFinite(cart.total) ||
-          !hasCartTransferDetails(unavailable, discarded)) {
-        throw new Error('Invalid cart transfer response.')
-      }
-    } catch (cause) {
-      const error = cause instanceof Error ? cause : new Error('Could not move the cart.')
-      if (apiErrorCode && apiErrorCode !== 'cart.not_found' && apiErrorCode !== 'cart.destination_occupied') throw error
-      return recover(error)
-    } finally {
-      globalThis.clearTimeout(timeout)
-      signal?.removeEventListener('abort', abort)
-    }
-
-    const { cart, unavailable, discarded } = result
-    retiredCartIds.add(sourceUuid)
-    if (previousDestinationUuid && previousDestinationUuid !== cart.uuid) retiredCartIds.add(previousDestinationUuid)
-    setState(prevState => {
-      if (currentCartTransferSession.current !== cartTransferSession || retiredCartIds.has(cart.uuid)) return prevState
-      const { carts } = prevState
-      const withoutSource = carts[sourceKey]?.uuid === sourceUuid ? withoutCart(carts, sourceKey) : carts
-      const currentDestinationUuid = carts[destinationKey]?.uuid
-      const nextCarts = retiredCartIds.has(currentDestinationUuid) ? withoutCart(withoutSource, destinationKey) : withoutSource
-      return { ...prevState, carts: mergeCartResult(nextCarts, cart) }
-    })
-    events.emit('cart_updated', cart)
-    return { cart, unavailable, discarded }
   }
 
   /**
@@ -2436,13 +2157,13 @@ export const OrderProvider = ({
    */
   useEffect(() => {
     const handleCartUpdate = (cart) => {
-      if (currentCartTransferSession.current.retiredCartIds.has(cart?.uuid)) return
+      if (currentCartTransferSession.current.isRetired?.(cart?.uuid)) return
       if (!isDisableToast) {
         showToast(ToastType.Info, t('UPDATING_CART_INFO', 'Updating cart information...'))
       }
 
       setState(prevState => {
-        if (currentCartTransferSession.current.retiredCartIds.has(cart?.uuid)) return prevState
+        if (currentCartTransferSession.current.isRetired?.(cart?.uuid)) return prevState
         if (!cart || typeof cart !== 'object' || !cart.business_id) {
           console.warn('Invalid cart data received from socket:', cart)
           return prevState
@@ -2528,14 +2249,30 @@ export const OrderProvider = ({
     }
   }, [socket, session.auth, session.loading, customerState?.user?.id, session?.user?.id])
 
+  // Capture one buyer's session. The optional franchise controller supplies retirement markers;
+  // asynchronous updates from an earlier buyer must never change this provider's carts or options.
+  const getCartTransferAccess = () => {
+    const isCurrent = () => currentCartTransferSession.current === cartTransferSession
+    return {
+      strategy,
+      franchiseId,
+      markers: cartTransferSession,
+      isCurrent,
+      applyCarts: update => setState(prev => {
+        if (!isCurrent()) return prev
+        const carts = update(prev.carts)
+        return carts === prev.carts ? prev : { ...prev, carts }
+      }),
+      applyOptions: changes => setState(prev => isCurrent() ? { ...prev, options: { ...prev.options, ...changes } } : prev)
+    }
+  }
+
   const functions = {
     refreshOrderOptions,
     ensureGuestDeliveryAddress,
     changeAddress,
-    changeBusiness,
-    reconcileBusinessCart,
+    getCartTransferAccess,
     changeType,
-    saveCartOrderType,
     changeMoment,
     updateOrderOptions,
     addProduct,
@@ -2641,10 +2378,8 @@ export const useOrder = () => {
   const functionsPlaceholders = {
     refreshOrderOptions: warningMessage,
     changeAddress: warningMessage,
-    changeBusiness: warningMessage,
-    reconcileBusinessCart: warningMessage,
+    getCartTransferAccess: warningMessage,
     changeType: warningMessage,
-    saveCartOrderType: warningMessage,
     changeMoment: warningMessage,
     addProduct: warningMessage,
     removeProduct: warningMessage,

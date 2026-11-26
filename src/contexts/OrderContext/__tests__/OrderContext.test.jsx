@@ -1,6 +1,7 @@
 import React from 'react'
 import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useCartTransfer } from '../cartTransfer'
 import { parseApiJsonBody } from '../../../utils/parseApiJsonBody'
 import { MultiCartCreate } from '../../../components/MultiCartCreate'
 
@@ -119,6 +120,13 @@ let orderActions
 
 const OrderProbe = () => {
   [orderState, orderActions] = useOrder()
+  return null
+}
+
+const TransferProbe = () => {
+  const [state, actions] = useOrder()
+  orderState = state
+  orderActions = { ...actions, ...useCartTransfer() }
   return null
 }
 
@@ -577,7 +585,7 @@ describe('OrderContext saveCartOrderType', () => {
     removeItem: vi.fn(async key => { if (key === 'options') previousOptions = null })
   }
   const answer = options => ({ status: 200, content: { error: false, result: { ...options, carts: [] } } })
-  const renderProvider = () => render(<OrderProvider strategy={strategy}><OrderProbe /></OrderProvider>)
+  const renderProvider = () => render(<OrderProvider strategy={strategy}><TransferProbe /></OrderProvider>)
 
   beforeEach(() => {
     mocks.orderOptionsSave.mockReset()
@@ -736,7 +744,7 @@ describe('OrderContext changeBusiness', () => {
   const successResponse = { ok: true, json: async () => ({ error: false, result }) }
 
   const prepare = async () => {
-    const view = render(<OrderProvider strategy={strategy}><OrderProbe /></OrderProvider>)
+    const view = render(<OrderProvider strategy={strategy}><TransferProbe /></OrderProvider>)
     await act(async () => orderActions.setStateValues({ carts: initialCarts }))
     return view
   }
@@ -837,7 +845,7 @@ describe('OrderContext changeBusiness', () => {
     const probes = {}
     const Probe = ({ tab }) => {
       const [state, actions] = useOrder()
-      probes[tab] = { state, actions }
+      probes[tab] = { state, actions: { ...actions, ...useCartTransfer() } }
       return null
     }
     render(
@@ -944,7 +952,7 @@ describe('OrderContext changeBusiness', () => {
       accessToken: 'session-token'
     }))
     mocks.sessionToken = 'next-buyer-token'
-    view.rerender(<OrderProvider strategy={strategy}><OrderProbe /></OrderProvider>)
+    view.rerender(<OrderProvider strategy={strategy}><TransferProbe /></OrderProvider>)
     await act(async () => {
       finishStrategy(franchiseResponse('shared_menu'))
       await transfer
@@ -1016,7 +1024,7 @@ describe('OrderContext changeBusiness', () => {
     const post = vi.fn()
     vi.stubGlobal('fetch', post)
     mocks.orderOptionsGet.mockResolvedValueOnce(listResponse([cart]))
-    render(<OrderProvider strategy={strategy}><OrderProbe /></OrderProvider>)
+    render(<OrderProvider strategy={strategy}><TransferProbe /></OrderProvider>)
     await act(async () => {
       await expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).rejects.toMatchObject({ code: 'cart.review_destination' })
     })
@@ -1156,7 +1164,7 @@ describe('OrderContext changeBusiness', () => {
     let transfer
     await act(async () => { transfer = orderActions.changeBusiness(5, 6, { franchiseId: 22 }) })
     mocks.sessionToken = 'new-session-token'
-    view.rerender(<OrderProvider strategy={strategy}><OrderProbe /></OrderProvider>)
+    view.rerender(<OrderProvider strategy={strategy}><TransferProbe /></OrderProvider>)
     await act(async () => orderActions.setStateInitialValues())
     await act(async () => {
       finishRequest(successResponse)
@@ -1175,7 +1183,7 @@ describe('OrderContext options read lifecycle', () => {
     removeItem: vi.fn(async key => { if (key === 'options') storedOptions = null })
   }
   const response = (type, carts = []) => ({ status: 200, content: { error: false, result: { type, carts } } })
-  const renderProvider = (props = {}) => <OrderProvider strategy={strategy} {...props}><OrderProbe /></OrderProvider>
+  const renderProvider = (props = {}, Probe = OrderProbe) => <OrderProvider strategy={strategy} {...props}><Probe /></OrderProvider>
 
   beforeEach(() => {
     storedOptions = null
@@ -1336,13 +1344,13 @@ describe('OrderContext options read lifecycle', () => {
       .mockResolvedValueOnce(response(2, [source]))
       .mockResolvedValueOnce(response(2, [destination]))
       .mockResolvedValueOnce(response(2, [destination, added]))
-    const view = render(renderProvider())
+    const view = render(renderProvider({}, TransferProbe))
     await waitFor(() => expect(orderState.orderOptionsReady).toBe(true))
     await act(async () => {
       await orderActions.reconcileBusinessCart(5, 6, { expectedDestinationUuid: destination.uuid })
     })
 
-    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+    view.rerender(renderProvider({ franchiseMenuFirst: true }, TransferProbe))
     await act(async () => { await orderActions.refreshOrderOptions() })
     expect(orderState.carts).toEqual({ 'businessId:6': destination, 'businessId:7': added })
   })

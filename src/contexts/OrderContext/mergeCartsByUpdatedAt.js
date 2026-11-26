@@ -54,3 +54,14 @@ export const resolveOrderOptionsCarts = (prevCarts, carts) => {
   }
   return { apply: true, carts: mergeCartsFromList(prevCarts, carts) }
 }
+
+/**
+ * The carts without one of them, as a new object: the order's carts are never
+ * changed in place, so who reads the order without the copy (useOrderState)
+ * sees every change.
+ */
+export const withoutCart = (carts, key) => {
+  const next = { ...carts }
+  delete next[key]
+  return next
+}
