@@ -100,7 +100,8 @@ export const OrderingThemeProvider = ({ children, settings, isValidColor, noVali
         result = res?.result
       }
       if (!error) {
-        result = noValidateColors ? result : validateFixColors(result)
+        const isThemeV2 = result?.values?.version === 2
+        result = noValidateColors || isThemeV2 ? result : validateFixColors(result)
         setState({
           ...state,
           theme: result?.values,
