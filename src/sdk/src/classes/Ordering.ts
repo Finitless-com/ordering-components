@@ -21,6 +21,9 @@ const stripTrailingSlashes = (url: string) => typeof url === 'string' ? url.repl
 
 const joinUrl = (root: string, path: string) => `${stripTrailingSlashes(root)}/${String(path ?? '').replace(/^\/+/, '')}`
 
+// A GET that gets no answer in this time fails (see makeRequest), so the screen waiting on it can show its error.
+const GET_TIMEOUT_MS = 30000
+
 interface SettingProps {
   url?: string
   version?: string
@@ -301,6 +304,17 @@ export class Ordering {
       }
       xhr.onerror = function (err) {
         reject(err)
+      }
+      /**
+       * A request that never answers holds every screen waiting on it (a skeleton for good): a GET, which
+       * is safe to give up on, ends after GET_TIMEOUT_MS unless the call sets `timeout` (0: no limit).
+       */
+      const timeout = options.timeout !== undefined ? options.timeout : (method === 'GET' ? GET_TIMEOUT_MS : 0)
+      if (timeout > 0) {
+        xhr.timeout = timeout
+        xhr.ontimeout = function () {
+          reject(new Error('Request timed out'))
+        }
       }
       if (options.json) {
         xhr.setRequestHeader('Content-Type', 'application/json')
