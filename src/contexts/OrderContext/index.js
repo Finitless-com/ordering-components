@@ -34,6 +34,7 @@ dayjs.extend(utc)
 const REFERRAL_MAX_PENDING = 20
 const GUEST_DELIVERY_DEADLINE_MS = 15000
 const CART_TRANSFER_TIMEOUT_MS = 12000
+const ORDER_OPTIONS_READ_TIMEOUT_MS = 12000
 
 /**
  * Create OrderContext
@@ -62,6 +63,17 @@ const hasCartTransferDetails = (unavailable, discarded) => (
   Array.isArray(discarded?.wallets) && discarded.wallets.every(wallet => Number.isInteger(wallet?.id)) &&
   Array.isArray(discarded?.context) && discarded.context.every(item => typeof item?.field === 'string' && item.field.trim())
 )
+
+// In the normal cart payload id is the product ID, while line_id identifies
+// the row. Some payloads also carry product_id explicitly.
+const normalizeCartProductId = value => {
+  if (typeof value !== 'string' && typeof value !== 'number') return null
+  const id = Number(value)
+  return Number.isSafeInteger(id) && id > 0 ? id : null
+}
+
+const getCartProductId = line => normalizeCartProductId(line?.product_id ?? line?.id)
+const getCartProductIds = cart => Array.isArray(cart?.products) ? cart.products.map(getCartProductId) : []
 
 export const OrderContext = createContext()
 
@@ -202,9 +214,18 @@ export const OrderProvider = ({
   const currentCartTransferSession = useRef(cartTransferSession)
   currentCartTransferSession.current = cartTransferSession
   const [orderOptionsLoad, setOrderOptionsLoad] = useState(null)
-  const orderOptionsStatus = orderOptionsLoad?.session === cartTransferSession
-    ? orderOptionsLoad.status
-    : session.loading || session.token || session.auth ? 'loading' : 'ready'
+  const hasLocalOptions = !session.loading && !session.token && !session.auth
+  const currentOptionsLoad = orderOptionsLoad?.session === cartTransferSession ? orderOptionsLoad : null
+  const orderOptionsStatus = currentOptionsLoad?.status ?? (hasLocalOptions ? 'ready' : 'loading')
+  const orderOptionsReady = currentOptionsLoad?.ready ?? hasLocalOptions
+  const setOrderOptionsStatus = status => setOrderOptionsLoad(previous => {
+    if (currentCartTransferSession.current !== cartTransferSession) return previous
+    return {
+      session: cartTransferSession,
+      status,
+      ready: status === 'ready' || hasLocalOptions || (previous?.session === cartTransferSession && previous.ready)
+    }
+  })
 
   const mergeOrderOptionsCarts = (previousCarts, incomingCarts) => {
     const { retiredCartIds } = cartTransferSession
@@ -253,7 +274,8 @@ export const OrderProvider = ({
         cancelToken.cancel?.()
       }, timeout)
     })
-    return Promise.race([request({ cancelToken }), deadline]).finally(() => globalThis.clearTimeout(timer))
+    const response = Promise.resolve().then(() => request({ cancelToken }))
+    return Promise.race([response, deadline]).finally(() => globalThis.clearTimeout(timer))
   }
 
   const requestGuestDelivery = (sync, request, write = false) => {
@@ -304,7 +326,7 @@ export const OrderProvider = ({
     const isCurrent = () => currentCartTransferSession.current === cartTransferSession &&
       (!migration || isCurrentGuestDeliverySync(migration))
     const sequence = ++cartTransferSession.refreshSequence
-    setOrderOptionsLoad({ session: cartTransferSession, status: 'loading' })
+    setOrderOptionsStatus('loading')
     let ready = false
     let verified
     try {
@@ -340,9 +362,9 @@ export const OrderProvider = ({
       }
 
       const getOptions = transport => ordering.setAccessToken(session.token).orderOptions().get({ ...options, ...transport })
-      const res = await (reconcileCarts
-        ? withOrderOptionsTimeout(getOptions, CART_TRANSFER_TIMEOUT_MS)
-        : requestGuestDelivery(migration, getOptions))
+      const res = await (migration && !reconcileCarts
+        ? requestGuestDelivery(migration, getOptions)
+        : withOrderOptionsTimeout(getOptions, ORDER_OPTIONS_READ_TIMEOUT_MS))
       if (!isCurrent()) return false
       const status = res?.status
       // Read the sentinel before the SDK casts its result on HTTP 200.
@@ -553,7 +575,7 @@ export const OrderProvider = ({
       setState(prevState => ({ ...prevState, loading: false }))
     } finally {
       if (isCurrent() && sequence === cartTransferSession.refreshSequence) {
-        setOrderOptionsLoad({ session: cartTransferSession, status: ready ? 'ready' : 'error' })
+        setOrderOptionsStatus(ready ? 'ready' : 'error')
       }
     }
   }
@@ -569,6 +591,7 @@ export const OrderProvider = ({
     }
     const sync = { token: session.token, userId: session.user.id, failed: false, deadline: Date.now() + GUEST_DELIVERY_DEADLINE_MS }
     guestDeliverySync.current = sync
+    setOrderOptionsStatus('loading')
     sync.promise = (async () => {
       const options = await strategy.getItem('options', true)
       if (!isCurrentGuestDeliverySync(sync)) return false
@@ -576,7 +599,10 @@ export const OrderProvider = ({
       const saved = await refreshOrderOptions({ recovering: true, guestDeliveryOptions: options, migration: sync })
       return saved === true
     })().catch(() => {
-      if (isCurrentGuestDeliverySync(sync)) setState(prevState => ({ ...prevState, loading: false }))
+      if (isCurrentGuestDeliverySync(sync)) {
+        setState(prevState => ({ ...prevState, loading: false }))
+        setOrderOptionsStatus('error')
+      }
       return false
     }).then(result => {
       if (sync.selection) return waitForGuestDeliverySelection(sync)
@@ -965,25 +991,44 @@ export const OrderProvider = ({
   const reconcileBusinessCart = async (fromBusinessId, toBusinessId, {
     sourceUuid = state.carts[`businessId:${fromBusinessId}`]?.uuid,
     previousDestinationUuid = state.carts[`businessId:${toBusinessId}`]?.uuid,
-    expectedDestinationUuid
+    expectedDestinationUuid,
+    sourceProductIds
   } = {}) => {
     const sourceKey = `businessId:${fromBusinessId}`
+    const source = state.carts[sourceKey]
+    const ids = Array.isArray(sourceProductIds)
+      ? sourceProductIds.map(normalizeCartProductId)
+      : source?.uuid === sourceUuid ? getCartProductIds(source) : []
+    const sourceIds = new Set(ids.filter(id => id !== null))
     const transfer = {
       sourceUuid,
       previousDestinationUuid: previousDestinationUuid !== expectedDestinationUuid ? previousDestinationUuid : undefined
     }
-    cartTransferSession.pendingTransfers.set(sourceKey, transfer)
-    const verified = await refreshOrderOptions({ deferMalformedResponse: true })
-    if (!verified?.carts || currentCartTransferSession.current !== cartTransferSession) {
-      throw Object.assign(new Error('Could not verify the cart after the transfer.'), { recoveryFailed: true })
+    const { pendingTransfers } = cartTransferSession
+    pendingTransfers.set(sourceKey, transfer)
+    let verified
+    try {
+      verified = await refreshOrderOptions({ deferMalformedResponse: true })
+      if (!verified?.carts || currentCartTransferSession.current !== cartTransferSession) {
+        throw Object.assign(new Error('Could not verify the cart after the transfer.'), { recoveryFailed: true })
+      }
+    } finally {
+      if (pendingTransfers.get(sourceKey) === transfer) pendingTransfers.delete(sourceKey)
     }
-    const sourceRetired = sourceUuid && !verified.carts.some(cart => cart.uuid === sourceUuid)
-    const destination = sourceRetired && verified.carts.find(cart => (
-      Number(cart.business_id) === Number(toBusinessId) &&
-      cart.uuid !== sourceUuid &&
-      (expectedDestinationUuid ? cart.uuid === expectedDestinationUuid : cart.uuid !== previousDestinationUuid)
-    ))
-    return destination ? { cart: destination, recovered: true } : { cart: null, recovered: false }
+    if (sourceUuid && verified.carts.some(cart => cart.uuid === sourceUuid)) return { cart: null, recovered: false }
+    const destination = verified.carts.find(cart => Number(cart.business_id) === Number(toBusinessId))
+    if (!destination) return { cart: null, recovered: false }
+
+    const confirmedDestination = expectedDestinationUuid
+      ? destination.uuid === expectedDestinationUuid
+      : destination.uuid !== previousDestinationUuid &&
+        Array.isArray(destination.products) && destination.products.some(line => sourceIds.has(getCartProductId(line)))
+    if (sourceUuid && destination.uuid !== sourceUuid && confirmedDestination) {
+      return { cart: destination, recovered: true }
+    }
+    throw Object.assign(new Error('The destination cart could not be attributed to this transfer.'), {
+      code: 'cart.review_destination'
+    })
   }
 
   /**
@@ -998,6 +1043,8 @@ export const OrderProvider = ({
     const sourceKey = `businessId:${fromBusinessId}`
     const destinationId = Number(toBusinessId)
     const destinationKey = `businessId:${destinationId}`
+    const source = state.carts[sourceKey]
+    const sourceProductIds = source?.uuid === sourceUuid ? getCartProductIds(source) : []
     const { retiredCartIds } = cartTransferSession
     const isCurrent = () => currentCartTransferSession.current === cartTransferSession
 
@@ -1008,8 +1055,11 @@ export const OrderProvider = ({
       if (!isCurrent()) throw error
       let recovery
       try {
-        recovery = await reconcileBusinessCart(fromBusinessId, destinationId, { sourceUuid, previousDestinationUuid })
+        recovery = await reconcileBusinessCart(fromBusinessId, destinationId, {
+          sourceUuid, previousDestinationUuid, sourceProductIds
+        })
       } catch (readError) {
+        if (readError.code === 'cart.review_destination' && error.code !== 'cart.destination_occupied') throw readError
         error.recoveryFailed = readError.recoveryFailed
         throw error
       }
@@ -2279,7 +2329,7 @@ export const OrderProvider = ({
     if (session.auth) {
       if (waitForGuestDeliveryAddress) {
         ensureGuestDeliveryAddress().then(saved => {
-          if (saved === null) refreshOrderOptions()
+          if (saved === null && currentCartTransferSession.current === cartTransferSession) refreshOrderOptions()
         })
       } else {
         setState(prevState => (prevState.loading ? prevState : { ...prevState, loading: true }))
@@ -2288,7 +2338,7 @@ export const OrderProvider = ({
     } else {
       guestDeliverySync.current = null
     }
-  }, [session.auth, session.loading, languageState.loading, ordering?.project, session?.user?.id])
+  }, [session.auth, session.loading, languageState.loading, cartTransferSession])
 
   useEffect(() => {
     if (session.loading || configState.loading) return
@@ -2463,7 +2513,7 @@ export const OrderProvider = ({
     setExtraUnaddressedOrderTypes
   }
 
-  const orderState = useMemo(() => ({ ...state, orderOptionsStatus }), [state, orderOptionsStatus])
+  const orderState = useMemo(() => ({ ...state, orderOptionsStatus, orderOptionsReady }), [state, orderOptionsStatus, orderOptionsReady])
   const copyState = { ...JSON.parse(JSON.stringify(orderState)), pickupWithoutAddress, extraUnaddressedOrderTypes }
 
   const latestFunctions = useRef(functions)
