@@ -870,6 +870,25 @@ describe('OrderContext changeBusiness', () => {
     expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': other })
   })
 
+  it.each([
+    ['unavailable line', { unavailable: [null] }],
+    ['discarded context item', { discarded: { ...result.discarded, context: [null] } }]
+  ])('recovers when the successful POST contains a malformed %s', async (_label, malformed) => {
+    const post = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ error: false, result: { ...result, ...malformed } })
+    })
+    vi.stubGlobal('fetch', post)
+    mocks.orderOptionsGet.mockResolvedValueOnce(listResponse([cart, other]))
+    await prepare()
+
+    await act(async () => {
+      await expect(orderActions.changeBusiness(5, 6)).resolves.toEqual({ cart, recovered: true })
+    })
+    expect(post).toHaveBeenCalledOnce()
+    expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': other })
+  })
+
   it('times out a hung reconciliation read and verifies the cart on retry', async () => {
     vi.useFakeTimers()
     const abortRead = vi.fn()

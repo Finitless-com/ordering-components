@@ -50,6 +50,19 @@ const withoutCart = (carts, key) => {
   return next
 }
 
+// The transfer summary looks up removed lines by their original IDs, labels
+// their reason, and reads each discarded benefit ID or context field.
+const hasCartTransferDetails = (unavailable, discarded) => (
+  Array.isArray(unavailable) && unavailable.every(line =>
+    Number.isInteger(line?.line_id) &&
+    (line.product_id === null || Number.isInteger(line.product_id)) &&
+    typeof line.reason === 'string'
+  ) &&
+  Array.isArray(discarded?.offers) && discarded.offers.every(offer => Number.isInteger(offer?.id)) &&
+  Array.isArray(discarded?.wallets) && discarded.wallets.every(wallet => Number.isInteger(wallet?.id)) &&
+  Array.isArray(discarded?.context) && discarded.context.every(item => typeof item?.field === 'string' && item.field.trim())
+)
+
 export const OrderContext = createContext()
 
 /**
@@ -1030,8 +1043,7 @@ export const OrderProvider = ({
       if (!response.ok || envelope?.error !== false ||
           !cart?.uuid || cart.uuid === sourceUuid || cart.business_id !== destinationId ||
           !Array.isArray(cart.products) || !Number.isFinite(cart.total) ||
-          !Array.isArray(unavailable) || !Array.isArray(discarded?.offers) ||
-          !Array.isArray(discarded?.wallets) || !Array.isArray(discarded?.context)) {
+          !hasCartTransferDetails(unavailable, discarded)) {
         throw new Error('Invalid cart transfer response.')
       }
     } catch (cause) {
