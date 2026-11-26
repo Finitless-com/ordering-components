@@ -870,6 +870,39 @@ describe('OrderContext changeBusiness', () => {
     expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': other })
   })
 
+  it('times out a hung reconciliation read and verifies the cart on retry', async () => {
+    vi.useFakeTimers()
+    const abortRead = vi.fn()
+    const post = vi.fn().mockReturnValue(new Promise(() => {}))
+    vi.stubGlobal('fetch', post)
+    mocks.orderOptionsGet
+      .mockImplementationOnce(({ cancelToken } = {}) => {
+        if (cancelToken) cancelToken.cancel = abortRead
+        return new Promise(() => {})
+      })
+      .mockResolvedValueOnce(listResponse([cart, other]))
+
+    try {
+      await prepare()
+      await act(async () => {
+        const outcome = expect(orderActions.changeBusiness(5, 6)).rejects.toMatchObject({ recoveryFailed: true })
+        await vi.advanceTimersByTimeAsync(24000)
+        await outcome
+      })
+      expect(abortRead).toHaveBeenCalledOnce()
+      expect(orderState.orderOptionsStatus).toBe('error')
+      expect(orderState.carts).toEqual(initialCarts)
+      await act(async () => {
+        await expect(orderActions.refreshOrderOptions()).resolves.toEqual({ status: 200, carts: [cart, other] })
+      })
+      expect(orderState.orderOptionsStatus).toBe('ready')
+      expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': other })
+      expect(post).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('propagates a caller abort while reconciling the server state', async () => {
     const caller = new AbortController()
     const post = vi.fn().mockImplementation((url, { signal }) => new Promise((resolve, reject) => {

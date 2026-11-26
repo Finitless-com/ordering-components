@@ -229,8 +229,8 @@ export const OrderProvider = ({
   const hasGuestDeliveryAddress = options =>
     [orderTypes.delivery, orderTypes.catering_delivery].includes(Number(options?.type)) && options?.address?.location
 
-  // The ordinary (no guest delivery migration) order options write, with its own deadline.
-  const withWriteTimeout = (request, timeout) => {
+  // Order options requests whose callers need to offer a bounded retry.
+  const withOrderOptionsTimeout = (request, timeout) => {
     const cancelToken = {}
     let timer
     const deadline = new Promise((resolve, reject) => {
@@ -327,7 +327,9 @@ export const OrderProvider = ({
       }
 
       const getOptions = transport => ordering.setAccessToken(session.token).orderOptions().get({ ...options, ...transport })
-      const res = await requestGuestDelivery(migration, getOptions)
+      const res = await (reconcileCarts
+        ? withOrderOptionsTimeout(getOptions, CART_TRANSFER_TIMEOUT_MS)
+        : requestGuestDelivery(migration, getOptions))
       if (!isCurrent()) return false
       const status = res?.status
       // Read the sentinel before the SDK casts its result on HTTP 200.
@@ -865,7 +867,7 @@ export const OrderProvider = ({
           Object.keys(changes).every(key => key === 'type' || (key === 'city_id' && changes[key] === null))
         const { content: { error, result }, status } = await (migration || !orderOptionsWriteTimeout || !onlyType
           ? requestGuestDelivery(migration, save, true)
-          : withWriteTimeout(save, orderOptionsWriteTimeout))
+          : withOrderOptionsTimeout(save, orderOptionsWriteTimeout))
         if (!isCurrent()) return false
         if (!error) {
           if (recovering && countryCode) await strategy.setItem('country-code', countryCode)
