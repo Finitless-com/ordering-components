@@ -1290,6 +1290,22 @@ describe('OrderContext options read lifecycle', () => {
     expect(mocks.orderOptionsGet).toHaveBeenCalledOnce()
   })
 
+  it('refreshes again when the language finishes loading after a ready policy change', async () => {
+    mocks.orderOptionsGet.mockResolvedValueOnce(response(2)).mockResolvedValueOnce(response(1))
+    const view = render(renderProvider())
+    await waitFor(() => expect(orderState.orderOptionsReady).toBe(true))
+    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+    expect(orderState.orderOptionsReady).toBe(true)
+
+    mocks.languageLoading = true
+    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+    mocks.languageLoading = false
+    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+
+    await waitFor(() => expect(orderState.options.type).toBe(1))
+    expect(mocks.orderOptionsGet).toHaveBeenCalledTimes(2)
+  })
+
   it('releases loading from a discarded read when the verified checkout policy changes', async () => {
     let finishOld
     mocks.orderOptionsGet

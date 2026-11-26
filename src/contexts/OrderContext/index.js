@@ -2379,6 +2379,7 @@ export const OrderProvider = ({
     if (session.loading || languageState.loading || !ordering?.project) return
     if (session.auth) {
       if (readyBeforePolicyChange) {
+        setOrderOptionsStatus('ready')
         if (orderOptionsLoad.status === 'loading') {
           setState(prevState => prevState.loading ? { ...prevState, loading: false } : prevState)
         }
