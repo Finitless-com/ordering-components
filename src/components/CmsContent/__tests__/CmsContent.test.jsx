@@ -43,9 +43,46 @@ describe('CmsContent', () => {
     await waitFor(() => {
       expect(onChangeMetaTag).toHaveBeenCalledWith(
         'About our marketplace',
-        'Learn more about our marketplace.'
+        'Learn more about our marketplace.',
+        expect.objectContaining({ body: '<p>CMS page</p>' })
       )
     })
+  })
+
+  it('passes the page name, update date and SEO fields to the view, and the whole page to onChangeMetaTag', async () => {
+    const onChangeMetaTag = vi.fn()
+    const page = {
+      body: '<p>CMS page</p>',
+      name: 'About us',
+      updated_at: '2024-05-20 21:35:49',
+      seo_title: 'About our marketplace',
+      seo_description: 'Learn more about our marketplace.'
+    }
+    acms.mockPagesGet.mockResolvedValueOnce({ content: { error: false, result: page } })
+
+    renderController(CmsContent, { pageSlug: 'about-us', onChangeMetaTag })
+
+    await waitFor(() => {
+      expect(lastControllerProps.cmsState.name).toBe('About us')
+    })
+    expect(lastControllerProps.cmsState).toMatchObject({
+      body: '<p>CMS page</p>',
+      updated_at: '2024-05-20 21:35:49',
+      seo_title: 'About our marketplace',
+      seo_description: 'Learn more about our marketplace.'
+    })
+    expect(onChangeMetaTag).toHaveBeenCalledWith('About our marketplace', 'Learn more about our marketplace.', page)
+  })
+
+  it('has null name, date and SEO fields when the page lacks them', async () => {
+    const onChangeMetaTag = vi.fn()
+    renderController(CmsContent, { pageSlug: 'about-us', onChangeMetaTag })
+
+    await waitFor(() => {
+      expect(lastControllerProps.cmsState.body).toBe('<p>CMS page</p>')
+    })
+    expect(lastControllerProps.cmsState).toMatchObject({ name: null, updated_at: null, seo_title: null, seo_description: null })
+    expect(onChangeMetaTag).toHaveBeenCalledWith(undefined, undefined, { body: '<p>CMS page</p>' })
   })
 
   it('reloads CMS content when the page slug changes', async () => {
