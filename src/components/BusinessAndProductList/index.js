@@ -927,9 +927,11 @@ export const BusinessAndProductList = (props) => {
         setBusinessState((prevState) => ({ ...prevState, loading: false }))
         return
       }
+      // a new request ends the previous failure: Retry shows the loading state again, not the old error
       setBusinessState((prevState) => ({
         ...prevState,
         loading: true,
+        error: null,
         ...(trackBusinessMenuMoment ? { menuLoad: { ...menuLoad, status: 'loading' } } : {})
       }))
       const source = {}

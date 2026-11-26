@@ -14,4 +14,6 @@ export interface RequestOptionsProps {
   api?: TypeApi
   conditions?: ConditionInterface[]
   mode?: string
+  // ms a request may wait for its answer (a GET defaults to 30 s, a write to no limit); 0: no limit
+  timeout?: number
 }
