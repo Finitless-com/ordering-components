@@ -177,6 +177,20 @@ export const OrderProvider = ({
     alert
   })
 
+  // The API retires the source UUID and any empty destination cart. Order
+  // options responses already in flight and socket events can still carry them.
+  const cartTransferSession = useMemo(() => ({ retiredCartIds: new Set() }), [ordering?.project, session.token, session.user?.id, customerState?.user?.id])
+  const currentCartTransferSession = useRef(cartTransferSession)
+  currentCartTransferSession.current = cartTransferSession
+
+  const mergeOrderOptionsCarts = (previousCarts, incomingCarts) => {
+    const { retiredCartIds } = cartTransferSession
+    const carts = Array.isArray(incomingCarts) && retiredCartIds.size
+      ? incomingCarts.filter(cart => !retiredCartIds.has(cart?.uuid))
+      : incomingCarts
+    return resolveOrderOptionsCarts(previousCarts, carts).carts
+  }
+
   const intervalRetriesRef = useRef(null)
   // The last write that carried an order `type` (see `ignoreStaleTypeResponses`).
   const typeWriteSeq = useRef(0)
@@ -323,7 +337,7 @@ export const OrderProvider = ({
             return {
               ...prevState,
               options: mergedOptions,
-              carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
+              carts: mergeOrderOptionsCarts(prevState.carts, carts)
             }
           })
         }
@@ -807,7 +821,7 @@ export const OrderProvider = ({
           setState(prevState => ({
             ...prevState,
             options: { ...prevState.options, ...options },
-            carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
+            carts: mergeOrderOptionsCarts(prevState.carts, carts)
           }))
         } else if (!recovering) {
           setAlert({ show: true, content: result, status })
@@ -849,6 +863,73 @@ export const OrderProvider = ({
    */
   const setExtraUnaddressedOrderTypes = (types) => {
     setExtraUnaddressedOrderTypesState(Array.isArray(types) ? types.map(Number).filter(Number.isFinite) : [])
+  }
+
+  /**
+   * Move an existing franchise cart and return the new cart and transfer details.
+   * The caller handles API rejections and decides how to present the details.
+   */
+  const changeBusiness = async (fromBusinessId, toBusinessId) => {
+    const sourceKey = `businessId:${fromBusinessId}`
+    const destinationId = Number(toBusinessId)
+    const destinationKey = `businessId:${destinationId}`
+    const sourceUuid = state.carts[sourceKey]?.uuid
+    const previousDestinationUuid = state.carts[destinationKey]?.uuid
+    const { retiredCartIds } = cartTransferSession
+
+    if (!sourceUuid || sourceUuid === 'undefined' || retiredCartIds.has(sourceUuid)) {
+      throw Object.assign(new Error('The source cart is unavailable.'), { code: 'cart.not_found' })
+    }
+    // Guest carts also belong to an API user and carry a bearer token.
+    if (!session.token) throw new Error('A cart session is required.')
+
+    const checkSession = () => {
+      if (currentCartTransferSession.current !== cartTransferSession) {
+        throw new Error('The cart session changed during the transfer.')
+      }
+    }
+    const countryCode = await strategy.getItem('country-code')
+    checkSession()
+    const socketId = socket?.getId()
+    const response = await fetch(`${ordering.root}/carts/${encodeURIComponent(sourceUuid)}/change_business`, {
+      method: 'POST',
+      body: JSON.stringify({ business_id: destinationId }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.token}`,
+        ...(ordering.appId && { 'X-APP-X': ordering.appId }),
+        ...(ordering.appInternalName && { 'X-INTERNAL-PRODUCT-X': ordering.appInternalName }),
+        ...(socketId && { 'X-Socket-Id-X': socketId }),
+        ...(countryCode && { 'X-Country-Code-X': countryCode })
+      }
+    })
+    const envelope = await response.json().catch(() => null)
+    checkSession()
+    const { error, error_codes: errorCodes, result } = envelope ?? {}
+    if (!response.ok || error) {
+      const message = Array.isArray(result) ? result[0] : result
+      throw Object.assign(new Error(typeof message === 'string' ? message : 'Could not move the cart.'), {
+        code: Array.isArray(errorCodes) ? errorCodes[0] : undefined
+      })
+    }
+
+    const { cart, unavailable, discarded } = result ?? {}
+    if (!cart?.uuid || cart.business_id !== destinationId || !Array.isArray(unavailable) || !discarded) {
+      throw new Error('Invalid cart transfer response.')
+    }
+
+    retiredCartIds.add(sourceUuid)
+    if (previousDestinationUuid && previousDestinationUuid !== cart.uuid) retiredCartIds.add(previousDestinationUuid)
+    setState(prevState => {
+      if (currentCartTransferSession.current !== cartTransferSession || retiredCartIds.has(cart.uuid)) return prevState
+      const { carts } = prevState
+      const withoutSource = carts[sourceKey]?.uuid === sourceUuid ? withoutCart(carts, sourceKey) : carts
+      const currentDestinationUuid = carts[destinationKey]?.uuid
+      const nextCarts = retiredCartIds.has(currentDestinationUuid) ? withoutCart(withoutSource, destinationKey) : withoutSource
+      return { ...prevState, carts: mergeCartResult(nextCarts, cart) }
+    })
+    events.emit('cart_updated', cart)
+    return { cart, unavailable, discarded }
   }
 
   /**
@@ -2081,11 +2162,13 @@ export const OrderProvider = ({
    */
   useEffect(() => {
     const handleCartUpdate = (cart) => {
+      if (currentCartTransferSession.current.retiredCartIds.has(cart?.uuid)) return
       if (!isDisableToast) {
         showToast(ToastType.Info, t('UPDATING_CART_INFO', 'Updating cart information...'))
       }
 
       setState(prevState => {
+        if (currentCartTransferSession.current.retiredCartIds.has(cart?.uuid)) return prevState
         if (!cart || typeof cart !== 'object' || !cart.business_id) {
           console.warn('Invalid cart data received from socket:', cart)
           return prevState
@@ -2143,7 +2226,7 @@ export const OrderProvider = ({
           ...prevState.options,
           ...options
         },
-        carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
+        carts: mergeOrderOptionsCarts(prevState.carts, carts)
       }))
     }
     socket.on('carts_update', handleCartUpdate)
@@ -2154,7 +2237,7 @@ export const OrderProvider = ({
     }
     // The handlers read the state through setState(prev => …): subscribing again on every
     // cart or option change was not needed.
-  }, [socket, isDisableToast, t, showToast])
+  }, [socket, isDisableToast, t, showToast, cartTransferSession])
 
   /**
    * Join to carts room
@@ -2173,6 +2256,7 @@ export const OrderProvider = ({
     refreshOrderOptions,
     ensureGuestDeliveryAddress,
     changeAddress,
+    changeBusiness,
     changeType,
     changeMoment,
     updateOrderOptions,
@@ -2278,6 +2362,7 @@ export const useOrder = () => {
   const functionsPlaceholders = {
     refreshOrderOptions: warningMessage,
     changeAddress: warningMessage,
+    changeBusiness: warningMessage,
     changeType: warningMessage,
     changeMoment: warningMessage,
     addProduct: warningMessage,

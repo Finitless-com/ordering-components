@@ -2,6 +2,7 @@ import React from 'react'
 import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseApiJsonBody } from '../../../utils/parseApiJsonBody'
+import { MultiCartCreate } from '../../../components/MultiCartCreate'
 
 const mocks = vi.hoisted(() => ({
   emit: vi.fn(),
@@ -99,8 +100,6 @@ vi.mock('../../ToastContext', () => ({
 import { OrderProvider, useOrder, useOrderState, useOrderActions } from '../index'
 // eslint-disable-next-line import/first
 import { PurchaseGiftCard } from '../../../components/GiftCard/PurchaseGiftCard'
-
-import { MultiCartCreate } from '../../../components/MultiCartCreate'
 
 let orderState
 let orderActions
@@ -623,6 +622,129 @@ describe('PurchaseGiftCard with real OrderProvider', () => {
   })
 })
 
+describe('OrderContext changeBusiness', () => {
+  const source = { business_id: 5, uuid: 'source-cart', products: [{ line_id: 1 }, { line_id: 2 }] }
+  const previousDestination = { business_id: 6, uuid: 'empty-destination', products: [] }
+  const other = { business_id: 7, uuid: 'other-cart' }
+  const cart = { business_id: 6, uuid: 'new-destination', products: [{ line_id: 3 }], subtotal: 12, total: 15 }
+  const result = {
+    cart,
+    unavailable: [{ line_id: 2, product_id: 9, reason: 'out_of_stock' }],
+    discarded: { offers: [{ id: 8, reason: 'unavailable' }], wallets: [], context: [] }
+  }
+  const initialCarts = { 'businessId:5': source, 'businessId:6': previousDestination, 'businessId:7': other }
+  const strategy = {
+    getItem: vi.fn().mockImplementation(async key => key === 'country-code' ? 'US' : null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+  const successResponse = { ok: true, json: async () => ({ error: false, result }) }
+
+  const prepare = async () => {
+    const view = render(<OrderProvider strategy={strategy}><OrderProbe /></OrderProvider>)
+    await act(async () => orderActions.setStateValues({ carts: initialCarts }))
+    return view
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    mocks.sessionToken = 'session-token'
+    mocks.guest = false
+  })
+
+  it('atomically replaces the source and empty destination for a guest with a session token', async () => {
+    mocks.guest = true
+    mocks.sessionToken = 'guest-token'
+    let finishRequest
+    const request = new Promise(resolve => { finishRequest = resolve })
+    const send = vi.fn().mockReturnValue(request)
+    vi.stubGlobal('fetch', send)
+    await prepare()
+
+    let transfer
+    await act(async () => { transfer = orderActions.changeBusiness(5, 6) })
+
+    expect(orderState.carts).toEqual(initialCarts)
+    const updatedOther = { ...other, products: [{ line_id: 7 }] }
+    await act(async () => orderActions.setStateValues({ carts: { 'businessId:7': updatedOther } }))
+    expect(send).toHaveBeenCalledWith('https://api.test/carts/source-cart/change_business', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ business_id: 6 }),
+      headers: expect.objectContaining({
+        Authorization: 'Bearer guest-token',
+        'X-Socket-Id-X': 'socket-id',
+        'X-Country-Code-X': 'US'
+      })
+    }))
+
+    await act(async () => {
+      finishRequest(successResponse)
+      await expect(transfer).resolves.toEqual(result)
+    })
+    expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': updatedOther })
+  })
+
+  it('rejects with the API error code and preserves all carts', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        error: true,
+        error_codes: ['cart.destination_occupied'],
+        result: ['The destination already has a cart.']
+      })
+    }))
+    await prepare()
+
+    await act(async () => {
+      await expect(orderActions.changeBusiness(5, 6)).rejects.toMatchObject({
+        name: 'Error',
+        code: 'cart.destination_occupied',
+        message: 'The destination already has a cart.'
+      })
+    })
+    expect(orderState.carts).toEqual(initialCarts)
+  })
+
+  it('ignores stale cart data from an in-flight refresh and socket updates', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(successResponse))
+    let finishRefresh
+    mocks.orderOptionsGet.mockReturnValueOnce(new Promise(resolve => { finishRefresh = resolve }))
+    await prepare()
+
+    let refresh
+    await act(async () => { refresh = orderActions.refreshOrderOptions() })
+    await act(async () => { await orderActions.changeBusiness(5, 6) })
+    await act(async () => {
+      finishRefresh({ content: { error: false, result: { carts: [source, previousDestination, other] } } })
+      await refresh
+    })
+
+    const [, updateCart] = mocks.socketOn.mock.calls.findLast(([event]) => event === 'carts_update')
+    await act(async () => {
+      updateCart(source)
+      updateCart({ ...previousDestination, status: 1 })
+    })
+    expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': other })
+  })
+
+  it('discards a transfer response after the session changes', async () => {
+    let finishRequest
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(resolve => { finishRequest = resolve })))
+    const view = await prepare()
+
+    let transfer
+    await act(async () => { transfer = orderActions.changeBusiness(5, 6) })
+    mocks.sessionToken = 'new-session-token'
+    view.rerender(<OrderProvider strategy={strategy}><OrderProbe /></OrderProvider>)
+    await act(async () => orderActions.setStateInitialValues())
+    await act(async () => {
+      finishRequest(successResponse)
+      await expect(transfer).rejects.toBeInstanceOf(Error)
+    })
+    expect(orderState.carts).toEqual({})
+  })
+})
+
 describe('OrderContext state and actions without the copy', () => {
   const strategy = {
     getItem: vi.fn().mockResolvedValue(null),
@@ -770,7 +892,6 @@ describe('OrderContext carts never changed in place', () => {
     expect(cartKeys).toContain('businessId:6')
   })
 })
-
 
 describe('OrderContext referral', () => {
   const NOW = 1793500000000
@@ -1509,9 +1630,9 @@ describe('OrderContext worker pickup and default order type', () => {
   // SERGIO-1681: a write the customer's later change superseded answers late
   describe('a late answer to a superseded type write', () => {
     const deferred = () => {
-      let resolve
-      const promise = new Promise((done) => { resolve = done })
-      return { promise, resolve }
+      let finish
+      const promise = new Promise(resolve => { finish = resolve })
+      return { promise, resolve: finish }
     }
     const answer = (type) => ({ status: 200, content: { error: false, result: { type, carts: [] } } })
 
