@@ -32,10 +32,12 @@ export const OrderingContext = createContext()
  * @param {props} props
  * Use restOfProps on contexts that requiere extra settings that aren't in the sdk
  * This prop doesn't need permission from sdk.
+ * @param {number|false|null} [props.sessionCheckInterval] Period in ms of the poll that syncs the session
+ * with the storage (default 2000: not given keeps it). `0`, `false` or `null` turn the poll off.
  * `supportedOrderTypes`, `franchiseMenuFirst`, `ignoreStaleTypeResponses` and `orderOptionsWriteTimeout` are optional and
  * go to OrderProvider as they are (see its docs); without them nothing changes.
  */
-export const OrderingProvider = ({ Alert, settings, children, enableCouponsRetries = false, initialOptimizationLoad, referralEnabled = true, waitForGuestDeliveryAddress = false, disableWorkerPickup = false, supportedOrderTypes, franchiseMenuFirst = false, ignoreStaleTypeResponses = false, orderOptionsWriteTimeout }) => {
+export const OrderingProvider = ({ Alert, settings, children, enableCouponsRetries = false, initialOptimizationLoad, referralEnabled = true, waitForGuestDeliveryAddress = false, disableWorkerPickup = false, supportedOrderTypes, franchiseMenuFirst = false, ignoreStaleTypeResponses = false, orderOptionsWriteTimeout, sessionCheckInterval }) => {
   const webStrategy = new WebStrategy()
   const restOfSettings = {
     project: settings.project,
@@ -57,7 +59,7 @@ export const OrderingProvider = ({ Alert, settings, children, enableCouponsRetri
                     <UtilsProviders strategy={webStrategy}>
                       <ToastProvider>
                         <ValidationFieldsProvider appId={settings.app_id}>
-                          <SessionProvider strategy={webStrategy}>
+                          <SessionProvider strategy={webStrategy} checkInterval={sessionCheckInterval}>
                             <ReferralProvider
                               strategy={webStrategy}
                               getInitialUrl={getInitialReferralUrl}

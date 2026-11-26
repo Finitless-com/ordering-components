@@ -359,7 +359,7 @@ export const SignupForm = (props) => {
       const res = await response.json()
       if (!res?.error && res?.result?.id) {
         if (referralAttributionSettled(res.referral_attribution)) await consumeReferralCode()
-        login({
+        await login({
           user: res?.result,
           token: res?.result?.session?.access_token
         })
@@ -412,7 +412,7 @@ export const SignupForm = (props) => {
       const { error, result } = content
       if (!error && result?.id) {
         if (referralAttributionSettled(content.referral_attribution)) await consumeReferralCode()
-        login({
+        await login({
           user: result,
           token: result?.session?.access_token
         })

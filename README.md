@@ -36,6 +36,29 @@ git clone --recursive https://github.com/Finitless-com/ordering-app-business-v26
 
 Once added, you can import the components directly from the submodule. This allows you to keep your project and these components separate, making updates and maintenance easier.
 
+## Sign-in props (session and `LoginForm`)
+
+All of these are optional; an app that does not pass them behaves as before.
+
+| Where | Prop | What it does |
+|-------|------|--------------|
+| `OrderingProvider` (web and native) | `sessionCheckInterval` | Period in ms of the poll that compares the stored session with the one in memory (another browser tab that logged in or out, a token replaced from outside). Default `2000`. `0`, `false` or `null` turn the poll **off**: use it in a React Native app, which has a single JS runtime. (`SessionProvider` takes the same value as `checkInterval`.) |
+| `LoginForm` | `requestTimeout` | Time limit in ms of the sign-in request (`POST /auth`). When it expires the request is aborted and `formState` becomes `{ loading: false, result: { error: true, result: <message>, code: 'ERROR_REQUEST_TIMEOUT' } }`. A late answer never signs the user in. Without it there is no client time limit. |
+
+`LoginForm` waits for the session to be stored (`login()` of `useSession`) before calling `handleSuccessLogin` and resolving `handleButtonLoginClick` (it resolves `true`). What the UI receives:
+
+- `formState.loading` stays `true` after a successful sign-in until the app leaves the form (unchanged: a continuous spinner).
+- `loginCompleted` (new prop, `false` by default): `true` once the session is stored. `formState` itself is not modified on success.
+- If the session cannot be stored: `formState = { loading: false, result: { error: true, result: [message], code: 'ERROR_SESSION_STORAGE', reason: <error message> } }`.
+
+The storage poll skips a tick while a `login()` / `logout()` is writing, and ticks never overlap.
+
+## Session ended on the server (HTTP 401) and error answers of `OrderListGroups`
+
+`useOrder()` (and `useOrderActions()`) has one more action, `handleUnauthorized(requestToken)` -> `Promise<boolean>`. It is the single place that decides "this token is dead", the same one `refreshOrderOptions` uses for its own 401: a controller that sent an authenticated request and got HTTP 401 reports it with the token **that request used**. It resolves `true` when it ended the session (on web: clears `token`, `user` and `device_code` from the storage and reloads the page, without calling `logout()`; on the other runtimes: calls `logout()`), and `false` when it did nothing: the token is no longer the session's, nobody is signed in, or a 401 of that token already started the logout (several requests that fail together end the session once). `OrderListGroups` reports every 401 of its order requests; an app does not need to pass anything.
+
+An error answer of the API (`error: true`, any status below 500: 401, 403, ...) no longer breaks `OrderListGroups`: the tab's `error` (`ordersGroup[tab].error`) or the filter's (`ordersFiltered.error`) is the API's own `result` (an array of messages or a string; `['ERROR']` if the API sent none), `loading` is `false`, and the pagination of the tab / filter stays as it was. A load of the first page (`newFetch` / `newFetchCurrent`) leaves the list empty, a load of a next page keeps its orders. Success states are unchanged.
+
 ## Format code
 
 Run `yarn lint` to execute the linter.

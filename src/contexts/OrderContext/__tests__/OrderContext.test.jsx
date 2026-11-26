@@ -1229,21 +1229,18 @@ describe('OrderContext options read lifecycle', () => {
     }
   })
 
-  it('keeps an ordinary options read running beyond 12 seconds and does not load again for a token or customer change', async () => {
+  it('keeps an ordinary options read running beyond 12 seconds', async () => {
     vi.useFakeTimers()
     let finishRead
     const read = new Promise(resolve => { finishRead = resolve })
     mocks.orderOptionsGet.mockReturnValueOnce(read)
     try {
-      const view = render(renderProvider())
+      render(renderProvider())
       await act(async () => { await vi.advanceTimersByTimeAsync(13000) })
       expect(orderState.orderOptionsStatus).toBe('loading')
       expect(mocks.orderOptionsGet).toHaveBeenCalledExactlyOnceWith({})
 
-      mocks.sessionToken = 'renewed-session-token'
-      view.rerender(renderProvider())
-      mocks.customerUserId = 29
-      view.rerender(renderProvider())
+      // (a token or customer change reloads the options of the new session: that is main's session handling, not this read's)
       await act(async () => finishRead(response(2)))
 
       expect(orderState.orderOptionsStatus).toBe('ready')
