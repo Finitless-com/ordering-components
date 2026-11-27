@@ -12,12 +12,14 @@ import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { INVALID_API_JSON_BODY } from '../../utils/parseApiJsonBody'
 import { resolveUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
+import { ORDER_OPTIONS_READ_TIMEOUT_MS, withOrderOptionsTimeout } from './withOrderOptionsTimeout'
 import { isUnchangedDriverTip } from './isUnchangedDriverTip'
 import { evictConsumedCart, shouldEvictConsumedCart } from './evictConsumedCart'
 import {
   mergeCartResult,
   mergeCartsByUpdatedAt,
-  resolveOrderOptionsCarts
+  resolveOrderOptionsCarts,
+  withoutCart
 } from './mergeCartsByUpdatedAt'
 import {
   CLICK_ID_STORAGE_KEY,
@@ -39,17 +41,6 @@ const GUEST_DELIVERY_DEADLINE_MS = 15000
  * Create OrderContext
  * This context will manage the current order with options internally and provide an easy interface
  */
-/**
- * The carts without one of them, as a new object: the order's carts are never
- * changed in place, so who reads the order without the copy (useOrderState)
- * sees every change.
- */
-const withoutCart = (carts, key) => {
-  const next = { ...carts }
-  delete next[key]
-  return next
-}
-
 export const OrderContext = createContext()
 
 /**
@@ -79,6 +70,8 @@ const NO_LOGOUT_YET = Symbol('no logout yet')
  * project's `order_types_allowed` is cut down to them before the provider picks a default, a
  * fallback or a type to replace one that is no longer allowed, so it never starts in or stores a
  * type the consumer does not offer. Without it every allowed type is a candidate, as before.
+ * @param {boolean} [props.franchiseMenuFirst=false] Bound the order options read used by the
+ * menu-first checkout gate and rehydrate when the session token or customer scope changes.
  * @param {boolean} [props.ignoreStaleTypeResponses=false] Every write that carries an order `type`
  * takes a sequence number. With this on, the answer to a write that a newer type write has
  * superseded no longer applies its `type` (the one the customer chose last stays), so a late
@@ -106,6 +99,7 @@ export const OrderProvider = ({
   waitForGuestDeliveryAddress = false,
   disableWorkerPickup = false,
   supportedOrderTypes,
+  franchiseMenuFirst = false,
   ignoreStaleTypeResponses = false,
   orderOptionsWriteTimeout
 }) => {
@@ -186,6 +180,39 @@ export const OrderProvider = ({
     alert
   })
 
+  // The API retires the source UUID and any empty destination cart. Order
+  // options responses already in flight and socket events can still carry them.
+  const cartTransferSession = useMemo(() => ({}), [ordering?.project, session.auth, session.token, session.user?.id, customerState?.user?.id])
+  const currentCartTransferSession = useRef(cartTransferSession)
+  currentCartTransferSession.current = cartTransferSession
+  // Normal consumers reload for the original project/account dependencies. The
+  // menu-first gate also needs a fresh read when token, customer, or mode changes.
+  const orderOptionsSession = useMemo(() => ({ refreshSequence: 0, lastTransferRead: 0 }), [
+    ordering?.project, session.auth, session.user?.id, franchiseMenuFirst ? cartTransferSession : null
+  ])
+  const currentOrderOptionsSession = useRef(orderOptionsSession)
+  currentOrderOptionsSession.current = orderOptionsSession
+  const [orderOptionsLoad, setOrderOptionsLoad] = useState(null)
+  const hasLocalOptions = !session.loading && !session.token && !session.auth
+  const currentOptionsLoad = orderOptionsLoad?.session === orderOptionsSession ? orderOptionsLoad : null
+  // A theme can enable the gate after this very session has loaded its carts.
+  const readyBeforePolicyChange = !currentOptionsLoad && orderOptionsLoad?.cartSession === cartTransferSession && orderOptionsLoad.ready
+  const orderOptionsReady = currentOptionsLoad?.ready ?? (hasLocalOptions || readyBeforePolicyChange)
+  const orderOptionsStatus = currentOptionsLoad?.status ?? (orderOptionsReady ? 'ready' : 'loading')
+  const setOrderOptionsStatus = status => setOrderOptionsLoad(previous => {
+    if (currentOrderOptionsSession.current !== orderOptionsSession) return previous
+    const alreadyReady = previous?.ready && (previous.session === orderOptionsSession || previous.cartSession === cartTransferSession)
+    return {
+      session: orderOptionsSession,
+      cartSession: cartTransferSession,
+      status,
+      ready: status === 'ready' || hasLocalOptions || Boolean(alreadyReady)
+    }
+  })
+
+  const mergeOrderOptionsCarts = (previous, incoming) =>
+    resolveOrderOptionsCarts(previous, cartTransferSession.filterCarts?.(incoming) ?? incoming).carts
+
   const intervalRetriesRef = useRef(null)
   // The last write that carried an order `type` (see `ignoreStaleTypeResponses`).
   const typeWriteSeq = useRef(0)
@@ -204,7 +231,8 @@ export const OrderProvider = ({
   const getGuestDeliverySync = () => {
     const sync = guestDeliverySync.current
     if (!waitForGuestDeliveryAddress || !session.auth) return null
-    return sync?.token === session.token && sync?.userId === session.user?.id ? sync : null
+    const sameBuyer = sync?.token === session.token && sync?.userId === session.user?.id
+    return sameBuyer && (sync.finished || sync.orderOptionsSession === orderOptionsSession) ? sync : null
   }
 
   const isCurrentGuestDeliverySync = sync => sync.parent
@@ -214,23 +242,9 @@ export const OrderProvider = ({
   const hasGuestDeliveryAddress = options =>
     [orderTypes.delivery, orderTypes.catering_delivery].includes(Number(options?.type)) && options?.address?.location
 
-  // The ordinary (no guest delivery migration) order options write, with its own deadline.
-  const withWriteTimeout = (request, timeout) => {
-    const cancelToken = {}
-    let timer
-    const deadline = new Promise((resolve, reject) => {
-      timer = globalThis.setTimeout(() => {
-        // The SDK's cancel token aborts the XHR without settling its promise.
-        reject(Object.assign(new Error('Order options request timed out'), { writeTimeout: true }))
-        cancelToken.cancel?.()
-      }, timeout)
-    })
-    return Promise.race([request({ cancelToken }), deadline]).finally(() => globalThis.clearTimeout(timer))
-  }
-
-  const requestGuestDelivery = (sync, request, write = false) => {
+  const requestGuestDelivery = (sync, request, write = false, maximumWait = Infinity) => {
     if (!sync) return request()
-    const remaining = sync.deadline - Date.now()
+    const remaining = Math.min(sync.deadline - Date.now(), maximumWait)
     const deadlineError = () => new Error('Guest delivery migration timed out')
     if (remaining <= 0) return Promise.reject(deadlineError())
 
@@ -305,12 +319,20 @@ export const OrderProvider = ({
 
   /**
    * Refresh order options and carts from API. A recovery reports success only
-   * after required option writes have succeeded.
+   * after required option writes have succeeded. In menu-first mode
+   * franchiseCartRead gives a later, explicit cart check the gate's deadline.
    */
-  const refreshOrderOptions = async ({ deferMalformedResponse = false, recovering = false, guestDeliveryOptions, migration } = {}) => {
+  const refreshOrderOptions = async ({ deferMalformedResponse = false, recovering = false, guestDeliveryOptions, migration, franchiseCartRead = false } = {}) => {
     const sync = getGuestDeliverySync()
-    if (!migration && sync && !sync.finished) return ensureGuestDeliveryAddress()
-    const isCurrent = () => !migration || isCurrentGuestDeliverySync(migration)
+    const reconcileCarts = cartTransferSession.beginRead?.()
+    if (!reconcileCarts && !migration && sync && !sync.finished) return ensureGuestDeliveryAddress()
+    const isCurrent = () => currentOrderOptionsSession.current === orderOptionsSession &&
+      (!reconcileCarts || currentCartTransferSession.current === cartTransferSession) &&
+      (!migration || isCurrentGuestDeliverySync(migration))
+    const sequence = ++orderOptionsSession.refreshSequence
+    setOrderOptionsStatus('loading')
+    let ready = false
+    let verified
     try {
       if (!state.loading) {
         setState(prevState => ({ ...prevState, loading: true }))
@@ -345,7 +367,13 @@ export const OrderProvider = ({
 
       const requestToken = session.token
       const getOptions = transport => ordering.setAccessToken(requestToken).orderOptions().get({ ...options, ...transport })
-      const res = await requestGuestDelivery(migration, getOptions)
+      const useReadTimeout = reconcileCarts || (franchiseMenuFirst && (!orderOptionsReady || franchiseCartRead))
+      let res
+      if (migration && !reconcileCarts) {
+        res = await requestGuestDelivery(migration, getOptions, false, useReadTimeout ? ORDER_OPTIONS_READ_TIMEOUT_MS : Infinity)
+      } else {
+        res = await (useReadTimeout ? withOrderOptionsTimeout(getOptions, ORDER_OPTIONS_READ_TIMEOUT_MS) : getOptions())
+      }
       if (!isCurrent()) return false
       // The answer belongs to the session that sent the request. If the session changed meanwhile (a sign-out,
       // or a new sign-in) it is ignored: it must neither log the new session out nor overwrite its options and carts.
@@ -357,13 +385,32 @@ export const OrderProvider = ({
       const invalidResponse = res?.response?.data === INVALID_API_JSON_BODY
       const { error, result } = (invalidResponse ? INVALID_API_JSON_BODY : res?.content) || {}
       let hasApiAddressContext = false
-      if (!error) {
-        const { carts, ...options } = result
+      if (!error && (status == null || status === 200)) {
+        const { carts, ...options } = result ?? {}
         hasApiAddressContext = Boolean(options.address_id || options.address?.location)
 
-        if (!Array.isArray(carts)) {
+        if (!Array.isArray(carts) || (reconcileCarts && carts.some(cart => !cart?.uuid || cart.business_id === undefined))) {
           setState(prevState => ({ ...prevState, loading: false }))
           return
+        }
+        verified = { status, carts }
+
+        if (reconcileCarts) {
+          // Only a fresh list can confirm which UUIDs the server retired.
+          if (sequence !== orderOptionsSession.refreshSequence) return
+          orderOptionsSession.lastTransferRead = sequence
+          const reconciled = reconcileCarts(carts)
+          setState(prevState => {
+            if (!isCurrent()) return prevState
+            return {
+              ...prevState,
+              loading: false,
+              options: { ...prevState.options, ...options },
+              carts: reconciled.merge(prevState.carts)
+            }
+          })
+          ready = reconciled.ready
+          return verified
         }
 
         // The final write returns the options for this guest. Until it
@@ -377,7 +424,9 @@ export const OrderProvider = ({
             return {
               ...prevState,
               options: mergedOptions,
-              carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
+              carts: sequence < orderOptionsSession.lastTransferRead
+                ? prevState.carts
+                : mergeOrderOptionsCarts(prevState.carts, carts)
             }
           })
         }
@@ -395,11 +444,11 @@ export const OrderProvider = ({
           setState(prevState => ({ ...prevState, loading: false }))
         }
       }
-      if (error) {
+      if (error || (status != null && status !== 200)) {
         if (status === 401 && session.auth && await handleUnauthorized(requestToken)) {
           return { status }
         }
-        if (invalidResponse || recovering) {
+        if (invalidResponse || recovering || reconcileCarts) {
           if (invalidResponse && !deferMalformedResponse && !recovering) {
             setAlert({ show: true, content: t('CART_REFRESH_RESPONSE_ERROR', 'We couldn’t refresh your carts. Check your cart before placing your order.'), status })
           }
@@ -497,16 +546,22 @@ export const OrderProvider = ({
       } else {
         setState(prevState => ({ ...prevState, loading: false }))
       }
-      if (recovering) return true
+      ready = Boolean(verified)
+      if (recovering) return ready
+      return verified
     } catch (err) {
       if (!isCurrent()) return false
-      const message = err?.message?.includes('Internal error')
-        ? 'INTERNAL_ERROR'
-        : !err.message
-            ? t('NETWORK_ERROR', 'Network error')
-            : err.message
-      if (!recovering) setAlert({ show: true, content: message })
+      const message = err?.writeTimeout
+        ? t('CART_REFRESH_RESPONSE_ERROR', 'We couldn’t refresh your carts. Check your cart before placing your order.')
+        : err?.message?.includes('Internal error')
+          ? 'INTERNAL_ERROR'
+          : err?.message || t('NETWORK_ERROR', 'Network error')
+      if (!recovering && !reconcileCarts) setAlert({ show: true, content: message })
       setState(prevState => ({ ...prevState, loading: false }))
+    } finally {
+      if (isCurrent() && sequence === orderOptionsSession.refreshSequence) {
+        setOrderOptionsStatus(ready ? 'ready' : 'error')
+      }
     }
   }
 
@@ -519,16 +574,30 @@ export const OrderProvider = ({
       if (current.selection) return waitForGuestDeliverySelection(current)
       return current.promise
     }
-    const sync = { token: session.token, userId: session.user.id, failed: false, deadline: Date.now() + GUEST_DELIVERY_DEADLINE_MS }
+    const previous = guestDeliverySync.current
+    const sameBuyer = previous?.token === session.token && previous?.userId === session.user.id
+    const previousWrite = sameBuyer && (previous.selection || previous.write)
+    const sync = {
+      token: session.token,
+      userId: session.user.id,
+      orderOptionsSession,
+      failed: false,
+      deadline: Date.now() + GUEST_DELIVERY_DEADLINE_MS
+    }
     guestDeliverySync.current = sync
+    setOrderOptionsStatus('loading')
     sync.promise = (async () => {
+      if (previousWrite) await previousWrite.catch(() => {})
       const options = await strategy.getItem('options', true)
       if (!isCurrentGuestDeliverySync(sync)) return false
       if (!hasGuestDeliveryAddress(options)) return null
       const saved = await refreshOrderOptions({ recovering: true, guestDeliveryOptions: options, migration: sync })
       return saved === true
     })().catch(() => {
-      if (isCurrentGuestDeliverySync(sync)) setState(prevState => ({ ...prevState, loading: false }))
+      if (isCurrentGuestDeliverySync(sync)) {
+        setState(prevState => ({ ...prevState, loading: false }))
+        setOrderOptionsStatus('error')
+      }
       return false
     }).then(result => {
       if (sync.selection) return waitForGuestDeliverySelection(sync)
@@ -832,7 +901,7 @@ export const OrderProvider = ({
           Object.keys(changes).every(key => key === 'type' || (key === 'city_id' && changes[key] === null))
         const { content: { error, result }, status } = await (migration || !orderOptionsWriteTimeout || !onlyType
           ? requestGuestDelivery(migration, save, true)
-          : withWriteTimeout(save, orderOptionsWriteTimeout))
+          : withOrderOptionsTimeout(save, orderOptionsWriteTimeout))
         if (!isCurrent()) return false
         if (!error) {
           if (recovering && countryCode) await strategy.setItem('country-code', countryCode)
@@ -842,7 +911,7 @@ export const OrderProvider = ({
           setState(prevState => ({
             ...prevState,
             options: { ...prevState.options, ...options },
-            carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
+            carts: mergeOrderOptionsCarts(prevState.carts, carts)
           }))
         } else if (!recovering) {
           setAlert({ show: true, content: result, status })
@@ -2065,9 +2134,16 @@ export const OrderProvider = ({
   useEffect(() => {
     if (session.loading || languageState.loading || !ordering?.project) return
     if (session.auth) {
+      if (readyBeforePolicyChange) {
+        setOrderOptionsStatus('ready')
+        if (orderOptionsLoad.status === 'loading') {
+          setState(prevState => prevState.loading ? { ...prevState, loading: false } : prevState)
+        }
+        return
+      }
       if (waitForGuestDeliveryAddress) {
         ensureGuestDeliveryAddress().then(saved => {
-          if (saved === null) refreshOrderOptions()
+          if (saved === null && currentOrderOptionsSession.current === orderOptionsSession) refreshOrderOptions()
         })
       } else {
         setState(prevState => (prevState.loading ? prevState : { ...prevState, loading: true }))
@@ -2076,7 +2152,7 @@ export const OrderProvider = ({
     } else {
       guestDeliverySync.current = null
     }
-  }, [session.auth, session.loading, languageState.loading, ordering?.project, session?.user?.id, session?.token])
+  }, [session.auth, session.loading, languageState.loading, ordering?.project, session?.user?.id, session?.token, orderOptionsSession])
 
   useEffect(() => {
     if (session.loading || configState.loading) return
@@ -2116,11 +2192,13 @@ export const OrderProvider = ({
    */
   useEffect(() => {
     const handleCartUpdate = (cart) => {
+      if (currentCartTransferSession.current.isRetired?.(cart?.uuid)) return
       if (!isDisableToast) {
         showToast(ToastType.Info, t('UPDATING_CART_INFO', 'Updating cart information...'))
       }
 
       setState(prevState => {
+        if (currentCartTransferSession.current.isRetired?.(cart?.uuid)) return prevState
         if (!cart || typeof cart !== 'object' || !cart.business_id) {
           console.warn('Invalid cart data received from socket:', cart)
           return prevState
@@ -2130,7 +2208,9 @@ export const OrderProvider = ({
         const newCarts = { ...prevState.carts }
 
         if (cart.status === 1) {
-          delete newCarts[`businessId:${cart.business_id}`]
+          const cartKey = `businessId:${cart.business_id}`
+          if (cart.uuid && newCarts[cartKey]?.uuid !== cart.uuid) return prevState
+          delete newCarts[cartKey]
           return {
             ...newState,
             carts: newCarts
@@ -2178,7 +2258,7 @@ export const OrderProvider = ({
           ...prevState.options,
           ...options
         },
-        carts: resolveOrderOptionsCarts(prevState.carts, carts).carts
+        carts: mergeOrderOptionsCarts(prevState.carts, carts)
       }))
     }
     socket.on('carts_update', handleCartUpdate)
@@ -2189,7 +2269,7 @@ export const OrderProvider = ({
     }
     // The handlers read the state through setState(prev => …): subscribing again on every
     // cart or option change was not needed.
-  }, [socket, isDisableToast, t, showToast])
+  }, [socket, isDisableToast, t, showToast, cartTransferSession])
 
   /**
    * Join to carts room
@@ -2204,11 +2284,30 @@ export const OrderProvider = ({
     }
   }, [socket, session.auth, session.loading, customerState?.user?.id, session?.user?.id])
 
+  // Capture one buyer's session. The optional franchise controller supplies retirement markers;
+  // asynchronous updates from an earlier buyer must never change this provider's carts or options.
+  const getCartTransferAccess = () => {
+    const isCurrent = () => currentCartTransferSession.current === cartTransferSession
+    return {
+      strategy,
+      franchiseId,
+      markers: cartTransferSession,
+      isCurrent,
+      applyCarts: update => setState(prev => {
+        if (!isCurrent()) return prev
+        const carts = update(prev.carts)
+        return carts === prev.carts ? prev : { ...prev, carts }
+      }),
+      applyOptions: changes => setState(prev => isCurrent() ? { ...prev, options: { ...prev.options, ...changes } } : prev)
+    }
+  }
+
   const functions = {
     refreshOrderOptions,
     handleUnauthorized,
     ensureGuestDeliveryAddress,
     changeAddress,
+    getCartTransferAccess,
     changeType,
     changeMoment,
     updateOrderOptions,
@@ -2245,7 +2344,8 @@ export const OrderProvider = ({
     setExtraUnaddressedOrderTypes
   }
 
-  const copyState = { ...JSON.parse(JSON.stringify(state)), pickupWithoutAddress, extraUnaddressedOrderTypes }
+  const orderState = useMemo(() => ({ ...state, orderOptionsStatus, orderOptionsReady }), [state, orderOptionsStatus, orderOptionsReady])
+  const copyState = { ...JSON.parse(JSON.stringify(orderState)), pickupWithoutAddress, extraUnaddressedOrderTypes }
 
   const latestFunctions = useRef(functions)
   latestFunctions.current = functions
@@ -2259,7 +2359,7 @@ export const OrderProvider = ({
 
   return (
     <OrderActionsContext.Provider value={stableActions}>
-      <OrderStateContext.Provider value={state}>
+      <OrderStateContext.Provider value={orderState}>
         <OrderContext.Provider value={[copyState, functions]}>
           {
             Alert && (
@@ -2315,6 +2415,7 @@ export const useOrder = () => {
     refreshOrderOptions: warningMessage,
     handleUnauthorized: warningMessage,
     changeAddress: warningMessage,
+    getCartTransferAccess: warningMessage,
     changeType: warningMessage,
     changeMoment: warningMessage,
     addProduct: warningMessage,

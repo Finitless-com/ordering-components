@@ -1,7 +1,9 @@
 import React from 'react'
 import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useCartTransfer } from '../cartTransfer'
 import { parseApiJsonBody } from '../../../utils/parseApiJsonBody'
+import { MultiCartCreate } from '../../../components/MultiCartCreate'
 
 const mocks = vi.hoisted(() => ({
   emit: vi.fn(),
@@ -18,6 +20,13 @@ const mocks = vi.hoisted(() => ({
   defaultOrderType: undefined,
   unaddressedAllowed: undefined,
   sessionToken: 'session-token',
+  sessionLoading: undefined,
+  sessionUserId: 8,
+  customerUserId: null,
+  languageLoading: true,
+  getAddresses: vi.fn(),
+  saveAddress: vi.fn(),
+  getFranchise: vi.fn(),
   // A guest with the config loaded (stable object: the provider's effects depend on it).
   guest: false,
   guestConfig: null
@@ -26,9 +35,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../SessionContext', () => ({
   useSession: () => [{
     auth: !mocks.guest,
-    loading: !mocks.guest,
+    loading: mocks.sessionLoading ?? !mocks.guest,
     token: mocks.sessionToken,
-    user: mocks.guest ? undefined : { id: 8 }
+    user: mocks.guest ? undefined : { id: mocks.sessionUserId }
   }, { logout: vi.fn() }]
 }))
 
@@ -38,12 +47,18 @@ vi.mock('../../ApiContext', () => ({
     appInternalName: 'web',
     project: 'demo',
     root: 'https://api.test',
+    get: mocks.getFranchise,
     setAccessToken: () => ({
       carts: () => ({
         confirmWithData: mocks.confirmWithData,
         confirm: mocks.confirm,
         addProduct: mocks.addProduct,
         place: mocks.place
+      }),
+      users: () => ({
+        addresses: addressId => addressId
+          ? { save: mocks.saveAddress }
+          : { where: () => ({ get: mocks.getAddresses }), save: mocks.saveAddress }
       }),
       orderOptions: () => ({
         get: mocks.orderOptionsGet,
@@ -64,7 +79,7 @@ vi.mock('../../WebsocketContext', () => ({
 }))
 
 vi.mock('../../LanguageContext', () => ({
-  useLanguage: () => [{ loading: true }, (key, fallback) => fallback || key]
+  useLanguage: () => [{ loading: mocks.languageLoading }, (key, fallback) => fallback || key]
 }))
 
 vi.mock('../../EventContext', () => ({
@@ -83,7 +98,7 @@ vi.mock('../../ConfigContext', () => ({
 }))
 
 vi.mock('../../CustomerContext', () => ({
-  useCustomer: () => [{ user: null }, { setUserCustomer: vi.fn() }]
+  useCustomer: () => [{ user: mocks.customerUserId == null ? null : { id: mocks.customerUserId } }, { setUserCustomer: vi.fn() }]
 }))
 
 vi.mock('../../ToastContext', () => ({
@@ -100,13 +115,18 @@ import { OrderProvider, useOrder, useOrderState, useOrderActions } from '../inde
 // eslint-disable-next-line import/first
 import { PurchaseGiftCard } from '../../../components/GiftCard/PurchaseGiftCard'
 
-import { MultiCartCreate } from '../../../components/MultiCartCreate'
-
 let orderState
 let orderActions
 
 const OrderProbe = () => {
   [orderState, orderActions] = useOrder()
+  return null
+}
+
+const TransferProbe = () => {
+  const [state, actions] = useOrder()
+  orderState = state
+  orderActions = { ...actions, ...useCartTransfer() }
   return null
 }
 
@@ -557,6 +577,88 @@ describe('OrderContext updateOrderOptions', () => {
   })
 })
 
+describe('OrderContext saveCartOrderType', () => {
+  let previousOptions
+  const strategy = {
+    getItem: vi.fn(async key => key === 'options' ? previousOptions : null),
+    setItem: vi.fn(async (key, value) => { if (key === 'options') previousOptions = value }),
+    removeItem: vi.fn(async key => { if (key === 'options') previousOptions = null })
+  }
+  const answer = options => ({ status: 200, content: { error: false, result: { ...options, carts: [] } } })
+  const renderProvider = () => render(<OrderProvider strategy={strategy}><TransferProbe /></OrderProvider>)
+
+  beforeEach(() => {
+    mocks.orderOptionsSave.mockReset()
+    mocks.orderOptionsGet.mockReset()
+    mocks.orderTypesAllowed = '1|2'
+    previousOptions = { type: 2, city_id: 99, moment: null, unrelated: true }
+  })
+
+  afterEach(() => {
+    mocks.guest = false
+    mocks.orderTypesAllowed = ''
+    mocks.sessionToken = 'session-token'
+  })
+
+  it('updates stored type and city after the API acknowledges the rollback so a refresh cannot restore the stale values', async () => {
+    let finishSave
+    mocks.orderOptionsSave.mockReturnValueOnce(new Promise(resolve => { finishSave = resolve }))
+    renderProvider()
+
+    let rollback
+    await act(async () => { rollback = orderActions.saveCartOrderType({ type: 1, city_id: 7 }) })
+    expect(previousOptions).toMatchObject({ type: 2, city_id: 99 })
+    expect(mocks.orderOptionsSave).toHaveBeenCalledWith({ type: 1, city_id: 7, user_id: 8 }, expect.any(Object))
+
+    await act(async () => {
+      finishSave(answer({ type: 1, city_id: 7 }))
+      await expect(rollback).resolves.toBe(true)
+    })
+    expect(previousOptions).toEqual({ type: 1, city_id: 7, moment: null, unrelated: true })
+    mocks.orderOptionsGet.mockResolvedValueOnce(answer({ type: 1, city_id: 7 }))
+    mocks.orderOptionsSave.mockImplementation(async changes => answer(changes))
+    await act(async () => { await orderActions.refreshOrderOptions() })
+
+    expect(orderState.options).toMatchObject({ type: 1, city_id: 7 })
+    expect(mocks.orderOptionsSave.mock.calls.every(([changes]) => changes.type === 1 && changes.city_id === 7)).toBe(true)
+  })
+
+  it('leaves local options as they were if the authenticated save is rejected', async () => {
+    mocks.orderOptionsSave.mockResolvedValueOnce({ status: 400, content: { error: true, result: ['Rejected'] } })
+    renderProvider()
+    await act(async () => {
+      await expect(orderActions.saveCartOrderType({ type: 1, city_id: 7 })).resolves.toBe(false)
+    })
+    expect(previousOptions).toMatchObject({ type: 2, city_id: 99 })
+    expect(strategy.setItem).not.toHaveBeenCalled()
+  })
+
+  it('does not create local guest options for an authenticated user', async () => {
+    previousOptions = null
+    mocks.orderOptionsSave.mockResolvedValueOnce(answer({ type: 1, city_id: 7 }))
+    renderProvider()
+    await act(async () => {
+      await expect(orderActions.saveCartOrderType({ type: 1, city_id: 7 })).resolves.toBe(true)
+    })
+    expect(orderState.options).toMatchObject({ type: 1, city_id: 7 })
+    expect(previousOptions).toBeNull()
+    expect(strategy.setItem).not.toHaveBeenCalled()
+  })
+
+  it('persists and publishes type and city for an anonymous visitor without an API write', async () => {
+    mocks.guest = true
+    mocks.sessionToken = null
+    renderProvider()
+    await act(async () => {
+      await expect(orderActions.saveCartOrderType({ type: 1, city_id: null })).resolves.toBe(true)
+      await expect(orderActions.saveCartOrderType({ type: 2 })).resolves.toBe(true)
+    })
+    expect(orderState.options).toMatchObject({ type: 2, city_id: null })
+    expect(previousOptions).toMatchObject({ type: 2, city_id: null, unrelated: true })
+    expect(mocks.orderOptionsSave).not.toHaveBeenCalled()
+  })
+})
+
 describe('PurchaseGiftCard with real OrderProvider', () => {
   const strategy = {
     getItem: vi.fn().mockResolvedValue(null),
@@ -620,6 +722,749 @@ describe('PurchaseGiftCard with real OrderProvider', () => {
         products: [{ id: 90, type: 'gift_card' }]
       }))
     })
+  })
+})
+
+describe('OrderContext changeBusiness', () => {
+  const source = { business_id: 5, uuid: 'source-cart', products: [{ id: 31, line_id: 1 }, { id: 9, line_id: 2 }] }
+  const previousDestination = { business_id: 6, uuid: 'empty-destination', products: [] }
+  const other = { business_id: 7, uuid: 'other-cart' }
+  const cart = { business_id: 6, uuid: 'new-destination', products: [{ product_id: '31', line_id: 3 }], subtotal: 12, total: 15 }
+  const result = {
+    cart,
+    unavailable: [{ line_id: 2, product_id: 9, reason: 'out_of_stock' }],
+    discarded: { offers: [{ id: 8, reason: 'unavailable' }], wallets: [], context: [] }
+  }
+  const initialCarts = { 'businessId:5': source, 'businessId:6': previousDestination, 'businessId:7': other }
+  const strategy = {
+    getItem: vi.fn().mockImplementation(async key => key === 'country-code' ? 'US' : null),
+    setItem: vi.fn(),
+    removeItem: vi.fn()
+  }
+  const successResponse = { ok: true, json: async () => ({ error: false, result }) }
+
+  const prepare = async () => {
+    const view = render(<OrderProvider strategy={strategy}><TransferProbe /></OrderProvider>)
+    await act(async () => orderActions.setStateValues({ carts: initialCarts }))
+    return view
+  }
+
+  const franchiseResponse = productMatching => ({ status: 200, content: { error: false, result: { product_matching: productMatching } } })
+  beforeEach(() => {
+    mocks.getFranchise.mockReset().mockResolvedValue(franchiseResponse('shared_menu'))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    mocks.orderOptionsGet.mockReset()
+    mocks.sessionToken = 'session-token'
+    mocks.guest = false
+  })
+
+  it('atomically replaces the source and empty destination for a guest with a session token', async () => {
+    mocks.guest = true
+    mocks.sessionToken = 'guest-token'
+    let finishRequest
+    const request = new Promise(resolve => { finishRequest = resolve })
+    const send = vi.fn().mockReturnValue(request)
+    vi.stubGlobal('fetch', send)
+    await prepare()
+
+    let transfer
+    await act(async () => { transfer = orderActions.changeBusiness(5, 6, { franchiseId: 22 }) })
+
+    expect(orderState.carts).toEqual(initialCarts)
+    const updatedOther = { ...other, products: [{ line_id: 7 }] }
+    await act(async () => orderActions.setStateValues({ carts: { 'businessId:7': updatedOther } }))
+    expect(send).toHaveBeenCalledWith('https://api.test/carts/source-cart/change_business', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ business_id: 6 }),
+      headers: expect.objectContaining({
+        Authorization: 'Bearer guest-token',
+        'X-Socket-Id-X': 'socket-id',
+        'X-Country-Code-X': 'US'
+      })
+    }))
+
+    await act(async () => {
+      finishRequest(successResponse)
+      await expect(transfer).resolves.toEqual(result)
+    })
+    expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': updatedOther })
+    expect(mocks.getFranchise).not.toHaveBeenCalled()
+  })
+
+  it('rejects with the API error code and preserves all carts', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        error: true,
+        error_codes: ['cart.destination_occupied'],
+        result: ['The destination already has a cart.']
+      })
+    }))
+    mocks.orderOptionsGet.mockResolvedValueOnce({ status: 200, content: { error: false, result: { carts: Object.values(initialCarts) } } })
+    await prepare()
+
+    await act(async () => {
+      await expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).rejects.toMatchObject({
+        name: 'Error',
+        code: 'cart.destination_occupied',
+        message: 'The destination already has a cart.'
+      })
+    })
+    expect(orderState.carts).toEqual(initialCarts)
+  })
+
+  it('ignores stale cart data from an in-flight refresh and socket updates', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(successResponse))
+    let finishRefresh
+    mocks.orderOptionsGet.mockReturnValueOnce(new Promise(resolve => { finishRefresh = resolve }))
+    await prepare()
+
+    let refresh
+    await act(async () => { refresh = orderActions.refreshOrderOptions() })
+    await act(async () => { await orderActions.changeBusiness(5, 6, { franchiseId: 22 }) })
+    await act(async () => {
+      finishRefresh({ content: { error: false, result: { carts: [source, previousDestination, other] } } })
+      await refresh
+    })
+
+    const [, updateCart] = mocks.socketOn.mock.calls.findLast(([event]) => event === 'carts_update')
+    await act(async () => {
+      updateCart(source)
+      updateCart({ ...previousDestination, status: 1 })
+    })
+    expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': other })
+  })
+
+  const listResponse = carts => ({ status: 200, content: { error: false, result: { carts } } })
+  const rejection = code => ({ ok: false, json: async () => ({ error: true, error_codes: [code], result: ['Rejected'] }) })
+
+  it('recovers a lost success and reconciles the stale source in a second provider', async () => {
+    const probes = {}
+    const Probe = ({ tab }) => {
+      const [state, actions] = useOrder()
+      probes[tab] = { state, actions: { ...actions, ...useCartTransfer() } }
+      return null
+    }
+    render(
+      <>
+        <OrderProvider strategy={strategy}><Probe tab='first' /></OrderProvider>
+        <OrderProvider strategy={strategy}><Probe tab='second' /></OrderProvider>
+      </>
+    )
+    await act(async () => {
+      probes.first.actions.setStateValues({ carts: initialCarts })
+      probes.second.actions.setStateValues({ carts: initialCarts })
+    })
+    const post = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Lost response'))
+      .mockResolvedValueOnce(rejection('cart.not_found'))
+    vi.stubGlobal('fetch', post)
+    mocks.orderOptionsGet.mockResolvedValue(listResponse([cart, other]))
+    await act(async () => {
+      await expect(probes.first.actions.changeBusiness(5, 6, { franchiseId: 22 })).resolves.toEqual({ cart, recovered: true })
+    })
+    expect(probes.second.state.carts).toEqual(initialCarts)
+    await act(async () => {
+      await expect(probes.second.actions.changeBusiness(5, 6, { franchiseId: 22 })).resolves.toEqual({ cart, recovered: true })
+    })
+    const finalCarts = { 'businessId:6': cart, 'businessId:7': other }
+    expect(probes.first.state.carts).toEqual(finalCarts)
+    expect(probes.second.state.carts).toEqual(finalCarts)
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(mocks.getFranchise).toHaveBeenCalledTimes(2)
+    expect(mocks.getFranchise).toHaveBeenCalledWith(
+      'franchises/22', expect.objectContaining({ query: { params: 'id,product_matching' }, accessToken: 'session-token' })
+    )
+  })
+
+  it('reconciles a confirmed transfer without POST after the destination arrived over the socket', async () => {
+    const repriced = { ...cart, products: [{ id: 99, line_id: 3 }] }
+    const post = vi.fn()
+    vi.stubGlobal('fetch', post)
+    mocks.orderOptionsGet.mockResolvedValueOnce(listResponse([repriced, other]))
+    await prepare()
+    const [, updateCart] = mocks.socketOn.mock.calls.findLast(([event]) => event === 'carts_update')
+    await act(async () => updateCart(repriced))
+    expect(orderState.carts['businessId:6'].uuid).toBe(cart.uuid)
+
+    await act(async () => {
+      await expect(orderActions.reconcileBusinessCart(5, 6, {
+        sourceUuid: source.uuid,
+        expectedDestinationUuid: cart.uuid,
+        franchiseId: 22
+      })).resolves.toEqual({ cart: repriced, recovered: true })
+    })
+    expect(post).not.toHaveBeenCalled()
+    expect(mocks.getFranchise).not.toHaveBeenCalled()
+    expect(orderState.carts).toEqual({ 'businessId:6': repriced, 'businessId:7': other })
+  })
+
+  it('refreshes an occupied rejection without reporting a successful transfer', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(rejection('cart.destination_occupied')))
+    mocks.orderOptionsGet.mockResolvedValueOnce(listResponse([source, cart, other]))
+    await prepare()
+    await act(async () => {
+      await expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).rejects.toMatchObject({ code: 'cart.destination_occupied' })
+    })
+    expect(orderState.carts).toEqual({ 'businessId:5': source, 'businessId:6': cart, 'businessId:7': other })
+  })
+
+  it('returns the same-business code without another request', async () => {
+    const post = vi.fn().mockResolvedValue(rejection('cart.same_business'))
+    vi.stubGlobal('fetch', post)
+    await prepare()
+    await act(async () => {
+      await expect(orderActions.changeBusiness(5, 5)).rejects.toMatchObject({ code: 'cart.same_business' })
+    })
+    expect(post).toHaveBeenCalledOnce()
+    expect(mocks.orderOptionsGet).not.toHaveBeenCalled()
+  })
+
+  it('requires review even if the same occupied destination contains a matching product', async () => {
+    const occupied = { ...previousDestination, products: [{ id: 31, line_id: 4 }] }
+    const carts = { ...initialCarts, 'businessId:6': occupied }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(rejection('cart.not_found')))
+    mocks.orderOptionsGet.mockResolvedValueOnce(listResponse([occupied, other]))
+    await prepare()
+    await act(async () => orderActions.setStateValues({ carts }))
+    await act(async () => {
+      await expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).rejects.toMatchObject({ code: 'cart.review_destination' })
+    })
+    expect(orderState.carts).toEqual({ 'businessId:6': occupied, 'businessId:7': other })
+  })
+
+  it('does not confirm a lost transfer if the buyer changes during the strategy read', async () => {
+    let finishStrategy
+    const strategyResponse = new Promise(resolve => { finishStrategy = resolve })
+    mocks.getFranchise.mockReturnValueOnce(strategyResponse)
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Lost response')))
+    mocks.orderOptionsGet.mockResolvedValueOnce(listResponse([cart, other]))
+    const view = await prepare()
+
+    let transfer
+    await act(async () => {
+      transfer = expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).rejects.toMatchObject({ code: 'cart.review_destination' })
+    })
+    expect(mocks.getFranchise).toHaveBeenCalledExactlyOnceWith('franchises/22', expect.objectContaining({
+      accessToken: 'session-token'
+    }))
+    mocks.sessionToken = 'next-buyer-token'
+    view.rerender(<OrderProvider strategy={strategy}><TransferProbe /></OrderProvider>)
+    await act(async () => {
+      finishStrategy(franchiseResponse('shared_menu'))
+      await transfer
+    })
+  })
+
+  it.each(['sku', undefined])('requires review for matching IDs when the catalog strategy is %s', async productMatching => {
+    mocks.getFranchise.mockResolvedValueOnce(franchiseResponse(productMatching))
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Lost response')))
+    mocks.orderOptionsGet.mockResolvedValueOnce(listResponse([cart, other]))
+    await prepare()
+
+    await act(async () => {
+      await expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).rejects.toMatchObject({ code: 'cart.review_destination' })
+    })
+    expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': other })
+  })
+
+  it.each([
+    ['different product IDs', source.products, [{ id: 99, line_id: 3 }]],
+    ['no product IDs', [{ line_id: 3 }], [{ line_id: 3 }]],
+    ['two empty carts', [], []]
+  ])('requires destination review after an uncertain POST with %s', async (_label, originLines, destinationLines) => {
+    const moved = { ...cart, products: destinationLines }
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Lost response')))
+    mocks.orderOptionsGet.mockResolvedValueOnce(listResponse([moved, other]))
+    await prepare()
+    await act(async () => orderActions.setStateValues({
+      carts: { 'businessId:5': { ...source, products: originLines } }
+    }))
+
+    await act(async () => {
+      await expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).rejects.toMatchObject({ code: 'cart.review_destination' })
+    })
+    expect(orderState.carts).toEqual({ 'businessId:6': moved, 'businessId:7': other })
+    expect(mocks.getFranchise).not.toHaveBeenCalled()
+  })
+
+  it('does not let an overlapping read resume a reconciliation after its caller failed', async () => {
+    let finishFirst
+    let finishSecond
+    const sameDestination = { ...cart, business_id: 8, uuid: 'second-destination' }
+    const secondSource = { business_id: 7, uuid: 'other-cart', products: source.products }
+    mocks.orderOptionsGet
+      .mockReturnValueOnce(new Promise(resolve => { finishFirst = resolve }))
+      .mockReturnValueOnce(new Promise(resolve => { finishSecond = resolve }))
+    await prepare()
+    await act(async () => orderActions.setStateValues({ carts: { 'businessId:7': secondSource } }))
+    let first
+    let second
+    await act(async () => {
+      first = expect(orderActions.reconcileBusinessCart(5, 6, { franchiseId: 22 })).rejects.toMatchObject({ recoveryFailed: true })
+      second = expect(orderActions.reconcileBusinessCart(7, 8, { franchiseId: 22 })).resolves.toEqual({ cart: sameDestination, recovered: true })
+    })
+    await act(async () => {
+      finishFirst(listResponse([cart, secondSource]))
+      await first
+    })
+    await act(async () => {
+      finishSecond(listResponse([cart, sameDestination]))
+      await second
+    })
+
+    expect(orderState.carts['businessId:5']).toEqual(source)
+    expect(orderState.carts['businessId:7']).toBeUndefined()
+  })
+
+  it('refreshes when the local source is missing and does not claim another cart as a transfer', async () => {
+    const post = vi.fn()
+    vi.stubGlobal('fetch', post)
+    mocks.orderOptionsGet.mockResolvedValueOnce(listResponse([cart]))
+    render(<OrderProvider strategy={strategy}><TransferProbe /></OrderProvider>)
+    await act(async () => {
+      await expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).rejects.toMatchObject({ code: 'cart.review_destination' })
+    })
+    expect(post).not.toHaveBeenCalled()
+    expect(orderState.carts).toEqual({ 'businessId:6': cart })
+  })
+
+  it('aborts a timed-out POST and preserves the source when the server did not move it', async () => {
+    vi.useFakeTimers()
+    const post = vi.fn().mockReturnValue(new Promise(() => {}))
+    vi.stubGlobal('fetch', post)
+    mocks.orderOptionsGet.mockResolvedValueOnce(listResponse(Object.values(initialCarts)))
+    try {
+      await prepare()
+      await act(async () => {
+        const transfer = expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).rejects.toBeInstanceOf(Error)
+        await vi.advanceTimersByTimeAsync(15000)
+        await transfer
+      })
+      expect(post.mock.calls[0][1].signal.aborted).toBe(true)
+      expect(orderState.carts).toEqual(initialCarts)
+      expect(orderState.orderOptionsStatus).toBe('ready')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('recovers an invalid POST response and blocks checkout if the verifying read fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ error: false, result: null }) }))
+    mocks.orderOptionsGet
+      .mockRejectedValueOnce(new Error('Unavailable'))
+      .mockResolvedValueOnce(listResponse([cart, other]))
+      .mockResolvedValueOnce(listResponse([cart, other]))
+    await prepare()
+    await act(async () => {
+      await expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).rejects.toMatchObject({ recoveryFailed: true })
+    })
+    expect(orderState.carts).toEqual(initialCarts)
+    expect(orderState.orderOptionsStatus).toBe('error')
+    await act(async () => {
+      await expect(orderActions.refreshOrderOptions()).resolves.toEqual({ status: 200, carts: [cart, other] })
+    })
+    expect(orderState.orderOptionsStatus).toBe('ready')
+    expect(orderState.carts['businessId:5']).toEqual(source)
+    await act(async () => {
+      await expect(orderActions.reconcileBusinessCart(5, 6, {
+        sourceUuid: source.uuid, previousDestinationUuid: previousDestination.uuid, franchiseId: 22
+      })).resolves.toEqual({ cart, recovered: true })
+    })
+    expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': other })
+  })
+
+  it.each([
+    ['unavailable line', { unavailable: [null] }],
+    ['discarded context item', { discarded: { ...result.discarded, context: [null] } }]
+  ])('recovers when the successful POST contains a malformed %s', async (_label, malformed) => {
+    const post = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ error: false, result: { ...result, ...malformed } })
+    })
+    vi.stubGlobal('fetch', post)
+    mocks.orderOptionsGet.mockResolvedValueOnce(listResponse([cart, other]))
+    await prepare()
+
+    await act(async () => {
+      await expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).resolves.toEqual({ cart, recovered: true })
+    })
+    expect(post).toHaveBeenCalledOnce()
+    expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': other })
+  })
+
+  it('times out a hung reconciliation read and verifies the cart on retry', async () => {
+    vi.useFakeTimers()
+    const abortRead = vi.fn()
+    const post = vi.fn().mockReturnValue(new Promise(() => {}))
+    vi.stubGlobal('fetch', post)
+    mocks.orderOptionsGet
+      .mockImplementationOnce(({ cancelToken } = {}) => {
+        if (cancelToken) cancelToken.cancel = abortRead
+        return new Promise(() => {})
+      })
+      .mockResolvedValueOnce(listResponse([cart, other]))
+
+    try {
+      await prepare()
+      await act(async () => {
+        const outcome = expect(orderActions.changeBusiness(5, 6, { franchiseId: 22 })).rejects.toMatchObject({ recoveryFailed: true })
+        await vi.advanceTimersByTimeAsync(24000)
+        await outcome
+      })
+      expect(abortRead).toHaveBeenCalledOnce()
+      expect(orderState.orderOptionsStatus).toBe('error')
+      expect(orderState.carts).toEqual(initialCarts)
+      await act(async () => {
+        await expect(orderActions.reconcileBusinessCart(5, 6, { franchiseId: 22 })).resolves.toEqual({ cart, recovered: true })
+      })
+      expect(orderState.orderOptionsStatus).toBe('ready')
+      expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': other })
+      expect(post).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('propagates a caller abort while reconciling the server state', async () => {
+    const caller = new AbortController()
+    const post = vi.fn().mockImplementation((url, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    }))
+    vi.stubGlobal('fetch', post)
+    mocks.orderOptionsGet.mockResolvedValueOnce(listResponse([cart, other]))
+    await prepare()
+    let transfer
+    await act(async () => { transfer = orderActions.changeBusiness(5, 6, { signal: caller.signal, franchiseId: 22 }) })
+    await act(async () => {
+      caller.abort()
+      await expect(transfer).resolves.toEqual({ cart, recovered: true })
+    })
+    expect(orderState.carts).toEqual({ 'businessId:6': cart, 'businessId:7': other })
+  })
+
+  it('exposes a pending options load before the first request settles', async () => {
+    await prepare()
+    expect(orderState.orderOptionsStatus).toBe('loading')
+    await act(async () => {
+      mocks.orderOptionsGet.mockResolvedValueOnce(listResponse(Object.values(initialCarts)))
+      await orderActions.refreshOrderOptions()
+    })
+    expect(orderState.orderOptionsStatus).toBe('ready')
+  })
+
+  it('discards a transfer response after the session changes', async () => {
+    let finishRequest
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(resolve => { finishRequest = resolve })))
+    const view = await prepare()
+
+    let transfer
+    await act(async () => { transfer = orderActions.changeBusiness(5, 6, { franchiseId: 22 }) })
+    mocks.sessionToken = 'new-session-token'
+    view.rerender(<OrderProvider strategy={strategy}><TransferProbe /></OrderProvider>)
+    await act(async () => orderActions.setStateInitialValues())
+    await act(async () => {
+      finishRequest(successResponse)
+      await expect(transfer).rejects.toBeInstanceOf(Error)
+    })
+    expect(orderState.carts).toEqual({})
+  })
+})
+
+describe('OrderContext options read lifecycle', () => {
+  const guestDeliveryOptions = { type: 1, address: { address: 'Main Street', location: { lat: 1, lng: 2 } } }
+  let storedOptions
+  const strategy = {
+    getItem: vi.fn(async key => key === 'options' ? storedOptions : null),
+    setItem: vi.fn(),
+    removeItem: vi.fn(async key => { if (key === 'options') storedOptions = null })
+  }
+  const response = (type, carts = []) => ({ status: 200, content: { error: false, result: { type, carts } } })
+  const renderProvider = (props = {}, Probe = OrderProbe) => <OrderProvider strategy={strategy} {...props}><Probe /></OrderProvider>
+
+  beforeEach(() => {
+    storedOptions = null
+    mocks.orderOptionsGet.mockReset()
+    mocks.orderOptionsSave.mockReset()
+    mocks.getAddresses.mockReset()
+    mocks.saveAddress.mockReset()
+    mocks.sessionLoading = false
+    mocks.languageLoading = false
+    mocks.orderTypesAllowed = '1|2'
+  })
+
+  afterEach(() => {
+    mocks.sessionLoading = undefined
+    mocks.languageLoading = true
+    mocks.sessionToken = 'session-token'
+    mocks.sessionUserId = 8
+    mocks.customerUserId = null
+    mocks.orderTypesAllowed = ''
+  })
+
+  it('times out the menu-first options load with a friendly alert, then succeeds on retry', async () => {
+    vi.useFakeTimers()
+    const abortRead = vi.fn()
+    mocks.orderOptionsGet.mockImplementationOnce(({ cancelToken } = {}) => {
+      if (cancelToken) cancelToken.cancel = abortRead
+      return new Promise(() => {})
+    }).mockResolvedValueOnce(response(2))
+    try {
+      const Alert = ({ open, content }) => open ? <div role='alert'>{content}</div> : null
+      const view = render(renderProvider({ franchiseMenuFirst: true, Alert }))
+      expect(orderState.orderOptionsStatus).toBe('loading')
+      await act(async () => { await vi.advanceTimersByTimeAsync(12000) })
+      expect(abortRead).toHaveBeenCalledOnce()
+      expect(orderState.orderOptionsStatus).toBe('error')
+      expect(view.getByRole('alert')).toHaveTextContent('We couldn’t refresh your carts. Check your cart before placing your order.')
+      await act(async () => {
+        await expect(orderActions.refreshOrderOptions()).resolves.toEqual({ status: 200, carts: [] })
+      })
+      expect(orderState.orderOptionsStatus).toBe('ready')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps an ordinary options read running beyond 12 seconds', async () => {
+    vi.useFakeTimers()
+    let finishRead
+    const read = new Promise(resolve => { finishRead = resolve })
+    mocks.orderOptionsGet.mockReturnValueOnce(read)
+    try {
+      render(renderProvider())
+      await act(async () => { await vi.advanceTimersByTimeAsync(13000) })
+      expect(orderState.orderOptionsStatus).toBe('loading')
+      expect(mocks.orderOptionsGet).toHaveBeenCalledExactlyOnceWith({})
+
+      // (a token or customer change reloads the options of the new session: that is main's session handling, not this read's)
+      await act(async () => finishRead(response(2)))
+
+      expect(orderState.orderOptionsStatus).toBe('ready')
+      expect(orderState.orderOptionsReady).toBe(true)
+      expect(mocks.orderOptionsGet).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    ['ordinary', true, false, false],
+    ['explicit franchise cart', true, true, true],
+    ['explicit non-franchise cart', false, true, false]
+  ])('scopes the deadline of a post-ready %s read', async (_label, franchiseMenuFirst, franchiseCartRead, bounded) => {
+    vi.useFakeTimers()
+    let finishRead
+    const abortRead = vi.fn()
+    mocks.orderOptionsGet.mockResolvedValueOnce(response(1)).mockImplementationOnce(({ cancelToken } = {}) => {
+      if (cancelToken) cancelToken.cancel = abortRead
+      return new Promise(resolve => { finishRead = resolve })
+    })
+    try {
+      render(renderProvider({ franchiseMenuFirst }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(orderState.orderOptionsReady).toBe(true)
+      let pending
+      await act(async () => { pending = orderActions.refreshOrderOptions({ franchiseCartRead }) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(13000) })
+      expect(orderState.orderOptionsStatus).toBe(bounded ? 'error' : 'loading')
+      expect(orderState.orderOptionsReady).toBe(true)
+      expect(abortRead).toHaveBeenCalledTimes(bounded ? 1 : 0)
+      await act(async () => {
+        finishRead(response(2))
+        await pending
+      })
+      expect(orderState.options.type).toBe(bounded ? 1 : 2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a verified checkout ready when a late theme enables menu-first', async () => {
+    mocks.orderOptionsGet.mockResolvedValueOnce(response(2))
+    const view = render(renderProvider())
+    await waitFor(() => expect(orderState.orderOptionsReady).toBe(true))
+
+    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+    expect(orderState.orderOptionsReady).toBe(true)
+    expect(orderState.orderOptionsStatus).toBe('ready')
+    await act(async () => {})
+    expect(mocks.orderOptionsGet).toHaveBeenCalledOnce()
+  })
+
+  it('refreshes again when the language finishes loading after a ready policy change', async () => {
+    mocks.orderOptionsGet.mockResolvedValueOnce(response(2)).mockResolvedValueOnce(response(1))
+    const view = render(renderProvider())
+    await waitFor(() => expect(orderState.orderOptionsReady).toBe(true))
+    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+    expect(orderState.orderOptionsReady).toBe(true)
+
+    mocks.languageLoading = true
+    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+    mocks.languageLoading = false
+    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+
+    await waitFor(() => expect(orderState.options.type).toBe(1))
+    expect(mocks.orderOptionsGet).toHaveBeenCalledTimes(2)
+  })
+
+  it('releases loading from a discarded read when the verified checkout policy changes', async () => {
+    let finishOld
+    mocks.orderOptionsGet
+      .mockResolvedValueOnce(response(2))
+      .mockReturnValueOnce(new Promise(resolve => { finishOld = resolve }))
+    const view = render(renderProvider())
+    await waitFor(() => expect(orderState.orderOptionsReady).toBe(true))
+    let refresh
+    await act(async () => { refresh = orderActions.refreshOrderOptions() })
+    expect(orderState.loading).toBe(true)
+
+    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+    expect(orderState.orderOptionsReady).toBe(true)
+    expect(orderState.loading).toBe(false)
+    await act(async () => {
+      finishOld(response(1))
+      await refresh
+    })
+    expect(orderState.options.type).toBe(2)
+    expect(mocks.orderOptionsGet).toHaveBeenCalledTimes(2)
+  })
+
+  it('applies a fresh cart list when the policy changes after a reconciliation', async () => {
+    const source = { business_id: 5, uuid: 'source-cart' }
+    const destination = { business_id: 6, uuid: 'destination-cart' }
+    const added = { business_id: 7, uuid: 'another-cart' }
+    mocks.orderOptionsGet
+      .mockResolvedValueOnce(response(2, [source]))
+      .mockResolvedValueOnce(response(2, [destination]))
+      .mockResolvedValueOnce(response(2, [destination, added]))
+    const view = render(renderProvider({}, TransferProbe))
+    await waitFor(() => expect(orderState.orderOptionsReady).toBe(true))
+    await act(async () => {
+      await orderActions.reconcileBusinessCart(5, 6, { expectedDestinationUuid: destination.uuid })
+    })
+
+    view.rerender(renderProvider({ franchiseMenuFirst: true }, TransferProbe))
+    await act(async () => { await orderActions.refreshOrderOptions() })
+    expect(orderState.carts).toEqual({ 'businessId:6': destination, 'businessId:7': added })
+  })
+
+  it('restarts when a late theme enables menu-first and ignores the previous read', async () => {
+    let finishOld
+    const oldCart = { business_id: 5, uuid: 'old-cart' }
+    const latestCart = { business_id: 6, uuid: 'latest-cart' }
+    mocks.orderOptionsGet
+      .mockReturnValueOnce(new Promise(resolve => { finishOld = resolve }))
+      .mockResolvedValueOnce(response(2, [latestCart]))
+    const view = render(renderProvider())
+    await waitFor(() => expect(mocks.orderOptionsGet).toHaveBeenCalledOnce())
+
+    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+    await waitFor(() => expect(orderState.orderOptionsStatus).toBe('ready'))
+    await act(async () => finishOld(response(1, [oldCart])))
+    expect(mocks.orderOptionsGet).toHaveBeenCalledTimes(2)
+    expect(mocks.orderOptionsGet.mock.calls[1][0].cancelToken).toBeDefined()
+    expect(orderState.carts).toEqual({ 'businessId:6': latestCart })
+    expect(orderState.options.type).toBe(2)
+  })
+
+  it.each([
+    ['token', 'sessionToken', 'renewed-session-token'],
+    ['user ID', 'sessionUserId', 9],
+    ['customer ID', 'customerUserId', 29]
+  ])('restarts the options load after a changed %s and ignores the old answer', async (_label, key, value) => {
+    let finishOld
+    const oldCart = { business_id: 5, uuid: 'old-account-cart' }
+    const latestCart = { business_id: 6, uuid: 'latest-account-cart' }
+    mocks.orderOptionsGet
+      .mockReturnValueOnce(new Promise(resolve => { finishOld = resolve }))
+      .mockResolvedValueOnce(response(2, [latestCart]))
+    const view = render(renderProvider({ franchiseMenuFirst: true }))
+    await waitFor(() => expect(mocks.orderOptionsGet).toHaveBeenCalledOnce())
+
+    mocks[key] = value
+    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+    await waitFor(() => expect(mocks.orderOptionsGet).toHaveBeenCalledTimes(2))
+    await act(async () => finishOld(response(1, [oldCart])))
+
+    expect(orderState.orderOptionsStatus).toBe('ready')
+    expect(orderState.options.type).toBe(2)
+    expect(orderState.carts).toEqual({ 'businessId:6': latestCart })
+  })
+
+  it('remembers the first ready state through refresh errors and resets it for a new session', async () => {
+    mocks.orderOptionsGet.mockResolvedValueOnce(response(1))
+    const view = render(renderProvider({ franchiseMenuFirst: true }))
+    expect(orderState.orderOptionsReady).toBe(false)
+    await waitFor(() => expect(orderState.orderOptionsReady).toBe(true))
+    let failRefresh
+    mocks.orderOptionsGet.mockReturnValueOnce(new Promise((resolve, reject) => { failRefresh = reject }))
+    let refresh
+    await act(async () => { refresh = orderActions.refreshOrderOptions() })
+    expect(orderState.orderOptionsStatus).toBe('loading')
+    expect(orderState.orderOptionsReady).toBe(true)
+    await act(async () => {
+      failRefresh(new Error('Read failed'))
+      await refresh
+    })
+    expect(orderState.orderOptionsStatus).toBe('error')
+    expect(orderState.orderOptionsReady).toBe(true)
+
+    mocks.sessionToken = 'new-session-token'
+    mocks.orderOptionsGet.mockResolvedValueOnce(response(2))
+    view.rerender(renderProvider({ franchiseMenuFirst: true }))
+    expect(orderState.orderOptionsReady).toBe(false)
+    await waitFor(() => expect(orderState.orderOptionsReady).toBe(true))
+  })
+
+  it('counts the ready state of an anonymous visitor without requesting order options', () => {
+    mocks.guest = true
+    mocks.sessionToken = null
+    try {
+      render(renderProvider())
+      expect(orderState.orderOptionsStatus).toBe('ready')
+      expect(orderState.orderOptionsReady).toBe(true)
+      expect(mocks.orderOptionsGet).not.toHaveBeenCalled()
+    } finally {
+      mocks.guest = false
+    }
+  })
+
+  it('replaces a pending guest address load when a late theme enables the gate', async () => {
+    storedOptions = guestDeliveryOptions
+    let finishOld
+    mocks.orderOptionsGet.mockReturnValueOnce(new Promise(resolve => { finishOld = resolve })).mockResolvedValueOnce(response(1))
+    mocks.getAddresses.mockResolvedValueOnce({ content: { error: false, result: [] } })
+    mocks.saveAddress.mockResolvedValueOnce({ content: { error: false, result: { id: 42 } } })
+    mocks.orderOptionsSave.mockResolvedValueOnce({ content: { error: false, result: { type: 1, address_id: 42, carts: [] } } })
+    const view = render(renderProvider({ waitForGuestDeliveryAddress: true }))
+    await waitFor(() => expect(mocks.orderOptionsGet).toHaveBeenCalledOnce())
+
+    view.rerender(renderProvider({ waitForGuestDeliveryAddress: true, franchiseMenuFirst: true }))
+    await waitFor(() => expect(orderState.orderOptionsStatus).toBe('ready'))
+    await act(async () => finishOld(response(2)))
+    expect(mocks.orderOptionsGet).toHaveBeenCalledTimes(2)
+    expect(orderState.options.address_id).toBe(42)
+  })
+
+  it('allows an explicit retry of a failed guest delivery migration', async () => {
+    storedOptions = guestDeliveryOptions
+    mocks.orderOptionsGet.mockRejectedValueOnce(new Error('Read failed')).mockResolvedValueOnce(response(1))
+    mocks.getAddresses.mockResolvedValueOnce({ content: { error: false, result: [] } })
+    mocks.saveAddress.mockResolvedValueOnce({ content: { error: false, result: { id: 42 } } })
+    mocks.orderOptionsSave.mockResolvedValueOnce({ content: { error: false, result: { type: 1, address_id: 42, carts: [] } } })
+    render(renderProvider({ waitForGuestDeliveryAddress: true }))
+    await waitFor(() => expect(orderState.orderOptionsStatus).toBe('error'))
+
+    await act(async () => {
+      await expect(orderActions.ensureGuestDeliveryAddress({ retry: true })).resolves.toBe(true)
+    })
+    expect(mocks.orderOptionsGet).toHaveBeenCalledTimes(2)
+    expect(orderState.orderOptionsStatus).toBe('ready')
+    expect(orderState.options.address_id).toBe(42)
   })
 })
 
@@ -770,7 +1615,6 @@ describe('OrderContext carts never changed in place', () => {
     expect(cartKeys).toContain('businessId:6')
   })
 })
-
 
 describe('OrderContext referral', () => {
   const NOW = 1793500000000
@@ -1509,9 +2353,9 @@ describe('OrderContext worker pickup and default order type', () => {
   // SERGIO-1681: a write the customer's later change superseded answers late
   describe('a late answer to a superseded type write', () => {
     const deferred = () => {
-      let resolve
-      const promise = new Promise((done) => { resolve = done })
-      return { promise, resolve }
+      let finish
+      const promise = new Promise(resolve => { finish = resolve })
+      return { promise, resolve: finish }
     }
     const answer = (type) => ({ status: 200, content: { error: false, result: { type, carts: [] } } })
 
