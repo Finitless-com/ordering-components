@@ -6,6 +6,7 @@ const orderProps = vi.hoisted(() => ({ current: null }))
 
 const passthrough = ({ children }) => <>{children}</>
 
+vi.mock('../../ReferralContext', () => ({ ReferralProvider: passthrough }))
 vi.mock('../../SiteContext', () => ({ SiteProvider: passthrough }))
 vi.mock('../../SessionContext', () => ({ SessionProvider: passthrough }))
 vi.mock('../../WebsocketContext', () => ({ WebsocketProvider: passthrough }))
@@ -21,6 +22,8 @@ vi.mock('../../OrderingThemeContext', () => ({ OrderingThemeProvider: passthroug
 vi.mock('../../OptimizationLoadContext', () => ({ OptimizationLoadProvider: passthrough }))
 vi.mock('../../UtilsContext', () => ({ UtilsProviders: passthrough }))
 vi.mock('../../../webStrategy', () => ({ WebStrategy: class {} }))
+vi.mock('../../../../native/src/NativeStrategy', () => ({ NativeStrategy: class {} }))
+vi.mock('react-native', () => ({ Linking: { getInitialURL: vi.fn(), addEventListener: vi.fn() } }))
 vi.mock('../../OrderContext', () => ({
   OrderProvider: (props) => {
     orderProps.current = props
@@ -29,6 +32,7 @@ vi.mock('../../OrderContext', () => ({
 }))
 
 const { OrderingProvider } = await import('../index')
+const { OrderingProvider: NativeOrderingProvider } = await import('../../../../native/src/contexts/OrderingContext')
 
 const settings = { api: {}, socket: {} }
 
@@ -55,5 +59,17 @@ describe('OrderingProvider disableWorkerPickup', () => {
   it('forwards the switch to OrderProvider', () => {
     render(<OrderingProvider settings={settings} disableWorkerPickup><div /></OrderingProvider>)
     expect(orderProps.current.disableWorkerPickup).toBe(true)
+  })
+})
+
+describe('OrderingProvider localizedCheckoutErrors', () => {
+  it.each([
+    ['web', OrderingProvider],
+    ['native', NativeOrderingProvider]
+  ])('opts in only when requested on %s', (_name, Provider) => {
+    const { rerender } = render(<Provider settings={settings}><div /></Provider>)
+    expect(orderProps.current.localizedCheckoutErrors).toBe(false)
+    rerender(<Provider settings={settings} localizedCheckoutErrors><div /></Provider>)
+    expect(orderProps.current.localizedCheckoutErrors).toBe(true)
   })
 })

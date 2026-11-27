@@ -77,6 +77,19 @@ Logic changes belong in **ordering-components**, not copied into consumer `src/u
 
 See [CLAUDE.md](../CLAUDE.md) for controller/UI boundaries and platform entry points.
 
+## Optional localized checkout errors
+
+`OrderingProvider` and `OrderProvider` accept `localizedCheckoutErrors` (off by
+default). Enable it only when the consumer's Alert handles the optional
+`localizedErrors` prop.
+The provider sends `localized_errors=1` on add-product, apply-coupon, place
+and reorder requests. It keeps the API result, action returns, alert content
+and status separate from the new array of `{index, message}` entries.
+
+Use the optional array only to render matching entries. Keep an existing
+consumer translation or override first. Ignore invalid entries and use the
+current rendering when the API omits the array or the feature is off.
+
 ## CI relationship
 
 | Repo | CI on components code? |
