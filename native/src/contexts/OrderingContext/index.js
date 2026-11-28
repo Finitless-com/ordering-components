@@ -40,8 +40,10 @@ export const OrderingContext = createContext()
  * @param {number|false|null} [props.sessionCheckInterval] Period in ms of the poll that syncs the session
  * with the AsyncStorage (default 2000: not given keeps it). `0`, `false` or `null` turn the poll off:
  * a React Native app has a single JS runtime, so nothing else writes the session.
+ * @param {boolean} [props.localizedCheckoutErrors=false] Forward optional checkout display messages
+ * to the Alert component. Enable only if the app handles the localizedErrors prop.
  */
-export const OrderingProvider = ({ Alert, isValidColor, noValidateColors, settings, children, isDisableToast, isDisabledDefaultOpts, enableCouponsRetries = false, sessionCheckInterval, referralEnabled = true }) => {
+export const OrderingProvider = ({ Alert, isValidColor, noValidateColors, settings, children, isDisableToast, isDisabledDefaultOpts, enableCouponsRetries = false, sessionCheckInterval, referralEnabled = true, localizedCheckoutErrors = false }) => {
   // Stateless, one for the provider's life: a new one each render reached every provider that receives it.
   const nativeStrategy = useMemo(() => new NativeStrategy(), [])
   const restOfSettings = {
@@ -83,6 +85,7 @@ export const OrderingProvider = ({ Alert, isValidColor, noValidateColors, settin
                                     userAgent={settings?.userAgent}
                                     enableCouponsRetries={enableCouponsRetries}
                                     referralEnabled={referralEnabled}
+                                    localizedCheckoutErrors={localizedCheckoutErrors}
                                   >
                                     <BusinessProvider
                                       businessId={settings?.businessSlug ?? settings?.businessId}

@@ -14,6 +14,7 @@ import { INVALID_API_JSON_BODY } from '../../utils/parseApiJsonBody'
 import { resolveUnaddressedOrderTypes, shouldRequireOrderAddress } from '../../utils/orderTypeAddress'
 import { ORDER_OPTIONS_READ_TIMEOUT_MS, withOrderOptionsTimeout } from './withOrderOptionsTimeout'
 import { isUnchangedDriverTip } from './isUnchangedDriverTip'
+import { checkoutAlertPresentation, checkoutRequestOptions } from './localizedCheckoutErrors'
 import { evictConsumedCart, shouldEvictConsumedCart } from './evictConsumedCart'
 import {
   mergeCartResult,
@@ -84,6 +85,8 @@ const NO_LOGOUT_YET = Symbol('no logout yet')
  * that waits on it. A write that changes anything else (address, moment, ...) has no deadline:
  * cancelling it could drop a change the server applied and leave the local state out of step.
  * Without it the write waits for as long as the request lasts, as before.
+ * @param {boolean} [props.localizedCheckoutErrors=false] Request optional display-only checkout
+ * messages from the API. Enable only if Alert supports its separate localizedErrors prop.
  */
 export const OrderProvider = ({
   Alert,
@@ -101,7 +104,8 @@ export const OrderProvider = ({
   supportedOrderTypes,
   franchiseMenuFirst = false,
   ignoreStaleTypeResponses = false,
-  orderOptionsWriteTimeout
+  orderOptionsWriteTimeout,
+  localizedCheckoutErrors = false
 }) => {
   const [confirmAlert, setConfirm] = useState({ show: false })
   const [alert, setAlert] = useState({ show: false })
@@ -1005,7 +1009,8 @@ export const OrderProvider = ({
         }
       }
 
-      const { content: { error, result }, status } = await ordering.setAccessToken(session.token).carts().addProduct(body, { headers })
+      const { content: { error, result, localized_errors: localizedErrors }, status } = await ordering
+        .setAccessToken(session.token).carts().addProduct(body, checkoutRequestOptions({ headers }, localizedCheckoutErrors))
 
       if (!error) {
         setState(prevState => ({
@@ -1023,7 +1028,7 @@ export const OrderProvider = ({
           refreshOrderOptionsWithRetries(cart, product)
         }, 1000)
       } else {
-        setAlert({ show: true, content: result, status })
+        setAlert({ show: true, content: result, status, ...checkoutAlertPresentation(result, localizedErrors, localizedCheckoutErrors) })
       }
       setState(prevState => ({ ...prevState, loading: false }))
       if (isPlatformProduct) {
@@ -1286,18 +1291,23 @@ export const OrderProvider = ({
       const { content, status } = await ordering
         .setAccessToken(session.token)
         .carts()
-        .applyCoupon(body, {
+        .applyCoupon(body, checkoutRequestOptions({
           headers: {
             'X-Socket-Id-X': socket?.getId(),
             'X-Country-Code-X': countryCode
           }
-        })
+        }, localizedCheckoutErrors))
       const result = content
       if (!result.error) {
         state.carts = { ...state.carts, [`businessId:${result.result.business_id}`]: result.result }
         events.emit('cart_updated', result.result)
       } else {
-        setAlert({ show: true, content: result.result, status })
+        setAlert({
+          show: true,
+          content: result.result,
+          status,
+          ...checkoutAlertPresentation(result.result, result.localized_errors, localizedCheckoutErrors)
+        })
       }
       setState({ ...state, loading: false })
       return !result.error
@@ -1669,7 +1679,8 @@ export const OrderProvider = ({
       if (userAgent) {
         headers = { ...headers, 'User-Agent': userAgent }
       }
-      const { content: { error, result }, status } = await ordering.setAccessToken(session.token).carts(cardId).place(body, { headers })
+      const { content: { error, result, localized_errors: localizedErrors }, status } = await ordering
+        .setAccessToken(session.token).carts(cardId).place(body, checkoutRequestOptions({ headers }, localizedCheckoutErrors))
       if (!error) {
         if (result.status !== 1) {
           state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
@@ -1692,15 +1703,28 @@ export const OrderProvider = ({
         const friendlyFallbacks = {
           ERROR_CART_PLACE_TOTAL_DIFFERENT: 'Price adjustments are still being applied. Please try again in a moment.'
         }
+        const missingTranslation = Symbol('missing checkout translation')
+        const translatedIndexes = new Set()
+        const hasLocalizedErrors = localizedCheckoutErrors && Array.isArray(localizedErrors) && localizedErrors.length > 0
         const friendlyContent = Array.isArray(result)
-          ? result.map(item => {
+          ? result.map((item, index) => {
             const msg = typeof item === 'string' ? item : item?.message
             if (typeof msg !== 'string') return item
             const key = toI18nKey(msg)
-            return t(key, friendlyFallbacks[key] ?? msg)
+            const displayed = t(key, friendlyFallbacks[key] ?? msg)
+            // An explicit dictionary value can equal the original message.
+            if (hasLocalizedErrors && displayed === item && t(key, missingTranslation) !== missingTranslation) {
+              translatedIndexes.add(index)
+            }
+            return displayed
           })
           : result
-        setAlert({ show: true, content: friendlyContent, status })
+        setAlert({
+          show: true,
+          content: friendlyContent,
+          status,
+          ...checkoutAlertPresentation(result, localizedErrors, localizedCheckoutErrors, friendlyContent, translatedIndexes)
+        })
         setState({ ...state, loading: false })
         return
       }
@@ -1915,12 +1939,13 @@ export const OrderProvider = ({
       if (query) {
         options.query = query
       }
-      const { content: { error, result }, status } = await ordering.setAccessToken(session.token).orders(orderId).reorder(options)
+      const { content: { error, result, localized_errors: localizedErrors }, status } = await ordering
+        .setAccessToken(session.token).orders(orderId).reorder(checkoutRequestOptions(options, localizedCheckoutErrors))
       if (!error) {
         state.carts = { ...state.carts, [`businessId:${result.business_id}`]: result }
         events.emit('cart_added', result)
       } else if (!offAlert) {
-        setAlert({ show: true, content: result, status })
+        setAlert({ show: true, content: result, status, ...checkoutAlertPresentation(result, localizedErrors, localizedCheckoutErrors) })
       }
       setState({ ...state, loading: false })
       return { error, result }
@@ -2370,6 +2395,7 @@ export const OrderProvider = ({
                 onClose={() => setAlert({ show: false })}
                 content={alert.content}
                 status={alert.status}
+                {...(alert.localizedErrors ? { localizedErrors: alert.localizedErrors } : {})}
               />
             )
           }

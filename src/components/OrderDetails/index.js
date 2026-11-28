@@ -11,6 +11,7 @@ import { useUtils } from '../../contexts/UtilsContext'
 import { useConfig } from '../../contexts/ConfigContext'
 import { PROJECTS_WITH_LOGISTIC_DEFAULT_ETA } from '../../constants/logistic'
 import { isOrderStatusRegressionError } from '../../constants/orderStatusRegression'
+import { resolveLogisticRequestNotice } from '../../utils/resolveLogisticRequestNotice'
 import { shouldApplyOrderFetch } from './shouldApplyOrderFetch'
 
 export const OrderDetails = (props) => {
@@ -27,7 +28,8 @@ export const OrderDetails = (props) => {
     disableMessages,
     isDriverNotification,
     isBusinessApp,
-    clearErrorOnAction
+    clearErrorOnAction,
+    formatLogisticRequestNotice
   } = props
 
   const [{ user, token, loading }] = useSession()
@@ -112,13 +114,17 @@ export const OrderDetails = (props) => {
           }
           showToast(
             ToastType.Success,
-            t('SPECIFIC_ORDER_ACCEPTED', 'Your accepted the order number _NUMBER_').replace('_NUMBER_', orders?.id)
+            formatLogisticRequestNotice
+              ? resolveLogisticRequestNotice(formatLogisticRequestNotice, { accepted: true, request: result })
+              : t('SPECIFIC_ORDER_ACCEPTED', 'Your accepted the order number _NUMBER_').replace('_NUMBER_', orders?.id)
           )
           return { error: false, order: orders?.order ?? orders, orderIds: targetOrderIds, defaultEta }
         } else {
           showToast(
             ToastType.Info,
-            t('SPECIFIC_ORDER_REJECTED', 'Your rejected the order number _NUMBER_').replace('_NUMBER_', orders?.id)
+            formatLogisticRequestNotice
+              ? resolveLogisticRequestNotice(formatLogisticRequestNotice, { accepted: false, request: result })
+              : t('SPECIFIC_ORDER_REJECTED', 'Your rejected the order number _NUMBER_').replace('_NUMBER_', orders?.id)
           )
         }
         return { error: false }
@@ -878,5 +884,6 @@ OrderDetails.propTypes = {
    * status change or a driver assignment starts and when it ends without a failure, and a failed
    * assignment does not merge its error list into the order. Default false: unchanged behaviour.
    */
-  clearErrorOnAction: PropTypes.bool
+  clearErrorOnAction: PropTypes.bool,
+  formatLogisticRequestNotice: PropTypes.func
 }

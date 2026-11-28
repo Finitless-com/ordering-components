@@ -18,8 +18,10 @@ vi.mock('../../../contexts/EventContext', async (importOriginal) => {
   }
 })
 
+const mockTranslate = vi.hoisted(() => vi.fn((...args) => orders.mockT(...args)))
+
 vi.mock('../../../contexts/LanguageContext', () => ({
-  useLanguage: () => [{ loading: false, language: { code: 'en' } }, orders.mockT]
+  useLanguage: () => [{ loading: false, language: { code: 'en' } }, mockTranslate]
 }))
 
 vi.mock('../../../contexts/ToastContext', () => ({
@@ -288,6 +290,88 @@ describe('OrderDetails', () => {
       await lastControllerProps.updateDriverPosition({ lat: 10, lng: 20 })
     })
     expect(orders.mockDriverLocationsSave).toHaveBeenCalledWith({ lat: 10, lng: 20 })
+  })
+
+  describe('logistic request notice opt-in', () => {
+    const setup = async (props = {}) => {
+      renderController(OrderDetails, { orderId: 101, order: orders.sampleOrder, ...props })
+    }
+
+    it.each([[1, true], [2, false]])('formats status %s using only the PUT result', async (status, accepted) => {
+      const formatLogisticRequestNotice = vi.fn(() => 'formatted notice')
+      await setup({ formatLogisticRequestNotice })
+      const request = { id: 900, type: 'order', order_id: 123, order: { id: 123 } }
+      global.fetch.mockResolvedValueOnce({ json: async () => ({ error: false, result: request }) })
+      let result
+      await act(async () => { result = await lastControllerProps.handleClickLogisticOrder(status, 77, { id: 77, order: { id: 101 } }) })
+      expect(formatLogisticRequestNotice).toHaveBeenCalledTimes(1)
+      expect(formatLogisticRequestNotice).toHaveBeenCalledWith({ accepted, request })
+      expect(orders.mockShowToast).toHaveBeenCalledWith(undefined, 'formatted notice')
+      expect(mockTranslate).not.toHaveBeenCalled()
+      expect(result.error).toBe(false)
+    })
+
+    describe.each([
+      [1, 'Delivery request accepted'],
+      [2, 'Delivery request declined']
+    ])('after a successful PUT for status %s', (status, notice) => {
+      it.each([
+        ['throws', () => { throw new Error('translation failed') }],
+        ['returns a non-string', () => 123],
+        ['returns an empty string', () => ''],
+        ['returns a whitespace-only string', () => '  ']
+      ])('keeps the successful outcome and shows the generic notice when the formatter %s', async (_case, formatter) => {
+        const formatLogisticRequestNotice = vi.fn(formatter)
+        await setup({ formatLogisticRequestNotice })
+        const request = { id: 900, type: 'order', order_id: 123, order: { id: 123 } }
+        global.fetch.mockResolvedValueOnce({ json: async () => ({ error: false, result: request }) })
+        const localRequest = { id: 77, order: { id: 101 } }
+        mockTranslate.mockClear()
+        const originalProject = orders.mockOrdering.project
+        orders.mockOrdering.project = 'quickiedelivery'
+        let result
+        try {
+          await act(async () => { result = await lastControllerProps.handleClickLogisticOrder(status, 77, localRequest) })
+        } finally {
+          orders.mockOrdering.project = originalProject
+        }
+
+        expect(result).toEqual(status === 1
+          ? { error: false, order: localRequest.order, orderIds: [101], defaultEta: 10 }
+          : { error: false })
+        expect(formatLogisticRequestNotice).toHaveBeenCalledExactlyOnceWith({ accepted: status === 1, request })
+        expect(orders.mockShowToast.mock.calls.map(([, message]) => message)).toEqual([notice])
+        expect(mockTranslate.mock.calls).toEqual(status === 1 ? [['LOGISTIC_DEFAULT_ETA_TIME', '10']] : [])
+        expect(orders.mockOrderSave.mock.calls).toEqual(status === 1 ? [[{ delivered_in: 10, id: 101 }]] : [])
+      })
+    })
+
+    it.each([[1, 'Your accepted the order number 77'], [2, 'Your rejected the order number 77']])('preserves the legacy notice for status %s', async (status, notice) => {
+      await setup()
+      await act(async () => { await lastControllerProps.handleClickLogisticOrder(status, 77, { id: 77, order: { id: 101 } }) })
+      expect(orders.mockShowToast).toHaveBeenCalledWith(undefined, notice)
+    })
+
+    it.each([[1], [2]])('does not format a failed request for status %s', async (status) => {
+      const formatLogisticRequestNotice = vi.fn()
+      await setup({ formatLogisticRequestNotice })
+      global.fetch.mockResolvedValueOnce({ json: async () => ({ error: true, result: 'request failed' }) })
+      let result
+      await act(async () => { result = await lastControllerProps.handleClickLogisticOrder(status, 77, { id: 77, order: { id: 101 } }) })
+      expect(formatLogisticRequestNotice).not.toHaveBeenCalled()
+      expect(orders.mockShowToast).toHaveBeenCalledWith(undefined, 'request failed')
+      expect(result).toEqual({ error: true, result: 'request failed' })
+    })
+
+    it('does not format a transport failure', async () => {
+      const formatLogisticRequestNotice = vi.fn()
+      await setup({ formatLogisticRequestNotice })
+      global.fetch.mockRejectedValueOnce(new Error('offline'))
+      let result
+      await act(async () => { result = await lastControllerProps.handleClickLogisticOrder(1, 77, { id: 77 }) })
+      expect(formatLogisticRequestNotice).not.toHaveBeenCalled()
+      expect(result).toEqual({ error: true, result: 'offline' })
+    })
   })
 
   it('rejects logistic assign request', async () => {

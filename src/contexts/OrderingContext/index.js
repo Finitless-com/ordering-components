@@ -34,10 +34,10 @@ export const OrderingContext = createContext()
  * This prop doesn't need permission from sdk.
  * @param {number|false|null} [props.sessionCheckInterval] Period in ms of the poll that syncs the session
  * with the storage (default 2000: not given keeps it). `0`, `false` or `null` turn the poll off.
- * `supportedOrderTypes`, `franchiseMenuFirst`, `ignoreStaleTypeResponses` and `orderOptionsWriteTimeout` are optional and
+ * `supportedOrderTypes`, `franchiseMenuFirst`, `ignoreStaleTypeResponses`, `orderOptionsWriteTimeout` and `localizedCheckoutErrors` are optional and
  * go to OrderProvider as they are (see its docs); without them nothing changes.
  */
-export const OrderingProvider = ({ Alert, settings, children, enableCouponsRetries = false, initialOptimizationLoad, referralEnabled = true, waitForGuestDeliveryAddress = false, disableWorkerPickup = false, supportedOrderTypes, franchiseMenuFirst = false, ignoreStaleTypeResponses = false, orderOptionsWriteTimeout, sessionCheckInterval }) => {
+export const OrderingProvider = ({ Alert, settings, children, enableCouponsRetries = false, initialOptimizationLoad, referralEnabled = true, waitForGuestDeliveryAddress = false, disableWorkerPickup = false, supportedOrderTypes, franchiseMenuFirst = false, ignoreStaleTypeResponses = false, orderOptionsWriteTimeout, sessionCheckInterval, localizedCheckoutErrors = false }) => {
   const webStrategy = new WebStrategy()
   const restOfSettings = {
     project: settings.project,
@@ -83,6 +83,7 @@ export const OrderingProvider = ({ Alert, settings, children, enableCouponsRetri
                                     franchiseMenuFirst={franchiseMenuFirst}
                                     ignoreStaleTypeResponses={ignoreStaleTypeResponses}
                                     orderOptionsWriteTimeout={orderOptionsWriteTimeout}
+                                    localizedCheckoutErrors={localizedCheckoutErrors}
                                   >
                                     <BusinessProvider>
                                       {children}
