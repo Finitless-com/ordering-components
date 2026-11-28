@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
+import PropTypes from 'prop-types'
 import dayjs from 'dayjs'
 import { useSession } from '../../contexts/SessionContext'
 import { useApi } from '../../contexts/ApiContext'
@@ -10,6 +11,7 @@ import { useConfig } from '../../contexts/ConfigContext'
 import { useOrderActions } from '../../contexts/OrderContext'
 import { PROJECTS_WITH_LOGISTIC_DEFAULT_ETA } from '../../constants/logistic'
 import { isOrderStatusRegressionError } from '../../constants/orderStatusRegression'
+import { resolveLogisticRequestNotice } from '../../utils/resolveLogisticRequestNotice'
 import { mergeAssignRequestOrders } from './utils'
 
 export const OrderListGroups = (props) => {
@@ -25,7 +27,8 @@ export const OrderListGroups = (props) => {
     customOrderTypes,
     customPaymethods,
     isDriverApp,
-    disabledLeaveOrderSocket
+    disabledLeaveOrderSocket,
+    formatLogisticRequestNotice
   } = props
 
   const [ordering] = useApi()
@@ -951,13 +954,17 @@ export const OrderListGroups = (props) => {
           handleClickOrder(acceptedOrder)
           showToast(
             ToastType.Success,
-            t('SPECIFIC_ORDER_ACCEPTED', 'Your accepted the order number _NUMBER_').replace('_NUMBER_', order?.order?.id ?? order?.id)
+            formatLogisticRequestNotice
+              ? resolveLogisticRequestNotice(formatLogisticRequestNotice, { accepted: true, request: result })
+              : t('SPECIFIC_ORDER_ACCEPTED', 'Your accepted the order number _NUMBER_').replace('_NUMBER_', order?.order?.id ?? order?.id)
           )
           return { error: false, order: acceptedOrder, orderIds: targetOrderIds, defaultEta }
         } else {
           showToast(
             ToastType.Info,
-            t('SPECIFIC_ORDER_REJECTED', 'Your rejected the order number _NUMBER_').replace('_NUMBER_', order?.order?.id ?? order?.id)
+            formatLogisticRequestNotice
+              ? resolveLogisticRequestNotice(formatLogisticRequestNotice, { accepted: false, request: result })
+              : t('SPECIFIC_ORDER_REJECTED', 'Your rejected the order number _NUMBER_').replace('_NUMBER_', order?.order?.id ?? order?.id)
           )
         }
         return { error: false }
@@ -1436,4 +1443,8 @@ const defaultProps = {
   orderDirection: 'desc',
   isNetConnected: true,
   paginationSettings: { initialPage: 1, pageSize: 10, controlType: 'infinity' }
+}
+
+OrderListGroups.propTypes = {
+  formatLogisticRequestNotice: PropTypes.func
 }
